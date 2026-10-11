@@ -101,8 +101,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T01, T03.
 - **Scope:** Medium; first runtime migration, persistence module and integration tests.
-- [ ] Create explicit states, foreign keys, logical keys, event sequence constraints, and owner fields.
-- [ ] Duplicate logical work is rejected or adopted by a database constraint, not an in-memory check.
+- [x] Create explicit states, foreign keys, logical keys, event sequence constraints, and owner fields.
+- [x] Duplicate logical work is rejected or adopted by a database constraint, not an in-memory check.
 - **Verify:** make test-target TARGET=tests/integration/test_runtime_schema.py.
 
 ### T08 — Atomic transition service

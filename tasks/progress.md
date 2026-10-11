@@ -45,7 +45,15 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   unexecuted locally and hosted. [Hosted evidence](../docs/evidence/t06-hosted.md)
   is **NOT RUN**; `last_successful_drain_at` remains null until a real consumer
   commits a drain.
-- T07 onward: pending their declared dependencies.
+- T07: local persistence complete. Private runtime tables enforce explicit states,
+  composite owner foreign keys, logical work uniqueness, attempt generations,
+  and bounded append-only events. Principal-scoped repositories and forced RLS
+  passed the dedicated PostgreSQL 17 integration, including cross-account denial
+  and downgrade/re-upgrade. `make check build-package` passed with 83 Python
+  tests, 5 expected integration environment skips, 3 frontend tests and 21 Edge
+  tests. The separate T07 integration passed and its container was removed.
+  See [runtime setup](../docs/runtime-persistence.md). Hosted gates remain open.
+- T08 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
