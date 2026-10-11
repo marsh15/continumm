@@ -58,7 +58,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 ### Checkpoint A — Basic feasibility
 
-- [ ] Backend and static UI build from a fresh checkout.
+- [x] Backend and static UI build from a fresh checkout. See [build evidence](../docs/evidence/foundation-build.md).
 - [ ] Hosted database and private object access are proven.
 - [ ] No provider account setting violates the operator's spending constraint.
 
