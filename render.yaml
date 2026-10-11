@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: continumm-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    envVars:
+      - key: CONTINUUM_ENVIRONMENT
+        value: production
+      - key: CONTINUUM_HOST
+        value: 0.0.0.0
+      - key: CONTINUUM_DATABASE_URL
+        sync: false
+      - key: CONTINUUM_ENCRYPTION_KEY
+        sync: false
+      - key: CONTINUUM_SUPABASE_URL
+        sync: false
+      - key: CONTINUUM_SUPABASE_SECRET_KEY
+        sync: false
+      - key: CONTINUUM_SUPABASE_BUCKET
+        value: continuum-t03-private
+      - key: CONTINUUM_ENABLE_HOSTED_SMOKE
+        value: "0"

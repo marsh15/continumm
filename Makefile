@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-ui openapi frontend-install frontend-openapi-check build build-package build-frontend build-container
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration smoke-hosted test-ui openapi frontend-install frontend-openapi-check build build-package build-frontend build-container
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
@@ -29,6 +29,12 @@ test:
 test-target:
 	@test -n "$(TARGET)" || (echo "Usage: make test-target TARGET=tests/path.py" >&2; exit 2)
 	uv run --locked --python $(PYTHON_VERSION) pytest -q "$(TARGET)"
+
+test-integration:
+	uv run --locked --python $(PYTHON_VERSION) pytest -q tests/integration
+
+smoke-hosted:
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.connectivity.smoke
 
 frontend-install:
 	cd frontend && npm ci

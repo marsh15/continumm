@@ -1,7 +1,7 @@
 # Continumm — Complete Product and Implementation Plan
 
 **Prepared:** 10 October 2026  
-**Status:** Proposed implementation baseline following the planning interview; no application implementation has begun.  
+**Status:** Implementation baseline following the planning interview; implementation began on 11 October 2026. See [progress](progress.md) for verified scope and pending gates.
 **Working name:** Continumm, using the user's spelling.  
 **Purpose:** A portfolio-quality public developer service demonstrating both backend infrastructure and applied AI engineering.  
 **Canonical task list:** [Implementation backlog](todo.md).  

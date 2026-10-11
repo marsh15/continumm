@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 
+from continuum_api.connectivity import smoke as smoke_module
 from continuum_api.connectivity.database import (
     ClaimResult,
     DatabaseFailure,
@@ -22,6 +23,7 @@ from continuum_api.connectivity.smoke import (
     ConnectivitySmoke,
     HostedSmokeConfig,
     SmokeConfigurationError,
+    SmokeReport,
     maybe_run_startup_smoke,
     report_json,
 )
@@ -206,6 +208,38 @@ def test_stream_total_deadline_stops_a_drip_response() -> None:
     assert len(requests) == 1
 
 
+def test_total_deadline_includes_slow_response_headers() -> None:
+    class SlowHeaders(httpx.AsyncBaseTransport):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            self.calls += 1
+            await asyncio.sleep(0.03)
+            return httpx.Response(200, json={"public": False}, request=request)
+
+    transport = SlowHeaders()
+    client = httpx.AsyncClient(transport=transport)
+    storage = SupabaseStorage(
+        _PROJECT_URL,
+        _SECRET,
+        _BUCKET,
+        client=client,
+        request_deadline_seconds=0.01,
+    )
+    try:
+
+        async def exercise() -> None:
+            with pytest.raises(StorageFailure, match="bucket_check_timeout"):
+                await storage.check_private_bucket()
+
+        asyncio.run(exercise())
+    finally:
+        asyncio.run(client.aclose())
+
+    assert transport.calls == 1
+
+
 @pytest.mark.parametrize(
     "project_url",
     [
@@ -213,6 +247,8 @@ def test_stream_total_deadline_stops_a_drip_response() -> None:
         "https://user:password@project-ref.supabase.co",
         "https://project-ref.supabase.co/path",
         "https://project-ref.supabase.co?token=secret",
+        "https://supabase.co",
+        "https://project-ref.supabase.co:8443",
         "https://attacker.example",
     ],
 )
@@ -223,6 +259,69 @@ def test_storage_rejects_noncanonical_or_untrusted_project_urls(project_url: str
     assert raised.value.code == "storage_url_invalid"
     assert "password" not in str(raised.value)
     assert _SECRET not in repr(raised.value)
+
+
+def test_standard_https_port_is_allowed() -> None:
+    storage = SupabaseStorage("https://project-ref.supabase.co:443", _SECRET, _BUCKET)
+    asyncio.run(storage.aclose())
+
+
+def test_injected_client_headers_are_not_mutated() -> None:
+    requests: list[httpx.Request] = []
+    client = httpx.AsyncClient(
+        headers={"apikey": "caller-owned-default"},
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200, json={"public": False})
+        ),
+    )
+    storage = SupabaseStorage(_PROJECT_URL, _SECRET, _BUCKET, client=client)
+    try:
+        asyncio.run(storage.check_private_bucket())
+        assert client.headers["apikey"] == "caller-owned-default"
+        assert requests[0].headers["apikey"] == _SECRET
+    finally:
+        asyncio.run(client.aclose())
+
+
+def test_unexpected_upload_redirect_is_unknown_and_not_retried() -> None:
+    storage, requests = _storage(
+        lambda _request: httpx.Response(307, headers={"location": "https://other.example"})
+    )
+    try:
+
+        async def exercise() -> None:
+            with pytest.raises(StorageFailure) as raised:
+                await storage.upload("t03-probes/probe.bin", _FIXTURE)
+            assert raised.value.code == "upload_http_unexpected_status"
+            assert raised.value.effect is EffectState.UNKNOWN
+
+        asyncio.run(exercise())
+    finally:
+        asyncio.run(storage.aclose())
+
+    assert len(requests) == 1
+
+
+def test_absence_verification_does_not_infer_404_from_a_400_body() -> None:
+    storage, requests = _storage(
+        lambda _request: httpx.Response(
+            400,
+            json={"statusCode": "404", "error": "not_found", "message": "Object not found"},
+        )
+    )
+    try:
+
+        async def exercise() -> None:
+            with pytest.raises(StorageFailure) as raised:
+                await storage.verify_absent("t03-probes/probe.bin")
+            assert raised.value.code == "delete_verify_outcome_unknown"
+            assert raised.value.effect is EffectState.UNKNOWN
+
+        asyncio.run(exercise())
+    finally:
+        asyncio.run(storage.aclose())
+
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize("method", ["download", "delete"])
@@ -458,3 +557,103 @@ def test_hash_mismatch_is_reported_and_object_cleanup_is_verified() -> None:
     assert report.sha256_match is False
     assert report.storage_result == "failed_and_cleaned"
     assert storage.calls == ["bucket", "upload", "download", "delete", "verify_absent"]
+
+
+def test_unexpected_post_claim_failure_keeps_ids_and_finalizes_unknown() -> None:
+    class UnexpectedUpload(_FakeStorage):
+        async def upload(self, object_key: str, content: bytes) -> None:
+            self.calls.append("upload")
+            raise RuntimeError("raw-secret-sentinel")
+
+    database = _FakeDatabase()
+    report = asyncio.run(ConnectivitySmoke(database, UnexpectedUpload()).run(uuid4()))
+    rendered = report_json(report)
+
+    assert report.status == "unknown"
+    assert report.result_code == "storage_internal_error"
+    assert report.probe_id is not None
+    assert report.object_key is not None
+    assert database.finished == ("unknown", "storage_internal_error")
+    assert "raw-secret-sentinel" not in rendered
+
+
+def test_teardown_failure_does_not_erase_report_or_probe_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = uuid4()
+    probe_id = uuid4()
+    object_uuid = uuid4()
+    object_key = f"t03-probes/{object_uuid}.bin"
+
+    class FakeEngine:
+        def dispose(self) -> None:
+            raise RuntimeError("database-secret-sentinel")
+
+    class FakeStorageAdapter:
+        async def aclose(self) -> None:
+            raise RuntimeError("storage-secret-sentinel")
+
+    class FakeRunner:
+        async def run(
+            self,
+            actual_run_id: UUID,
+            *,
+            render_runtime_confirmed: bool,
+            probe_id: UUID,
+            object_key: str,
+        ) -> SmokeReport:
+            return SmokeReport(
+                run_id=actual_run_id,
+                probe_id=probe_id,
+                object_key=object_key,
+                status="completed",
+                result_code="ok",
+                database_result="verified_and_cleaned",
+                storage_result="verified_and_cleaned",
+                sha256_match=True,
+                render_runtime_confirmed=render_runtime_confirmed,
+            )
+
+    config = {
+        "CONTINUUM_ENABLE_HOSTED_SMOKE": "1",
+        "CONTINUUM_ENVIRONMENT": "production",
+        "RENDER": "true",
+        "RENDER_SERVICE_ID": "srv-redacted",
+        "RENDER_EXTERNAL_URL": "https://service.onrender.com",
+        "RENDER_SERVICE_TYPE": "web",
+        "CONTINUUM_T03_HOSTED_SMOKE_ID": str(run_id),
+        "CONTINUUM_DATABASE_URL": "postgresql://user:db-secret@host.example.test/db",
+        "CONTINUUM_SUPABASE_URL": _PROJECT_URL,
+        "CONTINUUM_SUPABASE_SECRET_KEY": _SECRET,
+        "CONTINUUM_SUPABASE_BUCKET": _BUCKET,
+    }
+    generated_ids = iter((probe_id, object_uuid))
+    monkeypatch.setattr(smoke_module, "uuid4", lambda: next(generated_ids))
+    monkeypatch.setattr(
+        smoke_module,
+        "create_database_engine",
+        lambda _url, require_ssl: FakeEngine(),
+    )
+    monkeypatch.setattr(smoke_module, "T03Database", lambda _engine: object())
+    monkeypatch.setattr(
+        smoke_module,
+        "SupabaseStorage",
+        lambda _url, _key, _bucket: FakeStorageAdapter(),
+    )
+    monkeypatch.setattr(
+        smoke_module,
+        "ConnectivitySmoke",
+        lambda _database, _storage: FakeRunner(),
+    )
+
+    report = smoke_module.run_configured_smoke(config)
+
+    assert report is not None
+    assert report.status == "completed"
+    assert report.result_code == "ok"
+    assert report.probe_id == probe_id
+    assert report.object_key == object_key
+    assert report.teardown_result == "failed"
+    rendered = report_json(report)
+    assert "database-secret-sentinel" not in rendered
+    assert "storage-secret-sentinel" not in rendered

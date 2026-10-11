@@ -9,7 +9,7 @@ import sys
 import pytest
 from pydantic import ValidationError
 
-from continuum_api.settings import Settings
+from continuum_api.settings import Settings, safe_settings_error
 
 
 def test_development_settings_bind_to_loopback_by_default() -> None:
@@ -32,6 +32,38 @@ def test_development_cannot_bind_a_public_interface() -> None:
 def test_port_must_be_valid_tcp_port(port: int) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, port=port)
+
+
+def test_render_port_overrides_container_default_only_in_production(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PORT", "10000")
+    assert Settings(_env_file=None).port == 8000
+
+    monkeypatch.setenv("CONTINUUM_ENVIRONMENT", "production")
+    monkeypatch.setenv("CONTINUUM_HOST", "0.0.0.0")
+    monkeypatch.setenv("CONTINUUM_DATABASE_URL", "postgresql://user:password@localhost/app")
+    monkeypatch.setenv("CONTINUUM_ENCRYPTION_KEY", "test-encryption-key")
+    monkeypatch.setenv("CONTINUUM_PORT", "8000")
+    assert Settings(_env_file=None).port == 10000
+
+
+def test_invalid_render_port_is_rejected_without_echoing_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = "port-secret-sentinel"
+    monkeypatch.setenv("PORT", sentinel)
+    monkeypatch.setenv("CONTINUUM_ENVIRONMENT", "production")
+    monkeypatch.setenv("CONTINUUM_HOST", "0.0.0.0")
+    monkeypatch.setenv("CONTINUUM_DATABASE_URL", "postgresql://user:password@localhost/app")
+    monkeypatch.setenv("CONTINUUM_ENCRYPTION_KEY", "test-encryption-key")
+
+    with pytest.raises(ValidationError) as error:
+        Settings(_env_file=None)
+
+    message = safe_settings_error(error.value)
+    assert "port" in message
+    assert sentinel not in message
 
 
 def test_production_requires_explicit_secrets_and_bind_address() -> None:

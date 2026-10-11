@@ -51,6 +51,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T01.
 - **Scope:** Medium; deployment descriptor, database adapter, storage adapter, smoke test.
+- **Progress:** Local preparation and verification complete; hosted acceptance is pending provider setup. See [progress](progress.md) and [hosting instructions](../docs/hosting-setup.md).
 - [ ] Prove Render Free can connect to Supabase through the selected pooler, commit a row, and upload/download a private object.
 - [ ] Record free-plan eligibility, payment/overage settings, memory baseline, and account-specific limits without enabling paid fallback.
 - **Verify:** make smoke-hosted with a controlled fixture; retain a redacted evidence report.

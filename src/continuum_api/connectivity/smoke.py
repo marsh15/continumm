@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -115,6 +115,7 @@ class SmokeReport:
     storage_result: str
     sha256_match: bool | None
     render_runtime_confirmed: bool
+    teardown_result: str = "not_applicable"
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -127,6 +128,7 @@ class SmokeReport:
             "storage_result": self.storage_result,
             "sha256_match": self.sha256_match,
             "render_runtime_confirmed": self.render_runtime_confirmed,
+            "teardown_result": self.teardown_result,
         }
 
 
@@ -137,9 +139,18 @@ class ConnectivitySmoke:
         self._database = database
         self._storage = storage
 
-    async def run(self, run_id: UUID, *, render_runtime_confirmed: bool = False) -> SmokeReport:
-        proposed_probe_id = uuid4()
-        proposed_object_key = f"t03-probes/{uuid4()}.bin"
+    async def run(
+        self,
+        run_id: UUID,
+        *,
+        render_runtime_confirmed: bool = False,
+        probe_id: UUID | None = None,
+        object_key: str | None = None,
+    ) -> SmokeReport:
+        if (probe_id is None) != (object_key is None):
+            raise ValueError("probe ID and object key must be supplied together")
+        proposed_probe_id = probe_id or uuid4()
+        proposed_object_key = object_key or f"t03-probes/{uuid4()}.bin"
 
         try:
             claim_result = self._database.claim_run(
@@ -338,23 +349,111 @@ async def _run_configured_smoke_async(environ: Mapping[str, str]) -> SmokeReport
     if config is None:
         return None
 
-    engine = create_database_engine(config.database_url, require_ssl=True)
-    database = T03Database(engine)
+    probe_id = uuid4()
+    object_key = f"t03-probes/{uuid4()}.bin"
+    engine = None
     storage: SupabaseStorage | None = None
+    report: SmokeReport | None = None
+    teardown_failed = False
     try:
-        storage = SupabaseStorage(
-            config.supabase_url,
-            config.supabase_secret_key,
-            config.bucket,
-        )
-        return await ConnectivitySmoke(database, storage).run(
-            config.run_id,
-            render_runtime_confirmed=True,
-        )
+        try:
+            engine = create_database_engine(config.database_url, require_ssl=True)
+        except DatabaseFailure as error:
+            report = SmokeReport(
+                run_id=config.run_id,
+                probe_id=probe_id,
+                object_key=object_key,
+                status="failed",
+                result_code=error.code,
+                database_result="not_run",
+                storage_result="not_run",
+                sha256_match=None,
+                render_runtime_confirmed=True,
+            )
+        except Exception:
+            report = SmokeReport(
+                run_id=config.run_id,
+                probe_id=probe_id,
+                object_key=object_key,
+                status="failed",
+                result_code="database_engine_unavailable",
+                database_result="not_run",
+                storage_result="not_run",
+                sha256_match=None,
+                render_runtime_confirmed=True,
+            )
+
+        if engine is not None:
+            database = T03Database(engine)
+            try:
+                storage = SupabaseStorage(
+                    config.supabase_url,
+                    config.supabase_secret_key,
+                    config.bucket,
+                )
+            except StorageFailure as error:
+                report = SmokeReport(
+                    run_id=config.run_id,
+                    probe_id=probe_id,
+                    object_key=object_key,
+                    status="failed",
+                    result_code=error.code,
+                    database_result="not_run",
+                    storage_result="not_run",
+                    sha256_match=None,
+                    render_runtime_confirmed=True,
+                )
+            except Exception:
+                report = SmokeReport(
+                    run_id=config.run_id,
+                    probe_id=probe_id,
+                    object_key=object_key,
+                    status="failed",
+                    result_code="storage_internal_error",
+                    database_result="not_run",
+                    storage_result="not_run",
+                    sha256_match=None,
+                    render_runtime_confirmed=True,
+                )
+
+            if storage is not None:
+                try:
+                    report = await ConnectivitySmoke(database, storage).run(
+                        config.run_id,
+                        render_runtime_confirmed=True,
+                        probe_id=probe_id,
+                        object_key=object_key,
+                    )
+                except Exception:
+                    # The IDs were included in the durable claim before probe mutations began.
+                    report = SmokeReport(
+                        run_id=config.run_id,
+                        probe_id=probe_id,
+                        object_key=object_key,
+                        status="unknown",
+                        result_code="smoke_internal_error",
+                        database_result="outcome_unknown_after_claim",
+                        storage_result="outcome_unknown_after_claim",
+                        sha256_match=None,
+                        render_runtime_confirmed=True,
+                    )
     finally:
         if storage is not None:
-            await storage.aclose()
-        engine.dispose()
+            try:
+                await storage.aclose()
+            except Exception:
+                teardown_failed = True
+        if engine is not None:
+            try:
+                engine.dispose()
+            except Exception:
+                teardown_failed = True
+
+    if report is None:
+        return None
+    teardown_started = storage is not None or engine is not None
+    teardown_result = "failed" if teardown_failed else "ok" if teardown_started else "not_needed"
+    return replace(report, teardown_result=teardown_result)
 
 
 def run_configured_smoke(environ: Mapping[str, str]) -> SmokeReport | None:
@@ -474,3 +573,7 @@ def cli_main() -> int:
         return 2
     print(report_json(report))
     return 0 if report.status == "completed" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main())

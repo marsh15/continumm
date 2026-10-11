@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -27,6 +28,18 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: SecretStr | None = None
     encryption_key: SecretStr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def use_render_port_in_production(cls, values: object) -> object:
+        """Prefer Render's platform port while retaining the local port default."""
+        if not isinstance(values, dict):
+            return values
+        environment = values.get("environment", os.environ.get("CONTINUUM_ENVIRONMENT"))
+        render_port = os.environ.get("PORT")
+        if environment == "production" and render_port is not None:
+            values["port"] = render_port
+        return values
 
     @model_validator(mode="after")
     def validate_deployment_safety(self) -> Settings:
@@ -61,7 +74,11 @@ class Settings(BaseSettings):
 def safe_settings_error(error: ValidationError) -> str:
     """Format config errors without exposing any submitted values."""
     details = error.errors(include_input=False)
-    messages = [str(item["msg"]) for item in details]
+    messages: list[str] = []
+    for item in details:
+        location = ".".join(str(part) for part in item.get("loc", ()))
+        message = str(item["msg"])
+        messages.append(f"{location}: {message}" if location else message)
     return "Application configuration is invalid: " + "; ".join(messages)
 
 

@@ -51,21 +51,19 @@ class SupabaseStorage:
         try:
             port = parsed_url.port
         except ValueError:
-            port_is_absent = False
+            port_is_standard = False
         else:
-            port_is_absent = port is None
+            port_is_standard = port is None or port == 443
         if (
             parsed_url.scheme != "https"
             or parsed_url.hostname is None
-            or not (
-                parsed_url.hostname == "supabase.co" or parsed_url.hostname.endswith(".supabase.co")
-            )
+            or not parsed_url.hostname.endswith(".supabase.co")
             or parsed_url.username is not None
             or parsed_url.password is not None
             or parsed_url.path not in {"", "/"}
             or parsed_url.query
             or parsed_url.fragment
-            or not port_is_absent
+            or not port_is_standard
         ):
             raise StorageFailure("storage_url_invalid")
         if not secret_key.startswith("sb_secret_"):
@@ -78,18 +76,16 @@ class SupabaseStorage:
             raise ValueError("request deadline must be positive")
 
         self._bucket = bucket
+        self._api_key = secret_key
         self._fixture_byte_limit = fixture_byte_limit
         self._request_deadline_seconds = request_deadline_seconds
         self._base_url = project_url.rstrip("/") + "/storage/v1"
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
-            headers={"apikey": secret_key},
             timeout=httpx.Timeout(connect=3, read=5, write=5, pool=2),
             follow_redirects=False,
             trust_env=False,
         )
-        if client is not None:
-            client.headers.update({"apikey": secret_key})
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -100,7 +96,9 @@ class SupabaseStorage:
         deadline = time.monotonic() + self._request_deadline_seconds
         try:
             async with asyncio.timeout(self._request_deadline_seconds):
-                async with self._client.stream("GET", url) as response:
+                async with self._client.stream(
+                    "GET", url, headers=self._auth_headers()
+                ) as response:
                     if response.status_code < 200 or response.status_code >= 300:
                         raise StorageFailure(_http_error_code(response.status_code, "bucket_check"))
                     body = await _read_bounded(
@@ -137,7 +135,11 @@ class SupabaseStorage:
                 async with self._client.stream(
                     "POST",
                     url,
-                    headers={"content-type": "application/octet-stream", "x-upsert": "false"},
+                    headers={
+                        **self._auth_headers(),
+                        "content-type": "application/octet-stream",
+                        "x-upsert": "false",
+                    },
                     content=content,
                 ) as response:
                     _require_success(response.status_code, mutation=True, operation="upload")
@@ -164,7 +166,9 @@ class SupabaseStorage:
         deadline = time.monotonic() + self._request_deadline_seconds
         try:
             async with asyncio.timeout(self._request_deadline_seconds):
-                async with self._client.stream("GET", url) as response:
+                async with self._client.stream(
+                    "GET", url, headers=self._auth_headers()
+                ) as response:
                     _require_success(response.status_code, mutation=False, operation="download")
                     return await _read_bounded(
                         response,
@@ -189,6 +193,7 @@ class SupabaseStorage:
                 async with self._client.stream(
                     "DELETE",
                     url,
+                    headers=self._auth_headers(),
                     json={"prefixes": [object_key]},
                 ) as response:
                     _require_success(response.status_code, mutation=True, operation="delete")
@@ -215,7 +220,9 @@ class SupabaseStorage:
         url = self._authenticated_object_url(object_key)
         try:
             async with asyncio.timeout(self._request_deadline_seconds):
-                async with self._client.stream("GET", url) as response:
+                async with self._client.stream(
+                    "GET", url, headers=self._auth_headers()
+                ) as response:
                     if response.status_code == 404:
                         return
                     if 200 <= response.status_code < 300:
@@ -244,6 +251,10 @@ class SupabaseStorage:
             f"{self._base_url}/object/authenticated/{quote(self._bucket, safe='')}/"
             f"{_quote_key(object_key)}"
         )
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Return a request-scoped key so an injected client cannot leak it."""
+        return {"apikey": self._api_key}
 
 
 async def _read_bounded(
@@ -274,7 +285,9 @@ async def _read_bounded(
 def _require_success(status_code: int, *, mutation: bool, operation: str) -> None:
     if 200 <= status_code < 300:
         return
-    outcome = EffectState.UNKNOWN if mutation and status_code >= 500 else EffectState.KNOWN
+    outcome = (
+        EffectState.UNKNOWN if mutation and not 400 <= status_code < 500 else EffectState.KNOWN
+    )
     raise StorageFailure(_http_error_code(status_code, operation), effect=outcome)
 
 

@@ -1,6 +1,6 @@
 # Continumm
 
-Continumm is a planning-stage service for turning bounded coding tasks into reviewed GitHub pull requests. The current implementation establishes its Python API and React frontend foundations. The public service has not launched.
+Continumm is a service under development for turning bounded coding tasks into reviewed GitHub pull requests. The current implementation establishes its Python API and React frontend foundations. The public service has not launched.
 
 ## Local development
 
@@ -36,4 +36,12 @@ make build
 
 Settings use the `CONTINUUM_` environment prefix. Local development defaults are loopback-only. Development and test modes reject non-loopback hosts. Production requires an explicit bind host, database URL, and encryption key. Settings values and request data are not written to access logs; application logs use JSON and redact common credential forms.
 
-The complete product scope and ordered implementation backlog are in [tasks/plan.md](tasks/plan.md) and [tasks/todo.md](tasks/todo.md).
+## Hosting preparation
+
+The local T03 adapters and guarded startup probe prepare a controlled Render/Supabase
+connectivity check. The hosted projects are not set up, so the hosted proof remains
+pending. Follow [hosting setup](docs/hosting-setup.md) and retain results in the
+[evidence report](docs/evidence/t03-hosted.md). The probe is disabled by default;
+`make smoke-hosted` refuses a normal local process.
+
+The complete product scope and ordered implementation backlog are in [tasks/plan.md](tasks/plan.md) and [tasks/todo.md](tasks/todo.md). Verified work and pending gates are recorded in [tasks/progress.md](tasks/progress.md).
