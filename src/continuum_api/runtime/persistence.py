@@ -50,6 +50,11 @@ class AttemptStatus(StrEnum):
     PROTOCOL_FAILURE = "protocol_failure"
 
 
+class ReplayPolicy(StrEnum):
+    REPLAY_SAFE = "replay_safe"
+    ATTENTION_ON_UNKNOWN = "attention_on_unknown"
+
+
 class EventActor(StrEnum):
     ACCOUNT = "account"
     SYSTEM = "system"
@@ -210,8 +215,27 @@ class RuntimeRepository:
         *,
         job_id: UUID | None = None,
         available_at: datetime | None = None,
+        replay_policy: ReplayPolicy = ReplayPolicy.ATTENTION_ON_UNKNOWN,
     ) -> UUID:
         selected_job_id = job_id or uuid4()
+        if replay_policy is ReplayPolicy.REPLAY_SAFE:
+            self._connection.execute(
+                text(
+                    "INSERT INTO runtime_private.jobs "
+                    "(job_id, owner_id, run_id, step_id, available_at, replay_policy) "
+                    "VALUES (:job_id, :owner_id, :run_id, :step_id, "
+                    "coalesce(:available_at, clock_timestamp()), :replay_policy)"
+                ),
+                {
+                    "job_id": selected_job_id,
+                    "owner_id": self._principal.account_id,
+                    "run_id": run_id,
+                    "step_id": step_id,
+                    "available_at": available_at,
+                    "replay_policy": replay_policy.value,
+                },
+            )
+            return selected_job_id
         self._connection.execute(
             text(
                 """

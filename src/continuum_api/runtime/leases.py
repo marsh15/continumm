@@ -133,6 +133,7 @@ class QueueService:
                             WHERE step.owner_id=run.owner_id AND step.run_id=run.run_id
                               AND run.status='running' AND step.status='running'
                               AND job.status='leased' AND job.lease_expires_at <= clock_timestamp()
+                              AND job.replay_policy='replay_safe'
                         )
                       )
                     ORDER BY run.created_at, run.run_id
@@ -164,6 +165,7 @@ class QueueService:
                             WHERE job.owner_id=step.owner_id AND job.run_id=step.run_id
                               AND job.step_id=step.step_id AND job.status='leased'
                               AND job.lease_expires_at <= clock_timestamp()
+                              AND job.replay_policy='replay_safe'
                         ))
                       )
                     ORDER BY step_id
@@ -181,12 +183,13 @@ class QueueService:
                 text(
                     """
                     SELECT job_id, status, generation, lease_owner, lease_expires_at,
-                           available_at
+                           available_at, replay_policy
                     FROM runtime_private.jobs AS job
                     WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id
                       AND (
                         (status='queued' AND available_at <= clock_timestamp())
-                        OR (status='leased' AND lease_expires_at <= clock_timestamp())
+                        OR (status='leased' AND lease_expires_at <= clock_timestamp()
+                            AND replay_policy='replay_safe')
                       )
                     ORDER BY job_id
                     LIMIT 1
@@ -230,6 +233,7 @@ class QueueService:
             )
             is_expired_lease = (
                 job.status == "leased"
+                and job.replay_policy == "replay_safe"
                 and step.status == StepStatus.RUNNING.value
                 and run_status == RunStatus.RUNNING.value
                 and (candidate.deadline_at is None or candidate.deadline_at > database_now)
@@ -245,7 +249,8 @@ class QueueService:
                 connection.execute(
                     text(
                         "UPDATE runtime_private.attempts "
-                        "SET status='unknown', finished_at=:database_now "
+                        "SET status='unknown', finished_at=:database_now, "
+                        "failure_class='worker_lost' "
                         "WHERE attempt_id=:attempt_id AND status='running'"
                     ),
                     {"database_now": database_now, "attempt_id": previous_attempt.attempt_id},
@@ -262,7 +267,7 @@ class QueueService:
                     ),
                     {"owner_id": owner_id, "run_id": run_id},
                 )
-            if is_new_job:
+            if is_new_job and step.status == StepStatus.QUEUED.value:
                 connection.execute(
                     text(
                         "UPDATE runtime_private.steps SET status='running' "

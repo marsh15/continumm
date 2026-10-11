@@ -133,9 +133,12 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T09.
 - **Scope:** Medium; scheduler, error policy and recovery tests.
-- [ ] Recover expired leases and due jobs idempotently without an in-memory timer.
-- [ ] Keep attempt and failure retry counters distinct; honor retry-after and deadlines.
+- [x] Recover expired leases and due jobs idempotently without an in-memory timer.
+- [x] Keep attempt and failure retry counters distinct; honor retry-after and deadlines.
 - **Verify:** make test-target TARGET=tests/integration/test_scheduler.py.
+  PostgreSQL 17 integration proofs also pass for the adapted T08 transitions and
+  T09 lease/deadlock fixtures, each on its own disposable server because the
+  fixtures share cluster-wide role names.
 
 ### T11 — Cancellation and terminality
 

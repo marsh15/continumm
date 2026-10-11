@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import multiprocessing
 import os
 import secrets
@@ -28,7 +30,12 @@ from continuum_api.runtime.leases import (
     LeaseLost,
     QueueService,
 )
-from continuum_api.runtime.persistence import Principal, RunStatus, RuntimeRepository
+from continuum_api.runtime.persistence import (
+    Principal,
+    ReplayPolicy,
+    RunStatus,
+    RuntimeRepository,
+)
 from continuum_api.runtime.transitions import (
     NextWork,
     ResultIdentityConflict,
@@ -39,6 +46,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_NAME = "continuum_t09_test"
 T04_REVISION = "20261011_04"
 T09_REVISION = "20261011_05"
+T10_REVISION = "20261011_06"
 RUNTIME_ROLE = "continuum_runtime"
 ROLE_NAMES = (
     RUNTIME_ROLE,
@@ -84,7 +92,7 @@ def test_claims_heartbeat_and_fenced_results_use_database_ownership() -> None:
         _assert_legacy_rows_survive_downgrade(
             admin_engine, legacy_owner, legacy_run, legacy_step, legacy_job, legacy_attempt
         )
-        _run_migration("upgrade", T09_REVISION, database_url)
+        _run_migration("upgrade", T10_REVISION, database_url)
         migration_applied = True
         _assert_legacy_rows_survive_upgrade(
             admin_engine, legacy_owner, legacy_run, legacy_step, legacy_job, legacy_attempt
@@ -92,6 +100,15 @@ def test_claims_heartbeat_and_fenced_results_use_database_ownership() -> None:
 
         runtime_engine = create_engine(
             runtime_url, hide_parameters=True, pool_size=8, max_overflow=0
+        )
+        _assert_legacy_result_is_adopted(
+            admin_engine,
+            runtime_engine,
+            legacy_owner,
+            legacy_run,
+            legacy_step,
+            legacy_job,
+            legacy_attempt,
         )
         owner_id, waiting_owner, terminal_owner = _seed_accounts(admin_engine)
         first_run, first_step, first_job = _seed_work(admin_engine, owner_id, RunStatus.QUEUED)
@@ -250,6 +267,21 @@ def _run_migration(operation: str, revision: str, database_url: str) -> None:
 
 def _seed_legacy_t08_rows(engine: Engine) -> tuple[UUID, UUID, UUID, UUID, UUID]:
     owner_id, run_id, step_id, job_id, attempt_id = uuid4(), uuid4(), uuid4(), uuid4(), uuid4()
+    legacy_result = {"legacy": True}
+    result_json = json.dumps(
+        legacy_result, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    )
+    intent_json = json.dumps(
+        {
+            "next_work": None,
+            "result": legacy_result,
+            "target_run_status": RunStatus.WAITING_APPROVAL.value,
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -314,8 +346,8 @@ def _seed_legacy_t08_rows(engine: Engine) -> tuple[UUID, UUID, UUID, UUID, UUID]
                 "run_id": run_id,
                 "step_id": step_id,
                 "job_id": job_id,
-                "digest": b"l" * 32,
-                "intent": b"i" * 32,
+                "digest": hashlib.sha256(result_json.encode("utf-8")).digest(),
+                "intent": hashlib.sha256(intent_json.encode("utf-8")).digest(),
                 "payload": '{"legacy":true}',
             },
         )
@@ -374,6 +406,42 @@ def _assert_legacy_rows_survive_upgrade(
         else:
             savepoint.rollback()
             pytest.fail("T09 accepted-result identity check allowed a partial-null tuple")
+
+
+def _assert_legacy_result_is_adopted(
+    admin_engine: Engine,
+    engine: Engine,
+    owner_id: UUID,
+    run_id: UUID,
+    step_id: UUID,
+    job_id: UUID,
+    attempt_id: UUID,
+) -> None:
+    with admin_engine.connect() as connection:
+        result_id = connection.execute(
+            text(
+                "SELECT result_id FROM runtime_private.accepted_results "
+                "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
+            ),
+            {"owner_id": owner_id, "run_id": run_id, "step_id": step_id},
+        ).scalar_one()
+    lease = ExecutionLease(
+        owner_id=owner_id,
+        run_id=run_id,
+        step_id=step_id,
+        job_id=job_id,
+        attempt_id=attempt_id,
+        generation=1,
+        lease_owner="legacy-worker",
+        lease_expires_at=datetime.now().astimezone() + timedelta(seconds=60),
+    )
+    receipt = TransitionService(engine, Principal(owner_id)).commit_result(
+        lease=lease,
+        result={"legacy": True},
+        target_run_status=RunStatus.WAITING_APPROVAL,
+    )
+    assert receipt.adopted and receipt.result_id == result_id
+    assert receipt.event_sequence == 1 and receipt.next_job_id is None
 
 
 def _assert_legacy_rows_survive_downgrade(
@@ -514,7 +582,12 @@ def _result_process(
                 lease=lease,
                 result={"competitor": result_key},
                 target_run_status=RunStatus.RUNNING,
-                next_work=NextWork("validate:competing", "validate", revision=0),
+                next_work=NextWork(
+                    "validate:competing",
+                    "validate",
+                    revision=0,
+                    replay_policy=ReplayPolicy.REPLAY_SAFE,
+                ),
             )
         except ResultIdentityConflict:
             return {"process_id": os.getpid(), "status": "conflict"}
@@ -995,11 +1068,14 @@ def _reclaim_expired_job(
     new_lease = queue.claim_one("recovery-worker")
     assert new_lease is not None
     with admin_engine.connect() as connection:
-        previous_status = connection.execute(
-            text("SELECT status FROM runtime_private.attempts WHERE attempt_id=:attempt_id"),
+        previous_attempt = connection.execute(
+            text(
+                "SELECT status, failure_class FROM runtime_private.attempts "
+                "WHERE attempt_id=:attempt_id"
+            ),
             {"attempt_id": lease.attempt_id},
-        ).scalar_one()
-    assert previous_status == "unknown"
+        ).one()
+    assert tuple(previous_attempt) == ("unknown", "worker_lost")
     return new_lease
 
 

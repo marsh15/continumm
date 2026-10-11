@@ -27,7 +27,7 @@ from continuum_api.runtime.transitions import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_NAME = "continuum_t08_test"
 T07_REVISION = "20261011_03"
-T08_REVISION = "20261011_05"
+T08_REVISION = "20261011_06"
 RUNTIME_ROLE = "continuum_runtime"
 ROLE_NAMES = (
     RUNTIME_ROLE,

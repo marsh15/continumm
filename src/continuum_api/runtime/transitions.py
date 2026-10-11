@@ -18,6 +18,7 @@ from continuum_api.runtime.leases import ExecutionLease, LeaseLost, lock_current
 from continuum_api.runtime.persistence import (
     EventActor,
     Principal,
+    ReplayPolicy,
     RunStatus,
     RuntimeRepository,
 )
@@ -57,6 +58,7 @@ class NextWork:
     logical_key: str
     activity: str
     revision: int = 0
+    replay_policy: ReplayPolicy = ReplayPolicy.ATTENTION_ON_UNKNOWN
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,11 @@ class TransitionService:
                     "activity": next_work.activity,
                     "logical_key": next_work.logical_key,
                     "revision": next_work.revision,
+                    **(
+                        {"replay_policy": next_work.replay_policy.value}
+                        if next_work.replay_policy is ReplayPolicy.REPLAY_SAFE
+                        else {}
+                    ),
                 },
                 "result": result,
                 "target_run_status": target_run_status.value,
@@ -307,7 +314,9 @@ class TransitionService:
                     next_work.activity,
                     revision=next_work.revision,
                 )
-                next_job_id = repository.create_job(run_id, next_step_id)
+                next_job_id = repository.create_job(
+                    run_id, next_step_id, replay_policy=next_work.replay_policy
+                )
 
             event_sequence: int = connection.execute(
                 text(

@@ -78,7 +78,19 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   The focused integration, formatting, lint and typing passed; its owned
   fixture was removed.
   Hosted gates remain open.
-- T10 onward: pending their declared dependencies.
+- T10: local recovery, retries and durable waits complete. Failure counts are
+  distinct from attempt generations; retries persist `available_at`, honor
+  retry-after/deadlines, and stop after three classified transient failures.
+  Recovery requeues only explicitly replay-safe work; unknown effects move to
+  needs attention. Capacity waits without a known resume time remain manual.
+  Separate isolated PostgreSQL 17 targets passed T10 recovery, T08 transitions
+  and T09 leases/deadlock regression. Each target uses its own disposable server
+  because fixture role names are cluster-wide. Final formatting, lint, typing,
+  101 Python tests (8 expected integration environment skips), and package build
+  passed; unchanged frontend/Edge checks passed with 3/21 tests. The owned
+  fixture was removed and unrelated containers preserved. Hosted gates remain
+  open. See [runtime setup](../docs/runtime-persistence.md).
+- T11 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

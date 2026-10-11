@@ -80,6 +80,54 @@ up to 32 KiB. Full workspace archives remain in the later artifact/checkpoint
 slice. Legacy attempts and T08 accepted results retain null lease identity on
 migration; T09 does not invent historical owners or generations.
 
+## Recovery and durable waits (T10)
+
+Migration `20261011_06` separates each job's `failure_count` from its claim
+generation and stores an explicit `replay_policy`, optional capacity resume
+time, and the terminal failure class on each attempt. Existing jobs default to
+`attention_on_unknown`; work may opt into `replay_safe` only when repeating the
+activity after a lost worker cannot duplicate an external effect. Claim-time
+recovery and `RuntimeRecoveryService.recover_due()` both record a crashed
+attempt as `unknown` with `worker_lost`. The expired attempt consumes a new
+generation, not the failure retry budget.
+
+`recover_due()` uses PostgreSQL time and row locks to recover expired replay-safe
+leases and timed capacity waits. It is safe to run repeatedly and concurrently;
+run → step → job → attempt lock order fences each change, and recovery checks the
+lease expiry and run deadline after obtaining the attempt lock and again before
+commit. A replay-safe expired lease returns to the queue immediately. An
+expired lease with `attention_on_unknown` ends in `needs_attention` without
+replay. Due retry jobs remain queued with their persisted `available_at`; a
+worker can claim them after that time, including after the API process restarts.
+
+Transient read failures receive at most three total attempts. Their delay uses
+full jitter with a one-second initial cap and a 60-second maximum; a later
+provider `retry_after` takes precedence when it remains before the run deadline.
+If the next retry would reach or pass the deadline, the job and run fail.
+Missing credentials persist `waiting_credentials` without advancing the
+failure counter. Resource exhaustion persists `waiting_capacity`; an explicit
+provider resume time allows automatic recovery, while an unknown capacity
+window waits for an operator-triggered later transition. Invalid input and
+unsupported environments fail without retry. Unknown effects, conflicts,
+corrupt artifacts, and lost model responses stop in `needs_attention`.
+
+The T10 integration fixture requires an administrative URL for a disposable
+loopback PostgreSQL 17 database named `continuum_t10_test`. It creates and
+removes the runtime roles and private schemas while proving restart-safe retry
+eligibility, expired-lease recovery, ownership isolation, deadlines, concurrent
+recovery, and explicit capacity waits.
+
+```sh
+CONTINUUM_T10_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:55440/continuum_t10_test' \
+  make test-target TARGET=tests/integration/test_scheduler.py
+```
+
+Run each integration target on its own disposable PostgreSQL 17 instance.
+Although the fixtures use different database names, they create and remove the
+same cluster-wide runtime roles, so separate databases on one server can still
+conflict during setup or cleanup. Do not run these targets concurrently against
+one server.
+
 The T07 integration fixture requires a disposable loopback PostgreSQL 17
 database named `continuum_t07_test`; the T08 fixture uses
 `continuum_t08_test`. The URL must be administrative enough to create and drop
