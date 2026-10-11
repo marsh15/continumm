@@ -72,8 +72,11 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   passed. `make check build-package` passed with 90 Python tests, 7 expected
   integration environment skips, 3 frontend tests and 21 Edge tests. The final
   checkpoint regression passed separately; its fixture container was removed.
-  Checkpoint C closes its process and DB-time proofs, but remains open for a
-  real two-transaction deadlock experiment; injected SQLSTATE retry is verified.
+  Checkpoint C is complete locally. A follow-up PostgreSQL integration formed
+  an actual two-transaction lock cycle, captured `40P01`, proved rollback before
+  retry, and verified one committed result/event/next job plus receipt adoption.
+  The focused integration, formatting, lint and typing passed; its owned
+  fixture was removed.
   Hosted gates remain open.
 - T10 onward: pending their declared dependencies.
 

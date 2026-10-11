@@ -125,9 +125,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - [x] Two independent processes cannot commit competing results.
 - [x] Database-time boundary races are deterministic in tests.
-- [ ] Lock-order and bounded deadlock-retry tests pass.
-  Run-first skip-locked selection and bounded SQLSTATE `40P01` retry pass;
-  a real two-transaction deadlock proof remains pending.
+- [x] Lock-order and bounded deadlock-retry tests pass.
+  Run-first skip-locked selection, bounded retry, and an actual two-transaction
+  PostgreSQL deadlock with rollback/retry are verified.
 
 ### T10 — Recovery, retries, and durable waits
 

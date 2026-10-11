@@ -7,6 +7,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -15,7 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import IntegrityError
 
@@ -164,6 +165,12 @@ def test_claims_heartbeat_and_fenced_results_use_database_ownership() -> None:
         final_lease = queue.claim_one("final-worker")
         assert final_lease is not None and final_lease.generation == 5
         _persist_checkpoint_and_finish(queue, runtime_engine, owner_id, final_lease, next_job_id)
+
+        deadlock_run, _, _ = _seed_work(admin_engine, terminal_owner, RunStatus.QUEUED)
+        deadlock_queue = QueueService(runtime_engine, Principal(terminal_owner))
+        deadlock_lease = deadlock_queue.claim_one("real-deadlock-worker")
+        assert deadlock_lease is not None and deadlock_lease.run_id == deadlock_run
+        _assert_real_deadlock_retries_transition(admin_engine, runtime_url_text, deadlock_lease)
 
         _run_migration("downgrade", T04_REVISION, database_url)
         migration_applied = False
@@ -609,6 +616,250 @@ def _assert_one_shot_retry_and_attempt(
         ).one()
     assert retry_count >= 2
     assert tuple(current) == (1, "leased", 1)
+
+
+def _assert_real_deadlock_retries_transition(
+    admin_engine: Engine, runtime_url: str, lease: ExecutionLease
+) -> None:
+    service_application = "t09-real-deadlock-service"
+    blocker_application = "t09-real-deadlock-blocker"
+    with admin_engine.begin() as connection:
+        connection.exec_driver_sql(f"ALTER ROLE {RUNTIME_ROLE} SET deadlock_timeout TO '500ms'")
+
+    service_engine = create_engine(
+        runtime_url,
+        hide_parameters=True,
+        pool_size=1,
+        max_overflow=0,
+        connect_args={"application_name": service_application},
+    )
+    blocker_engine = create_engine(
+        admin_engine.url,
+        hide_parameters=True,
+        pool_size=1,
+        max_overflow=0,
+        connect_args={"application_name": blocker_application},
+    )
+    blocker_holds_job = threading.Event()
+    form_cycle = threading.Event()
+    blocker_holds_run = threading.Event()
+    release_blocker = threading.Event()
+    blocker_pid: list[int] = []
+    blocker_errors: list[BaseException] = []
+    deadlock_sqlstates: list[str] = []
+    attempt_count = 0
+    attempt_count_lock = threading.Lock()
+
+    def record_database_error(context: Any) -> None:
+        original = context.original_exception
+        sqlstate = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+        if sqlstate is not None:
+            deadlock_sqlstates.append(str(sqlstate))
+
+    def lock_job_then_run() -> None:
+        with blocker_engine.connect() as connection:
+            transaction = connection.begin()
+            try:
+                connection.exec_driver_sql("SET LOCAL deadlock_timeout = '30s'")
+                connection.execute(
+                    text(
+                        "SELECT job_id FROM runtime_private.jobs "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id "
+                        "FOR UPDATE"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id, "job_id": lease.job_id},
+                ).one()
+                blocker_pid.append(connection.execute(text("SELECT pg_backend_pid()")).scalar_one())
+                blocker_holds_job.set()
+                if not form_cycle.wait(timeout=15):
+                    raise TimeoutError("deadlock_fixture_cycle_gate_timeout")
+                connection.execute(
+                    text(
+                        "SELECT run_id FROM runtime_private.runs "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id FOR UPDATE"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id},
+                ).one()
+                blocker_holds_run.set()
+                if not release_blocker.wait(timeout=15):
+                    raise TimeoutError("deadlock_fixture_release_gate_timeout")
+                transaction.commit()
+            except BaseException as error:
+                blocker_errors.append(error)
+                if transaction.is_active:
+                    transaction.rollback()
+                raise
+
+    service = TransitionService(service_engine, Principal(lease.owner_id))
+    original_commit_once = service._commit_once
+
+    def count_commit_attempt(**kwargs: Any):
+        nonlocal attempt_count
+        with attempt_count_lock:
+            attempt_count += 1
+        return original_commit_once(**kwargs)
+
+    service._commit_once = count_commit_attempt  # type: ignore[method-assign]
+    event.listen(service_engine, "handle_error", record_database_error)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            blocker_future = executor.submit(lock_job_then_run)
+            assert blocker_holds_job.wait(timeout=10)
+            service_future = executor.submit(
+                service.commit_result,
+                lease=lease,
+                result={"deadlock": "retry"},
+                target_run_status=RunStatus.RUNNING,
+                next_work=NextWork("deadlock:next", "validate", revision=1),
+            )
+            service_pid = _wait_for_pg_blocking(admin_engine, service_application)
+            assert (
+                _wait_for_pg_blocking(
+                    admin_engine, service_application, expected_blocker=blocker_pid[0]
+                )
+                == service_pid
+            )
+
+            # The service is already waiting on the job after acquiring the run;
+            # asking for the run now forms the intentional inverse lock edge.
+            form_cycle.set()
+            assert (
+                _wait_for_pg_blocking(
+                    admin_engine, blocker_application, expected_blocker=service_pid
+                )
+                == blocker_pid[0]
+            )
+            assert blocker_holds_run.wait(timeout=10)
+            _wait_for_pg_blocking(
+                admin_engine, service_application, expected_blocker=blocker_pid[0]
+            )
+            with attempt_count_lock:
+                assert attempt_count >= 2
+            _assert_transition_is_pristine(admin_engine, lease)
+
+            release_blocker.set()
+            blocker_future.result(timeout=10)
+            receipt = service_future.result(timeout=20)
+
+        assert "40P01" in deadlock_sqlstates
+        assert not blocker_errors
+        assert receipt.adopted is False and receipt.event_sequence == 2
+        assert receipt.next_step_id is not None and receipt.next_job_id is not None
+        adopted = service.commit_result(
+            lease=lease,
+            result={"deadlock": "retry"},
+            target_run_status=RunStatus.RUNNING,
+            next_work=NextWork("deadlock:next", "validate", revision=1),
+        )
+        assert adopted.adopted is True and adopted.result_id == receipt.result_id
+        _assert_deadlock_transition_committed(admin_engine, lease, receipt)
+    finally:
+        form_cycle.set()
+        release_blocker.set()
+        event.remove(service_engine, "handle_error", record_database_error)
+        service_engine.dispose()
+        blocker_engine.dispose()
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(f"ALTER ROLE {RUNTIME_ROLE} RESET deadlock_timeout")
+
+
+def _wait_for_pg_blocking(
+    engine: Engine, application_name: str, *, expected_blocker: int | None = None
+) -> int:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT activity.pid, pg_blocking_pids(activity.pid) AS blockers "
+                    "FROM pg_stat_activity AS activity "
+                    "WHERE activity.application_name=:application_name "
+                    "AND activity.state='active' AND activity.wait_event_type='Lock' "
+                    "ORDER BY activity.query_start DESC LIMIT 1"
+                ),
+                {"application_name": application_name},
+            ).one_or_none()
+        if row is not None and row.blockers:
+            if expected_blocker is None or expected_blocker in row.blockers:
+                return row.pid
+        time.sleep(0.005)
+    pytest.fail(f"T09 {application_name} did not reach the expected PostgreSQL lock wait")
+
+
+def _assert_transition_is_pristine(engine: Engine, lease: ExecutionLease) -> None:
+    with engine.connect() as connection:
+        state = connection.execute(
+            text(
+                "SELECT run.status, step.status, job.status, job.generation, "
+                "attempt.status, (SELECT count(*) FROM runtime_private.events AS event "
+                " WHERE event.owner_id=run.owner_id AND event.run_id=run.run_id), "
+                "(SELECT count(*) FROM runtime_private.accepted_results AS result "
+                " WHERE result.owner_id=run.owner_id AND result.run_id=run.run_id), "
+                "(SELECT count(*) FROM runtime_private.jobs AS next_job "
+                " WHERE next_job.owner_id=run.owner_id AND next_job.run_id=run.run_id) "
+                "FROM runtime_private.runs AS run "
+                "JOIN runtime_private.steps AS step ON step.owner_id=run.owner_id "
+                "AND step.run_id=run.run_id "
+                "JOIN runtime_private.jobs AS job ON job.owner_id=step.owner_id "
+                "AND job.run_id=step.run_id AND job.step_id=step.step_id "
+                "JOIN runtime_private.attempts AS attempt ON attempt.owner_id=job.owner_id "
+                "AND attempt.run_id=job.run_id AND attempt.job_id=job.job_id "
+                "AND attempt.generation=job.generation "
+                "WHERE run.owner_id=:owner_id AND run.run_id=:run_id "
+                "AND step.step_id=:step_id AND job.job_id=:job_id"
+            ),
+            {
+                "owner_id": lease.owner_id,
+                "run_id": lease.run_id,
+                "step_id": lease.step_id,
+                "job_id": lease.job_id,
+            },
+        ).one()
+    assert tuple(state) == ("running", "running", "leased", 1, "running", 1, 0, 1)
+
+
+def _assert_deadlock_transition_committed(
+    engine: Engine, lease: ExecutionLease, receipt: Any
+) -> None:
+    with engine.connect() as connection:
+        state = connection.execute(
+            text(
+                "SELECT run.status, step.status, job.status, job.generation, attempt.status, "
+                "(SELECT count(*) FROM runtime_private.events AS event "
+                " WHERE event.owner_id=run.owner_id AND event.run_id=run.run_id), "
+                "(SELECT count(*) FROM runtime_private.accepted_results AS result "
+                " WHERE result.owner_id=run.owner_id AND result.run_id=run.run_id), "
+                "(SELECT count(*) FROM runtime_private.jobs AS next_job "
+                " WHERE next_job.owner_id=run.owner_id AND next_job.run_id=run.run_id) "
+                "FROM runtime_private.runs AS run "
+                "JOIN runtime_private.steps AS step ON step.owner_id=run.owner_id "
+                "AND step.run_id=run.run_id "
+                "JOIN runtime_private.jobs AS job ON job.owner_id=step.owner_id "
+                "AND job.run_id=step.run_id AND job.step_id=step.step_id "
+                "JOIN runtime_private.attempts AS attempt ON attempt.owner_id=job.owner_id "
+                "AND attempt.run_id=job.run_id AND attempt.job_id=job.job_id "
+                "AND attempt.generation=job.generation "
+                "WHERE run.owner_id=:owner_id AND run.run_id=:run_id "
+                "AND step.step_id=:step_id AND job.job_id=:job_id"
+            ),
+            {
+                "owner_id": lease.owner_id,
+                "run_id": lease.run_id,
+                "step_id": lease.step_id,
+                "job_id": lease.job_id,
+            },
+        ).one()
+        accepted = connection.execute(
+            text(
+                "SELECT result_id, event_sequence, next_job_id "
+                "FROM runtime_private.accepted_results "
+                "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
+            ),
+            {"owner_id": lease.owner_id, "run_id": lease.run_id, "step_id": lease.step_id},
+        ).one()
+    assert tuple(state) == ("running", "succeeded", "succeeded", 1, "succeeded", 2, 1, 2)
+    assert tuple(accepted) == (receipt.result_id, 2, receipt.next_job_id)
 
 
 def _assert_run_first_skip_locked(admin_engine: Engine, runtime_url: str, owner_id: UUID) -> None:

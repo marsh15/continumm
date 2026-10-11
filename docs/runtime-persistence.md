@@ -105,7 +105,8 @@ CONTINUUM_T09_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:5548
   make test-target TARGET=tests/integration/test_leases.py
 ```
 
-Checkpoint C still needs a real two-transaction deadlock experiment. The T09
-fixture verifies run-first skip-locked selection and injects PostgreSQL SQLSTATE
-`40P01` to prove transaction rollback and bounded retry; that injection does not
-create a deadlock between two transactions.
+Checkpoint C is verified locally. The T09 fixture forms a real two-transaction
+lock cycle using separate connections, observes both blocking edges through
+`pg_blocking_pids`, captures PostgreSQL SQLSTATE `40P01`, and verifies rollback
+before the transition retry commits exactly one result/event/next job. Separate
+processes exercise competing claims and result submissions.
