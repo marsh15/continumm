@@ -66,6 +66,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T03.
 - **Scope:** Medium; sandbox adapter skeleton and hosted smoke tests.
+- **Progress:** Local adapter and opt-in fixture preparation verified; hosted lifecycle and killed-client timeout proof remain pending. See [sandbox setup](../docs/sandbox-setup.md).
 - [ ] Create a named session with limits, run a harmless fixture, stream files, and stop/destroy it.
 - [ ] Demonstrate a server-side timeout after the client/API process is killed and verify no credentials are available inside.
 - **Verify:** make smoke-hosted; inspect remote allocation state and redacted evidence.

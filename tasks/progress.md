@@ -19,8 +19,13 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   The temporary PostgreSQL container was removed. The operator confirmed Render
   and Supabase projects are not set up; [hosted evidence](../docs/evidence/t03-hosted.md)
   remains **NOT RUN**. Follow [hosting setup](../docs/hosting-setup.md) next.
-- T04: local sandbox lifecycle preparation in progress; hosted proof pending.
-- T05: ingress design researched; implementation follows the T04 local slice.
+- T04: local preparation complete; hosted proof remains pending. The pinned
+  `vercel==0.11.6` adapter uses exact session handles, bounded output/file streams,
+  immutable image configuration and explicit smoke IDs. `make check` passed with
+  66 backend tests, 2 optional PostgreSQL skips and 3 frontend tests; `make build`
+  passed. The disabled smoke target refused before SDK calls. No Vercel calls
+  were made. [Hosted evidence](../docs/evidence/t04-hosted.md) remains **NOT RUN**.
+- T05: ingress implementation in progress after the verified T04 local slice.
 - T06 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not

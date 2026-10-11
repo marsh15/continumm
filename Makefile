@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration smoke-hosted test-ui openapi frontend-install frontend-openapi-check build build-package build-frontend build-container
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui openapi frontend-install frontend-openapi-check build build-package build-frontend build-container
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
@@ -35,6 +35,20 @@ test-integration:
 
 smoke-hosted:
 	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.connectivity.smoke
+
+smoke-sandbox:
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.sandbox.smoke lifecycle
+
+sandbox-crash-fixture:
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.sandbox.smoke crash-fixture
+
+sandbox-observe:
+	@test -n "$(NAME)" || (echo "Usage: make sandbox-observe NAME=continuum-t04-<uuid> [PROCESS_ID=<id>]" >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.sandbox.smoke observe --name "$(NAME)" $(if $(PROCESS_ID),--process-id "$(PROCESS_ID)",)
+
+sandbox-cleanup:
+	@test -n "$(NAME)" || (echo "Usage: make sandbox-cleanup NAME=continuum-t04-<uuid>" >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.sandbox.smoke cleanup --name "$(NAME)"
 
 frontend-install:
 	cd frontend && npm ci

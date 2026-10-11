@@ -10,6 +10,8 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [Frontend foundation and generated API contract](frontend.md)
 - [Hosting setup](hosting-setup.md)
 - [T03 hosted evidence (not run)](evidence/t03-hosted.md)
+- [Managed sandbox setup](sandbox-setup.md)
+- [T04 hosted evidence (not run)](evidence/t04-hosted.md)
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the historical Continuum specification from September. Its claims of prior approval do not override the new interview decisions or the current proposed plan. It is preserved unchanged as reference material.
 
