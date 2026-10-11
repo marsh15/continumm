@@ -10,7 +10,9 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-KNOWN_REVISIONS = frozenset({"base", "head", "20261011_01", "20261011_02", "20261011_03"})
+KNOWN_REVISIONS = frozenset(
+    {"base", "head", "20261011_01", "20261011_02", "20261011_03", "20261011_04"}
+)
 
 
 def main(arguments: list[str] | None = None) -> int:

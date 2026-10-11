@@ -109,8 +109,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T07.
 - **Scope:** Medium; transition service and integration tests.
-- [ ] Commit accepted result, state, event, and next job atomically using the documented lock order.
-- [ ] Rollback leaves no partial advancement; lost acknowledgment recovery finds the committed result.
+- [x] Commit accepted result, state, event, and next job atomically using the documented lock order.
+- [x] Rollback leaves no partial advancement; lost acknowledgment recovery finds the committed result.
 - **Verify:** make test-target TARGET=tests/integration/test_transitions.py.
 
 ### T09 — Claim, heartbeat, and fencing

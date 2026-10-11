@@ -53,7 +53,16 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   tests, 5 expected integration environment skips, 3 frontend tests and 21 Edge
   tests. The separate T07 integration passed and its container was removed.
   See [runtime setup](../docs/runtime-persistence.md). Hosted gates remain open.
-- T08 onward: pending their declared dependencies.
+- T08: local atomic activity transitions complete. Accepted result, state, event,
+  and next job commit together in run/step/job lock order. Exact replay adopts
+  a receipt; changed intent conflicts. Dedicated PostgreSQL 17 tests passed late
+  failure rollback, terminal rejection, T07 regression, and migration rollback/
+  re-upgrade. Unit checks cover bounded deadlock/serialization retries and no
+  connection-loss retry. `make check build-package` passed with 87 Python tests,
+  6 expected integration environment skips, 3 frontend tests and 21 Edge tests.
+  Both owned database fixtures were removed. The internal service remains
+  unconnected to execution until T09 fencing; hosted gates remain open.
+- T09 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

@@ -274,6 +274,19 @@ class RuntimeRepository:
         payload: dict[str, Any] | None = None,
         event_id: UUID | None = None,
     ) -> UUID:
+        run_row = self._connection.execute(
+            text(
+                """
+                SELECT run_id
+                FROM runtime_private.runs
+                WHERE owner_id = :owner_id AND run_id = :run_id
+                FOR UPDATE
+                """
+            ),
+            {"owner_id": self._principal.account_id, "run_id": run_id},
+        ).one_or_none()
+        if run_row is None:
+            raise ValueError("runtime_run_not_found")
         selected_event_id = event_id or uuid4()
         serialized_payload = json.dumps(
             payload or {}, ensure_ascii=False, allow_nan=False, separators=(",", ":")

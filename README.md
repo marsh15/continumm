@@ -30,7 +30,7 @@ make check
 make build
 ```
 
-`make build` creates a Python distribution under `dist/`, a static frontend build, and the local Docker image `continuum-api:local`. The container serves the built frontend from the API process. The image defaults to production configuration and exits with a redacted configuration error until explicit deployment settings are provided. Authentication and runtime transitions are not implemented yet, so this foundation is not a public service.
+`make build` creates a Python distribution under `dist/`, a static frontend build, and the local Docker image `continuum-api:local`. The container serves the built frontend from the API process. The image defaults to production configuration and exits with a redacted configuration error until explicit deployment settings are provided. Authentication and worker orchestration are not implemented yet, so this foundation is not a public service.
 
 ## Configuration
 
