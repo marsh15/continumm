@@ -1,0 +1,4 @@
+project_id = "continumm"
+
+[functions.github-ingress]
+verify_jwt = false

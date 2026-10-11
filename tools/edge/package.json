@@ -1,0 +1,12 @@
+{
+  "name": "continumm-edge-toolchain",
+  "private": true,
+  "scripts": {
+    "check": "deno check --config ../../supabase/functions/github-ingress/deno.json ../../supabase/functions/github-ingress/index.ts ../../supabase/functions/github-ingress/handler_test.ts ../../supabase/functions/github-ingress/postgres_inbox_test.ts ../../supabase/functions/github-ingress/integration_test.ts",
+    "test": "deno test --config ../../supabase/functions/github-ingress/deno.json ../../supabase/functions/github-ingress/handler_test.ts ../../supabase/functions/github-ingress/postgres_inbox_test.ts",
+    "test-integration": "deno test --config ../../supabase/functions/github-ingress/deno.json --allow-env=CONTINUUM_TEST_INGRESS_DATABASE_URL --allow-net=localhost,127.0.0.1 ../../supabase/functions/github-ingress/integration_test.ts"
+  },
+  "devDependencies": {
+    "deno": "2.9.6"
+  }
+}

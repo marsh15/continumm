@@ -1,10 +1,11 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui openapi frontend-install frontend-openapi-check build build-package build-frontend build-container
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
 	cd frontend && npm ci
+	$(MAKE) edge-install
 
 dev:
 	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api
@@ -12,13 +13,13 @@ dev:
 dev-web:
 	cd frontend && npm run dev
 
-check: format-check lint typecheck test test-ui
+check: format-check lint typecheck test test-ui edge-format-check edge-check test-edge
 
 format-check:
-	uv run --locked --python $(PYTHON_VERSION) ruff format --check src tests
+	uv run --locked --python $(PYTHON_VERSION) ruff format --check src tests migrations
 
 lint:
-	uv run --locked --python $(PYTHON_VERSION) ruff check src tests
+	uv run --locked --python $(PYTHON_VERSION) ruff check src tests migrations
 
 typecheck:
 	uv run --locked --python $(PYTHON_VERSION) mypy
@@ -32,6 +33,24 @@ test-target:
 
 test-integration:
 	uv run --locked --python $(PYTHON_VERSION) pytest -q tests/integration
+
+test-edge:
+	npm --prefix tools/edge test
+
+edge-check:
+	npm --prefix tools/edge run check
+
+edge-format-check:
+	npm --prefix tools/edge exec -- deno fmt --check --config supabase/functions/github-ingress/deno.json supabase/functions/github-ingress
+
+edge-install:
+	npm ci --prefix tools/edge
+
+migrate-up:
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.migrations upgrade head
+
+migrate-down:
+	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.migrations downgrade base
 
 smoke-hosted:
 	uv run --locked --python $(PYTHON_VERSION) python -m continuum_api.connectivity.smoke

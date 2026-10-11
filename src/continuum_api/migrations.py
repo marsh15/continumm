@@ -1,0 +1,38 @@
+"""Run database migrations without exposing connection details in command output."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+
+
+def main(arguments: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="continuum-migrate")
+    parser.add_argument("operation", choices=("upgrade", "downgrade"))
+    parser.add_argument("revision", choices=("head", "base"))
+    parsed = parser.parse_args(arguments)
+
+    if not os.environ.get("CONTINUUM_MIGRATION_DATABASE_URL"):
+        print("migration_database_url_required", file=sys.stderr)
+        return 2
+
+    project_root = Path(__file__).resolve().parents[2]
+    try:
+        alembic_config = Config(str(project_root / "alembic.ini"))
+        if parsed.operation == "upgrade":
+            command.upgrade(alembic_config, parsed.revision)
+        else:
+            command.downgrade(alembic_config, parsed.revision)
+    except Exception:
+        print("migration_failed", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

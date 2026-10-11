@@ -75,6 +75,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T03.
 - **Scope:** Medium; tiny edge handler, inbox migration, signature tests, deployment configuration.
+- **Progress:** Local receiver, private migration and real PostgreSQL integration verified; deployed ingress and sleeping-Render proof remain pending. See [ingress setup](../docs/ingress-setup.md).
 - [ ] Verify HMAC over raw bytes and commit an inbox entry before acknowledging; reject oversized or invalid payloads.
 - [ ] Show that a duplicate delivery and lost acknowledgment do not duplicate the stored event, including when Render is asleep.
 - **Verify:** make test-target TARGET=tests/integration/test_webhook_inbox.py; make smoke-hosted.

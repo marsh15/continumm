@@ -25,8 +25,17 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   66 backend tests, 2 optional PostgreSQL skips and 3 frontend tests; `make build`
   passed. The disabled smoke target refused before SDK calls. No Vercel calls
   were made. [Hosted evidence](../docs/evidence/t04-hosted.md) remains **NOT RUN**.
-- T05: ingress implementation in progress after the verified T04 local slice.
-- T06 onward: pending their declared dependencies.
+- T05: local preparation complete; hosted acceptance remains pending. The Deno
+  receiver verifies bounded raw bodies before parsing and acknowledges only a
+  committed inbox result. Private migration metadata, column-limited ingress
+  privileges and unsafe-role rejection are verified. The PostgreSQL 17.11
+  integration passed, including duplicate/conflict/lost-ack and permission cases.
+  `make check` passed with 68 backend tests, 3 optional integration skips,
+  3 frontend tests and 14 Deno tests; `make build` passed. The disposable database
+  container was removed. [Hosted evidence](../docs/evidence/t05-hosted.md) is
+  **NOT RUN**.
+- T06: local wake preparation in progress after the verified T05 slice.
+- T07 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
