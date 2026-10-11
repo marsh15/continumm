@@ -15,6 +15,7 @@ from sqlalchemy.exc import DBAPIError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_NAME = "continuum_t05_test"
+T05_REVISION = "20261011_01"
 INGRESS_ROLE = "continuum_ingress"
 APP_ID = 9_223_372_036_854_775_000
 DELIVERY_IDS = (
@@ -73,19 +74,19 @@ def test_signed_deliveries_commit_once_and_migrations_roll_back() -> None:
         with engine.begin() as connection:
             connection.execute(text("CREATE ROLE t05_membership_test NOLOGIN"))
             connection.execute(text("GRANT t05_membership_test TO continuum_ingress"))
-        _run_migration("upgrade", "head", database_url, expect_success=False)
+        _run_migration("upgrade", T05_REVISION, database_url, expect_success=False)
         _assert_inbox_schema_absent(engine)
 
         with engine.begin() as connection:
             connection.execute(text("REVOKE t05_membership_test FROM continuum_ingress"))
             connection.execute(text("DROP ROLE t05_membership_test"))
             connection.execute(text("ALTER ROLE continuum_ingress BYPASSRLS"))
-        _run_migration("upgrade", "head", database_url, expect_success=False)
+        _run_migration("upgrade", T05_REVISION, database_url, expect_success=False)
         _assert_inbox_schema_absent(engine)
         with engine.begin() as connection:
             connection.execute(text("ALTER ROLE continuum_ingress NOBYPASSRLS"))
 
-        _run_migration("upgrade", "head", database_url)
+        _run_migration("upgrade", T05_REVISION, database_url)
         migration_applied = True
         _assert_ingress_privileges(engine, ingress_url)
         _assert_migration_metadata_is_private(engine)
@@ -108,7 +109,7 @@ def test_signed_deliveries_commit_once_and_migrations_roll_back() -> None:
             ).scalar_one()
         assert schema_exists is False
 
-        _run_migration("upgrade", "head", database_url)
+        _run_migration("upgrade", T05_REVISION, database_url)
         migration_applied = True
         with engine.connect() as connection:
             table_exists = connection.execute(

@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "@db/postgres": "jsr:@db/postgres@0.19.5"
+  },
+  "lock": "../github-ingress/deno.lock",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true
+  }
+}

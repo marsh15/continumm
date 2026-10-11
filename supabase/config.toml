@@ -2,3 +2,6 @@ project_id = "continumm"
 
 [functions.github-ingress]
 verify_jwt = false
+
+[functions.wake-dispatch]
+verify_jwt = false

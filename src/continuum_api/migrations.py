@@ -10,11 +10,13 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
+KNOWN_REVISIONS = frozenset({"base", "head", "20261011_01", "20261011_02"})
+
 
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="continuum-migrate")
     parser.add_argument("operation", choices=("upgrade", "downgrade"))
-    parser.add_argument("revision", choices=("head", "base"))
+    parser.add_argument("revision", choices=sorted(KNOWN_REVISIONS))
     parsed = parser.parse_args(arguments)
 
     if not os.environ.get("CONTINUUM_MIGRATION_DATABASE_URL"):

@@ -34,7 +34,17 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   3 frontend tests and 14 Deno tests; `make build` passed. The disposable database
   container was removed. [Hosted evidence](../docs/evidence/t05-hosted.md) is
   **NOT RUN**.
-- T06: local wake preparation in progress after the verified T05 slice.
+- T06: local preparation complete; hosted acceptance remains pending. The fenced
+  DB-ticket dispatcher checks pending work, backoff and capacity holds. The
+  authenticated backend commits coalesced receipts without claiming a drain.
+  Real PostgreSQL 17 tests cover concurrency, expiry during lock waits, role
+  privileges, rollback/re-upgrade and the actual Edge-to-FastAPI path. `make check`
+  passed with 83 Python tests, 4 expected environment skips, 3 frontend tests and
+  21 Edge tests; `make build` passed. The separate T06 PostgreSQL integration
+  passed, and its database/API fixtures were removed. The cron SQL remains
+  unexecuted locally and hosted. [Hosted evidence](../docs/evidence/t06-hosted.md)
+  is **NOT RUN**; `last_successful_drain_at` remains null until a real consumer
+  commits a drain.
 - T07 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not

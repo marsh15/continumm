@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
+from continuum_api.wake import create_wake_router
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +53,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         docs_url="/docs",
         redoc_url=None,
     )
+    application.include_router(create_wake_router())
 
     @application.middleware("http")
     async def structured_request_log(
@@ -160,7 +163,7 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
     async def frontend_or_not_found(asset_path: str, request: Request) -> Response:
         """Serve built assets and SPA routes without exposing other application files."""
         normalized_path = asset_path.lstrip("/")
-        reserved = ("api", "auth", "health", "openapi.json", "docs")
+        reserved = ("api", "auth", "health", "internal", "openapi.json", "docs")
         if any(
             normalized_path == prefix or normalized_path.startswith(f"{prefix}/")
             for prefix in reserved

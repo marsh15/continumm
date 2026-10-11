@@ -2,9 +2,10 @@
   "name": "continumm-edge-toolchain",
   "private": true,
   "scripts": {
-    "check": "deno check --config ../../supabase/functions/github-ingress/deno.json ../../supabase/functions/github-ingress/index.ts ../../supabase/functions/github-ingress/handler_test.ts ../../supabase/functions/github-ingress/postgres_inbox_test.ts ../../supabase/functions/github-ingress/integration_test.ts",
-    "test": "deno test --config ../../supabase/functions/github-ingress/deno.json ../../supabase/functions/github-ingress/handler_test.ts ../../supabase/functions/github-ingress/postgres_inbox_test.ts",
-    "test-integration": "deno test --config ../../supabase/functions/github-ingress/deno.json --allow-env=CONTINUUM_TEST_INGRESS_DATABASE_URL --allow-net=localhost,127.0.0.1 ../../supabase/functions/github-ingress/integration_test.ts"
+    "check": "deno check --config ../../supabase/functions/wake-dispatch/deno.json ../../supabase/functions/github-ingress/index.ts ../../supabase/functions/github-ingress/handler_test.ts ../../supabase/functions/github-ingress/postgres_inbox_test.ts ../../supabase/functions/github-ingress/integration_test.ts ../../supabase/functions/wake-dispatch/index.ts ../../supabase/functions/wake-dispatch/handler_test.ts ../../supabase/functions/wake-dispatch/integration_test.ts",
+    "test": "deno test --config ../../supabase/functions/wake-dispatch/deno.json ../../supabase/functions/github-ingress/handler_test.ts ../../supabase/functions/github-ingress/postgres_inbox_test.ts ../../supabase/functions/wake-dispatch/handler_test.ts",
+    "test-integration": "deno test --config ../../supabase/functions/github-ingress/deno.json --allow-env=CONTINUUM_TEST_INGRESS_DATABASE_URL --allow-net=localhost,127.0.0.1 ../../supabase/functions/github-ingress/integration_test.ts",
+    "test-wake-integration": "deno test --config ../../supabase/functions/wake-dispatch/deno.json --allow-env=CONTINUUM_TEST_WAKE_DATABASE_URL,CONTINUUM_TEST_WAKE_BACKEND_FIXTURE_URL,CONTINUUM_TEST_WAKE_TICKET_ID,CONTINUUM_TEST_WAKE_TICKET_VALUE,CONTINUUM_TEST_WAKE_BACKEND_TOKEN --allow-net=localhost,127.0.0.1 ../../supabase/functions/wake-dispatch/integration_test.ts"
   },
   "devDependencies": {
     "deno": "2.9.6"

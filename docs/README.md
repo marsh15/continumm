@@ -14,6 +14,8 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [T04 hosted evidence (not run)](evidence/t04-hosted.md)
 - [Durable webhook ingress setup](ingress-setup.md)
 - [T05 hosted evidence (not run)](evidence/t05-hosted.md)
+- [Work-triggered wake setup](wake-setup.md)
+- [T06 hosted evidence (not run)](evidence/t06-hosted.md)
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the historical Continuum specification from September. Its claims of prior approval do not override the new interview decisions or the current proposed plan. It is preserved unchanged as reference material.
 

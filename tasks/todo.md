@@ -84,6 +84,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T05.
 - **Scope:** Medium; wake function, schedule, authenticated drain endpoint and tests.
+- **Progress:** Local fenced dispatcher and authenticated receipt/status boundary verified. Receipts explicitly remain undrained; hosted cron, cold-start and suspension evidence are pending. See [wake setup](../docs/wake-setup.md).
 - [ ] Wake the backend only for actionable work, with backoff and no idle keepalive.
 - [ ] Simulate quota suspension and database unavailability without reporting successful processing.
 - **Verify:** make test-target TARGET=tests/integration/test_wake_dispatch.py; make smoke-hosted.
