@@ -52,7 +52,33 @@ The transition service makes at most three attempts at the full database-only
 transaction for PostgreSQL deadlock or serialization errors, with short random
 backoff. It does not retry connection loss or uncertain commit acknowledgments;
 the caller retries the same intent to adopt an already committed result. T09
-will add generation fencing and attempt finalization.
+adds generation fencing and attempt finalization.
+
+## Claims and fencing (T09)
+
+`QueueService` requires an explicit `Principal` and claims one eligible job per
+call. Claim locks the run, then its step, job, and prior attempt by stable ID,
+then reads PostgreSQL `clock_timestamp()` for due-work and lease checks. A
+successful claim changes a queued run to running, increments the job generation,
+creates one attempt with an immutable UUID and lease owner, and grants a
+60-second lease. Workers heartbeat every 15 seconds. An expired job can be
+reclaimed under the same lock order; its old running attempt becomes `unknown`
+before the next generation is issued.
+
+Heartbeats, bounded attempt checkpoints, and final accepted results require the
+`ExecutionLease` returned by a claim. They lock run → step → job → attempt and
+check generation, owner, permitted state, run deadline, and lease expiry using
+database time after locks. Heartbeat expiry cannot be revived. Final writes
+recheck the original lease after their last potentially blocking write and
+before commit. An exact accepted-result replay returns the stored receipt
+without changing state, even if the supplied lease is now stale. T09 does not
+expose worker execution through an HTTP route; activity dispatch must remain
+behind these checks.
+
+`attempt_checkpoints` stores only small JSON metadata or intermediate results,
+up to 32 KiB. Full workspace archives remain in the later artifact/checkpoint
+slice. Legacy attempts and T08 accepted results retain null lease identity on
+migration; T09 does not invent historical owners or generations.
 
 The T07 integration fixture requires a disposable loopback PostgreSQL 17
 database named `continuum_t07_test`; the T08 fixture uses
@@ -69,3 +95,17 @@ CONTINUUM_T07_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:5547
 CONTINUUM_T08_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:55480/continuum_t08_test' \
   make test-target TARGET=tests/integration/test_transitions.py
 ```
+
+The T09 integration fixture requires an administrative URL for a disposable
+loopback PostgreSQL 17 database named `continuum_t09_test`. It creates and
+removes its test roles, private schemas, and trigger fixtures.
+
+```sh
+CONTINUUM_T09_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:55481/continuum_t09_test' \
+  make test-target TARGET=tests/integration/test_leases.py
+```
+
+Checkpoint C still needs a real two-transaction deadlock experiment. The T09
+fixture verifies run-first skip-locked selection and injects PostgreSQL SQLSTATE
+`40P01` to prove transaction rollback and bounded retry; that injection does not
+create a deadlock between two transactions.

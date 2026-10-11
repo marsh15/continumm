@@ -62,7 +62,20 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   6 expected integration environment skips, 3 frontend tests and 21 Edge tests.
   Both owned database fixtures were removed. The internal service remains
   unconnected to execution until T09 fencing; hosted gates remain open.
-- T09 onward: pending their declared dependencies.
+- T09: local claims, heartbeats and fencing complete. Principal-scoped batch-one
+  claims issue monotonically increasing generations and immutable attempt
+  identities. Intermediate checkpoints and final results require a current
+  execution lease; database time is checked after locks and before commit.
+  Dedicated PostgreSQL 17 tests passed independent-process competitors, stale
+  writes, expiry during lock waits/heartbeat/checkpoint/result writes, and legacy
+  migration preservation/rollback. The adapted T08 PostgreSQL integration also
+  passed. `make check build-package` passed with 90 Python tests, 7 expected
+  integration environment skips, 3 frontend tests and 21 Edge tests. The final
+  checkpoint regression passed separately; its fixture container was removed.
+  Checkpoint C closes its process and DB-time proofs, but remains open for a
+  real two-transaction deadlock experiment; injected SQLSTATE retry is verified.
+  Hosted gates remain open.
+- T10 onward: pending their declared dependencies.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

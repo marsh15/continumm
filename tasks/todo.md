@@ -117,15 +117,17 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T08.
 - **Scope:** Medium; queue/lease functions and concurrent-worker tests.
-- [ ] Competing workers claim with a monotonic generation; expired heartbeats cannot revive ownership.
-- [ ] Fenced writes reject the old generation at intermediate and final boundaries.
+- [x] Competing workers claim with a monotonic generation; expired heartbeats cannot revive ownership.
+- [x] Fenced writes reject the old generation at intermediate and final boundaries.
 - **Verify:** make test-target TARGET=tests/integration/test_leases.py.
 
 ### Checkpoint C — Ownership proof
 
-- [ ] Two independent processes cannot commit competing results.
-- [ ] Database-time boundary races are deterministic in tests.
+- [x] Two independent processes cannot commit competing results.
+- [x] Database-time boundary races are deterministic in tests.
 - [ ] Lock-order and bounded deadlock-retry tests pass.
+  Run-first skip-locked selection and bounded SQLSTATE `40P01` retry pass;
+  a real two-transaction deadlock proof remains pending.
 
 ### T10 — Recovery, retries, and durable waits
 

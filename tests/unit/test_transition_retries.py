@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import uuid4
 
@@ -9,8 +10,14 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 
+from continuum_api.runtime.leases import ExecutionLease
 from continuum_api.runtime.persistence import Principal, RunStatus
-from continuum_api.runtime.transitions import NextWork, TransitionReceipt, TransitionService
+from continuum_api.runtime.transitions import (
+    InvalidTransition,
+    NextWork,
+    TransitionReceipt,
+    TransitionService,
+)
 
 
 class _DriverError(Exception):
@@ -89,6 +96,16 @@ def test_connection_loss_is_not_retried(monkeypatch) -> None:
     assert sleeps == []
 
 
+@pytest.mark.parametrize(
+    "terminal_status", [RunStatus.SUCCEEDED, RunStatus.CANCELLED, RunStatus.EXPIRED]
+)
+def test_activity_results_cannot_set_publication_or_control_terminal_states(
+    terminal_status: RunStatus,
+) -> None:
+    with pytest.raises(InvalidTransition, match="activity_result_cannot_set_terminal_run_status"):
+        _commit_with_status(_service(), terminal_status)
+
+
 def _service() -> TransitionService:
     return TransitionService(cast(Engine, object()), Principal(uuid4()))
 
@@ -115,11 +132,24 @@ def _database_error(sqlstate: str) -> DBAPIError:
 
 
 def _commit(service: TransitionService) -> TransitionReceipt:
+    return _commit_with_status(service, RunStatus.RUNNING)
+
+
+def _commit_with_status(
+    service: TransitionService, target_run_status: RunStatus
+) -> TransitionReceipt:
     return service.commit_result(
-        run_id=uuid4(),
-        step_id=uuid4(),
-        job_id=uuid4(),
+        lease=ExecutionLease(
+            owner_id=uuid4(),
+            run_id=uuid4(),
+            step_id=uuid4(),
+            job_id=uuid4(),
+            attempt_id=uuid4(),
+            generation=1,
+            lease_owner="unit-worker",
+            lease_expires_at=datetime.now(UTC) + timedelta(seconds=60),
+        ),
         result={"ok": True},
-        target_run_status=RunStatus.RUNNING,
+        target_run_status=target_run_status,
         next_work=NextWork("next:unit", "unit"),
     )

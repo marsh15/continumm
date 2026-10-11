@@ -7,19 +7,19 @@ import json
 import random
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import DBAPIError
 
+from continuum_api.runtime.leases import ExecutionLease, LeaseLost, lock_current_execution
 from continuum_api.runtime.persistence import (
     EventActor,
-    JobStatus,
     Principal,
     RunStatus,
     RuntimeRepository,
-    StepStatus,
 )
 
 MAX_RESULT_BYTES = 65_536
@@ -32,8 +32,6 @@ _WAIT_OR_TERMINAL_RUN_STATES = frozenset(
         RunStatus.WAITING_CAPACITY,
         RunStatus.NEEDS_ATTENTION,
         RunStatus.FAILED,
-        RunStatus.CANCELLED,
-        RunStatus.EXPIRED,
     }
 )
 
@@ -79,9 +77,10 @@ class TransitionReceipt:
 class TransitionService:
     """Commit one activity result and its state advancement as one transaction.
 
-    T08 does not claim jobs or provide worker fencing. Callers must keep this
-    internal service behind the runtime boundary until T09 ownership checks
-    are implemented. No remote operation runs inside this database retry loop.
+    The lease identity is mandatory. Exact committed receipt adoption is
+    read-only and can succeed after lease expiry; every new durable write
+    validates the current generation and database-time lease after row locks.
+    No remote operation runs inside this database retry loop.
     """
 
     def __init__(self, engine: Engine, principal: Principal) -> None:
@@ -91,9 +90,7 @@ class TransitionService:
     def commit_result(
         self,
         *,
-        run_id: UUID,
-        step_id: UUID,
-        job_id: UUID,
+        lease: ExecutionLease,
         result: dict[str, Any],
         target_run_status: RunStatus,
         next_work: NextWork | None = None,
@@ -121,9 +118,7 @@ class TransitionService:
         for attempt in range(MAX_TRANSACTION_ATTEMPTS):
             try:
                 return self._commit_once(
-                    run_id=run_id,
-                    step_id=step_id,
-                    job_id=job_id,
+                    lease=lease,
                     result_json=result_json,
                     result_digest=result_digest,
                     intent_digest=intent_digest,
@@ -142,9 +137,7 @@ class TransitionService:
     def _commit_once(
         self,
         *,
-        run_id: UUID,
-        step_id: UUID,
-        job_id: UUID,
+        lease: ExecutionLease,
         result_json: str,
         result_digest: bytes,
         intent_digest: bytes,
@@ -154,6 +147,9 @@ class TransitionService:
         with self._engine.begin() as connection:
             repository = RuntimeRepository(connection, self._principal)
             owner_id = self._principal.account_id
+            run_id = lease.run_id
+            step_id = lease.step_id
+            job_id = lease.job_id
             run = connection.execute(
                 text(
                     """
@@ -237,12 +233,11 @@ class TransitionService:
                     adopted=True,
                 )
 
-            if run.status != RunStatus.RUNNING.value:
+            # Re-locking held rows is safe; this also locks the exact attempt
+            # and obtains database time only after run, step, job, and attempt.
+            locked = lock_current_execution(connection, self._principal, lease)
+            if locked.run_status != RunStatus.RUNNING.value:
                 raise InvalidTransition("runtime_run_not_running")
-            if step.status != StepStatus.RUNNING.value:
-                raise InvalidTransition("runtime_step_not_running")
-            if job.status != JobStatus.LEASED.value or not job.lease_owner:
-                raise InvalidTransition("runtime_job_not_leased")
 
             connection.execute(
                 text(
@@ -280,6 +275,28 @@ class TransitionService:
                     "status": target_run_status.value,
                 },
             )
+            attempt_update = connection.execute(
+                text(
+                    """
+                    UPDATE runtime_private.attempts
+                    SET status='succeeded', finished_at=:finished_at
+                    WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id
+                      AND generation=:generation AND attempt_id=:attempt_id
+                      AND lease_owner=:lease_owner AND status='running'
+                    """
+                ),
+                {
+                    "finished_at": locked.database_now,
+                    "owner_id": owner_id,
+                    "run_id": run_id,
+                    "job_id": job_id,
+                    "generation": lease.generation,
+                    "attempt_id": lease.attempt_id,
+                    "lease_owner": lease.lease_owner,
+                },
+            )
+            if attempt_update.rowcount != 1:
+                raise LeaseLost("runtime_attempt_not_current")
 
             next_step_id: UUID | None = None
             next_job_id: UUID | None = None
@@ -308,7 +325,7 @@ class TransitionService:
                 event_sequence,
                 "activity.result_accepted",
                 EventActor.WORKER,
-                actor_id=job.lease_owner,
+                actor_id=lease.lease_owner,
                 payload={
                     "next_job_id": None if next_job_id is None else str(next_job_id),
                     "result_id": str(result_id),
@@ -323,11 +340,12 @@ class TransitionService:
                     INSERT INTO runtime_private.accepted_results (
                         result_id, owner_id, run_id, step_id, job_id,
                         result_sha256, intent_sha256, run_status, event_sequence,
-                        next_job_id, payload
+                        next_job_id, payload, generation, attempt_id, lease_owner
                     ) VALUES (
                         :result_id, :owner_id, :run_id, :step_id, :job_id,
                         :result_sha256, :intent_sha256, :run_status, :event_sequence,
-                        :next_job_id, CAST(:payload AS jsonb)
+                        :next_job_id, CAST(:payload AS jsonb), :generation, :attempt_id,
+                        :lease_owner
                     )
                     """
                 ),
@@ -343,8 +361,18 @@ class TransitionService:
                     "event_sequence": event_sequence,
                     "next_job_id": next_job_id,
                     "payload": result_json,
+                    "generation": lease.generation,
+                    "attempt_id": lease.attempt_id,
+                    "lease_owner": lease.lease_owner,
                 },
             )
+            final_database_now: datetime = connection.execute(
+                text("SELECT clock_timestamp()")
+            ).scalar_one()
+            if locked.lease_expires_at is None or locked.lease_expires_at <= final_database_now:
+                raise LeaseLost("runtime_lease_expired_before_commit")
+            if locked.run_deadline_at is not None and locked.run_deadline_at <= final_database_now:
+                raise LeaseLost("runtime_run_expired_before_commit")
             return TransitionReceipt(
                 result_id=result_id,
                 run_id=run_id,
@@ -361,8 +389,8 @@ class TransitionService:
 
     @staticmethod
     def _validate_plan(target_run_status: RunStatus, next_work: NextWork | None) -> None:
-        if target_run_status is RunStatus.SUCCEEDED:
-            raise InvalidTransition("activity_result_cannot_mark_run_succeeded")
+        if target_run_status in {RunStatus.SUCCEEDED, RunStatus.CANCELLED, RunStatus.EXPIRED}:
+            raise InvalidTransition("activity_result_cannot_set_terminal_run_status")
         if next_work is not None:
             if target_run_status is not RunStatus.RUNNING:
                 raise InvalidTransition("next_work_requires_running_status")

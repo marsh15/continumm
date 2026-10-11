@@ -15,10 +15,10 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import IntegrityError
 
+from continuum_api.runtime.leases import ExecutionLease, QueueService
 from continuum_api.runtime.persistence import Principal, RunStatus, RuntimeRepository
 from continuum_api.runtime.transitions import (
     MAX_RESULT_BYTES,
-    InvalidTransition,
     NextWork,
     ResultIdentityConflict,
     TransitionService,
@@ -27,7 +27,7 @@ from continuum_api.runtime.transitions import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_NAME = "continuum_t08_test"
 T07_REVISION = "20261011_03"
-T08_REVISION = "20261011_04"
+T08_REVISION = "20261011_05"
 RUNTIME_ROLE = "continuum_runtime"
 ROLE_NAMES = (
     RUNTIME_ROLE,
@@ -69,6 +69,9 @@ def test_activity_result_commits_atomically_and_recovers_lost_ack() -> None:
         run_id, source_step_id, source_job_id, duplicate_next_step_id = _seed_work(
             runtime_engine, owner_id
         )
+        queue = QueueService(runtime_engine, Principal(owner_id))
+        source_lease = queue.claim_one("fixture-worker")
+        assert source_lease is not None
         service = TransitionService(runtime_engine, Principal(owner_id))
         result = {"accepted": True, "patch": {"files": 2, "sha": "abc123"}}
         valid_next = NextWork("validate:patch", "validate", revision=0)
@@ -77,22 +80,18 @@ def test_activity_result_commits_atomically_and_recovers_lost_ack() -> None:
             service,
             runtime_engine,
             owner_id,
-            run_id,
-            source_step_id,
-            source_job_id,
+            source_lease,
             duplicate_next_step_id,
             result,
         )
         receipt = service.commit_result(
-            run_id=run_id,
-            step_id=source_step_id,
-            job_id=source_job_id,
+            lease=source_lease,
             result=result,
             target_run_status=RunStatus.RUNNING,
             next_work=valid_next,
         )
         assert receipt.adopted is False
-        assert receipt.event_sequence == 1
+        assert receipt.event_sequence == 2
         assert receipt.next_step_id is not None
         assert receipt.next_job_id is not None
         _assert_committed_transition(
@@ -100,9 +99,7 @@ def test_activity_result_commits_atomically_and_recovers_lost_ack() -> None:
         )
 
         replay = service.commit_result(
-            run_id=run_id,
-            step_id=source_step_id,
-            job_id=source_job_id,
+            lease=source_lease,
             result=result,
             target_run_status=RunStatus.RUNNING,
             next_work=valid_next,
@@ -113,22 +110,25 @@ def test_activity_result_commits_atomically_and_recovers_lost_ack() -> None:
         assert replay.event_sequence == receipt.event_sequence
         assert replay.next_step_id == receipt.next_step_id
         assert replay.next_job_id == receipt.next_job_id
-        _assert_result_identity_conflicts(service, run_id, source_step_id, source_job_id, result)
+        _assert_result_identity_conflicts(service, source_lease, result)
 
         assert receipt.next_step_id is not None and receipt.next_job_id is not None
-        _lease_next_job(runtime_engine, owner_id, run_id, receipt.next_step_id, receipt.next_job_id)
+        next_lease = queue.claim_one("fixture-worker-2")
+        assert next_lease is not None
+        assert next_lease.step_id == receipt.next_step_id
+        assert next_lease.job_id == receipt.next_job_id
         waiting_receipt = service.commit_result(
-            run_id=run_id,
-            step_id=receipt.next_step_id,
-            job_id=receipt.next_job_id,
+            lease=next_lease,
             result={"validated": True},
             target_run_status=RunStatus.WAITING_APPROVAL,
         )
         assert waiting_receipt.run_status is RunStatus.WAITING_APPROVAL
         assert waiting_receipt.next_job_id is None
-        assert waiting_receipt.event_sequence == 2
+        assert waiting_receipt.event_sequence == 4
         _mark_run_failed(runtime_engine, owner_id, run_id)
-        _assert_terminal_run_does_not_reopen(service, runtime_engine, owner_id, run_id, result)
+        _assert_terminal_run_does_not_reopen(
+            service, queue, runtime_engine, owner_id, run_id, next_lease
+        )
 
         runtime_engine.dispose()
         runtime_engine = None
@@ -232,55 +232,23 @@ def _seed_work(engine: Engine, owner_id: UUID) -> tuple[UUID, UUID, UUID, UUID]:
     with engine.begin() as connection:
         repository = RuntimeRepository(connection, Principal(owner_id))
         run_id = repository.create_run()
-        connection.execute(
-            text("UPDATE runtime_private.runs SET status='running' WHERE run_id=:run_id"),
-            {"run_id": run_id},
-        )
         step_id = repository.create_step(run_id, "prepare:patch", "prepare")
-        connection.execute(
-            text("UPDATE runtime_private.steps SET status='running' WHERE step_id=:step_id"),
-            {"step_id": step_id},
-        )
         job_id = repository.create_job(run_id, step_id)
-        _set_job_leased(connection, owner_id, run_id, step_id, job_id, "fixture-worker")
         duplicate_next_step_id = repository.create_step(run_id, "blocked:duplicate", "validate")
     return run_id, step_id, job_id, duplicate_next_step_id
-
-
-def _set_job_leased(
-    connection, owner_id: UUID, run_id: UUID, step_id: UUID, job_id: UUID, lease_owner: str
-) -> None:
-    connection.execute(
-        text(
-            "UPDATE runtime_private.jobs SET status='leased', lease_owner=:lease_owner, "
-            "lease_expires_at=clock_timestamp() + interval '60 seconds', generation=1 "
-            "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id AND job_id=:job_id"
-        ),
-        {
-            "owner_id": owner_id,
-            "run_id": run_id,
-            "step_id": step_id,
-            "job_id": job_id,
-            "lease_owner": lease_owner,
-        },
-    )
 
 
 def _assert_rollback_after_state_writes(
     service: TransitionService,
     engine: Engine,
     owner_id: UUID,
-    run_id: UUID,
-    step_id: UUID,
-    job_id: UUID,
+    lease: ExecutionLease,
     duplicate_next_step_id: UUID,
     result: dict[str, object],
 ) -> None:
     with pytest.raises(IntegrityError) as error:
         service.commit_result(
-            run_id=run_id,
-            step_id=step_id,
-            job_id=job_id,
+            lease=lease,
             result=result,
             target_run_status=RunStatus.RUNNING,
             next_work=NextWork("blocked:duplicate", "validate", revision=0),
@@ -288,7 +256,7 @@ def _assert_rollback_after_state_writes(
     assert error.value.orig.diag.constraint_name == "uq_runtime_steps_logical_key"
     with engine.begin() as connection:
         repository = RuntimeRepository(connection, Principal(owner_id))
-        run = repository.get_run(run_id)
+        run = repository.get_run(lease.run_id)
         assert run is not None and run.status is RunStatus.RUNNING
         states = connection.execute(
             text(
@@ -305,22 +273,20 @@ def _assert_rollback_after_state_writes(
                 WHERE step.owner_id=:owner_id AND step.run_id=:run_id AND step.step_id=:step_id
                 """
             ),
-            {"owner_id": owner_id, "run_id": run_id, "step_id": step_id},
+            {"owner_id": owner_id, "run_id": lease.run_id, "step_id": lease.step_id},
         ).one()
         blocked_step_state = connection.execute(
             text("SELECT status FROM runtime_private.steps WHERE step_id=:step_id"),
             {"step_id": duplicate_next_step_id},
         ).scalar_one()
-    assert tuple(states) == ("running", "leased", "fixture-worker", 0, 0)
+    assert tuple(states) == ("running", "leased", lease.lease_owner, 0, 1)
     assert blocked_step_state == "queued"
 
     late_result = {f"k{index:08d}": 0 for index in range(4_600)}
     assert len(json.dumps(late_result, separators=(",", ":")).encode("utf-8")) <= MAX_RESULT_BYTES
     with pytest.raises(IntegrityError) as late_error:
         service.commit_result(
-            run_id=run_id,
-            step_id=step_id,
-            job_id=job_id,
+            lease=lease,
             result=late_result,
             target_run_status=RunStatus.RUNNING,
             next_work=NextWork("failed:late-result", "validate", revision=0),
@@ -328,13 +294,13 @@ def _assert_rollback_after_state_writes(
     assert late_error.value.orig.diag.constraint_name == "ck_runtime_accepted_results_payload_limit"
     with engine.begin() as connection:
         repository = RuntimeRepository(connection, Principal(owner_id))
-        run = repository.get_run(run_id)
+        run = repository.get_run(lease.run_id)
         late_work_count = connection.execute(
             text(
                 "SELECT count(*) FROM runtime_private.steps "
                 "WHERE owner_id=:owner_id AND run_id=:run_id AND logical_key='failed:late-result'"
             ),
-            {"owner_id": owner_id, "run_id": run_id},
+            {"owner_id": owner_id, "run_id": lease.run_id},
         ).scalar_one()
         counts = connection.execute(
             text(
@@ -344,11 +310,11 @@ def _assert_rollback_after_state_writes(
                 "(SELECT count(*) FROM runtime_private.events "
                 " WHERE owner_id=:owner_id AND run_id=:run_id)"
             ),
-            {"owner_id": owner_id, "run_id": run_id},
+            {"owner_id": owner_id, "run_id": lease.run_id},
         ).one()
     assert run is not None and run.status is RunStatus.RUNNING
     assert late_work_count == 0
-    assert tuple(counts) == (0, 0)
+    assert tuple(counts) == (0, 1)
 
 
 def _assert_committed_transition(
@@ -406,64 +372,40 @@ def _assert_committed_transition(
     assert persisted_result.result_id == receipt.result_id
     assert persisted_result.result_sha256 == receipt.result_sha256
     assert persisted_result.payload == result
-    assert persisted_result.event_sequence == 1
+    assert persisted_result.event_sequence == 2
     assert persisted_result.next_job_id == receipt.next_job_id
     assert receipt.next_step_id == next_job_step_id
     assert [(event.sequence, event.event_type) for event in events] == [
-        (1, "activity.result_accepted")
+        (1, "job.claimed"),
+        (2, "activity.result_accepted"),
     ]
 
 
 def _assert_result_identity_conflicts(
     service: TransitionService,
-    run_id: UUID,
-    step_id: UUID,
-    job_id: UUID,
+    lease: ExecutionLease,
     result: dict[str, object],
 ) -> None:
     with pytest.raises(ResultIdentityConflict, match="accepted_result_intent_conflict"):
         service.commit_result(
-            run_id=run_id,
-            step_id=step_id,
-            job_id=job_id,
+            lease=lease,
             result=result,
             target_run_status=RunStatus.RUNNING,
             next_work=NextWork("validate:different", "validate", revision=0),
         )
     with pytest.raises(ResultIdentityConflict, match="accepted_result_intent_conflict"):
         service.commit_result(
-            run_id=run_id,
-            step_id=step_id,
-            job_id=job_id,
+            lease=lease,
             result=result,
             target_run_status=RunStatus.WAITING_APPROVAL,
         )
     with pytest.raises(ResultIdentityConflict, match="accepted_result_intent_conflict"):
         service.commit_result(
-            run_id=run_id,
-            step_id=step_id,
-            job_id=job_id,
+            lease=lease,
             result={"accepted": False},
             target_run_status=RunStatus.RUNNING,
             next_work=NextWork("validate:patch", "validate", revision=0),
         )
-
-
-def _lease_next_job(
-    engine: Engine,
-    owner_id: UUID,
-    run_id: UUID,
-    step_id: UUID,
-    job_id: UUID,
-) -> None:
-    with engine.begin() as connection:
-        repository = RuntimeRepository(connection, Principal(owner_id))
-        connection.execute(
-            text("UPDATE runtime_private.steps SET status='running' WHERE step_id=:step_id"),
-            {"step_id": step_id},
-        )
-        _set_job_leased(connection, owner_id, run_id, step_id, job_id, "fixture-worker-2")
-        assert repository.get_run(run_id) is not None
 
 
 def _mark_run_failed(engine: Engine, owner_id: UUID, run_id: UUID) -> None:
@@ -480,36 +422,22 @@ def _mark_run_failed(engine: Engine, owner_id: UUID, run_id: UUID) -> None:
 
 def _assert_terminal_run_does_not_reopen(
     service: TransitionService,
+    queue: QueueService,
     engine: Engine,
     owner_id: UUID,
     run_id: UUID,
-    sample_result: dict[str, object],
+    lease: ExecutionLease,
 ) -> None:
-    with engine.begin() as connection:
-        repository = RuntimeRepository(connection, Principal(owner_id))
-        late_step_id = repository.create_step(run_id, "late:work", "prepare")
-        late_job_id = repository.create_job(run_id, late_step_id)
-
-    with pytest.raises(InvalidTransition, match="runtime_run_not_running"):
-        service.commit_result(
-            run_id=run_id,
-            step_id=late_step_id,
-            job_id=late_job_id,
-            result=sample_result,
-            target_run_status=RunStatus.RUNNING,
-            next_work=NextWork("late:next", "validate", revision=0),
-        )
+    receipt = service.commit_result(
+        lease=lease,
+        result={"validated": True},
+        target_run_status=RunStatus.WAITING_APPROVAL,
+    )
+    assert receipt.adopted is True
+    assert queue.claim_one("late-worker") is None
     with engine.begin() as connection:
         repository = RuntimeRepository(connection, Principal(owner_id))
         run = repository.get_run(run_id)
-        late_state = connection.execute(
-            text(
-                "SELECT step.status, job.status FROM runtime_private.steps AS step "
-                "JOIN runtime_private.jobs AS job ON job.step_id=step.step_id "
-                "WHERE step.owner_id=:owner_id AND step.run_id=:run_id AND step.step_id=:step_id"
-            ),
-            {"owner_id": owner_id, "run_id": run_id, "step_id": late_step_id},
-        ).one()
         accepted_count = connection.execute(
             text(
                 "SELECT count(*) FROM runtime_private.accepted_results "
@@ -518,7 +446,6 @@ def _assert_terminal_run_does_not_reopen(
             {"owner_id": owner_id, "run_id": run_id},
         ).scalar_one()
     assert run is not None and run.status is RunStatus.FAILED
-    assert tuple(late_state) == ("queued", "queued")
     assert accepted_count == 2
 
 
