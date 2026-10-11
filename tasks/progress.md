@@ -7,7 +7,9 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
 
 - T01: complete. `make check` passed formatting, lint, strict typing and 10 tests;
   the settings target passed 7 tests; Python package and pinned Docker image built.
-- T02: frontend reference and API requirements researched; implementation waits for T01.
+- T02: complete. Generated OpenAPI schema/types, React shell and secure static serving
+  verified by `make check` (15 backend tests, 3 component tests), `make build`,
+  a production-container HTTP probe and a rendered desktop browser check.
 - T03: local connectivity preparation authorized. Hosted verification is pending:
   the operator confirmed Render and Supabase accounts/projects are not set up.
 - T04 onward: pending their declared dependencies.

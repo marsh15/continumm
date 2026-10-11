@@ -1,19 +1,28 @@
-# Continuumm
+# Continumm
 
-Continumm is a planning-stage service for turning bounded coding tasks into reviewed GitHub pull requests. The current implementation establishes the Python API foundation described in [the implementation plan](tasks/plan.md).
+Continumm is a planning-stage service for turning bounded coding tasks into reviewed GitHub pull requests. The current implementation establishes its Python API and React frontend foundations. The public service has not launched.
 
-## Backend setup
+## Local development
 
-The backend requires Python 3.13 and [uv](https://docs.astral.sh/uv/). Install the locked development dependencies and run the local API with:
+The backend requires Python 3.13 and [uv](https://docs.astral.sh/uv/); the frontend requires Node.js 22.12 or newer. Install the locked dependencies with:
 
 ```sh
 make bootstrap
+```
+
+Run the API and Vite frontend in separate terminals:
+
+```sh
 make dev
 ```
 
-The local server binds to `127.0.0.1:8000`. `GET /health/live` reports process liveness. `GET /health/ready` currently returns `503 not_ready` until a database connection check is implemented; it does not imply database availability.
+```sh
+make dev-web
+```
 
-Run the settings unit tests, backend checks, and package/container build with:
+The API binds to `127.0.0.1:8000`. `GET /health/live` reports process liveness. `GET /health/ready` currently returns `503 not_ready` until a database connection check is implemented; it does not imply database availability. The frontend displays these actual API responses and identifies the unfinished readiness check.
+
+The frontend build direction and generated OpenAPI workflow are documented in [docs/frontend.md](docs/frontend.md). Run all backend checks and frontend component tests with:
 
 ```sh
 make test-target TARGET=tests/unit/test_settings.py
@@ -21,7 +30,7 @@ make check
 make build
 ```
 
-`make build` creates a Python distribution under `dist/` and the local Docker image `continuum-api:local`. The image defaults to production configuration and exits with a redacted configuration error until explicit deployment settings are provided. Do not publish this skeleton as a public service: authentication and persistence are not implemented yet.
+`make build` creates a Python distribution under `dist/`, a static frontend build, and the local Docker image `continuum-api:local`. The container serves the built frontend from the API process. The image defaults to production configuration and exits with a redacted configuration error until explicit deployment settings are provided. Authentication and persistence are not implemented yet, so this foundation is not a public service.
 
 ## Configuration
 

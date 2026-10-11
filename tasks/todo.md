@@ -8,7 +8,7 @@
 
 Work in dependency order. Each task is a focused implementation slice, normally touching one module and its tests. Split a task before implementation if it requires unrelated changes or more than one focused session. Do not replace a failed test with a weaker assertion to pass a checkpoint.
 
-The commands below are the command contract to establish in T01–T02; they do not exist yet:
+The commands below are the backlog command contract. T01–T02 establish bootstrap, development, checks, targeted tests, UI tests and builds; later commands are added with their owning tasks. Authentication and workers are still pending.
 
 | Command | Contract |
 |---|---|
@@ -43,8 +43,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T01.
 - **Scope:** Medium; frontend manifest, entrypoint, router, API client and one component test.
-- [ ] Build a TypeScript/React/Vite shell and serve its production assets from the Python application.
-- [ ] Add generated OpenAPI types and a uniform typed error display, with no handwritten parallel API schema.
+- [x] Build a TypeScript/React/Vite shell and serve its production assets from the Python application.
+- [x] Add generated OpenAPI types and a uniform typed error display, with no handwritten parallel API schema.
 - **Verify:** make test-ui; make build; exercise API failure display.
 
 ### T03 — Hosted database and artifact connectivity spike
