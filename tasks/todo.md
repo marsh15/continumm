@@ -1,6 +1,6 @@
 # Continumm — Implementation Backlog
 
-**Status:** Planning only; all implementation tasks are unstarted.  
+**Status:** Implementation started on 11 October 2026; see [progress](progress.md) for verification and pending gates.  
 **Specification:** [Canonical plan](plan.md).  
 **Prepared:** 10 October 2026.
 
@@ -35,8 +35,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** None.
 - **Scope:** Medium; Python manifest, application entrypoint, Makefile, basic test and configuration.
-- [ ] Establish Python 3.13/uv, typed settings, FastAPI health endpoints, structured logging, and the backend command contract.
-- [ ] Missing secrets/configuration fail clearly without printing values; local-only development defaults cannot become public bypasses.
+- [x] Establish Python 3.13/uv, typed settings, FastAPI health endpoints, structured logging, and the backend command contract.
+- [x] Missing secrets/configuration fail clearly without printing values; local-only development defaults cannot become public bypasses.
 - **Verify:** make test-target TARGET=tests/unit/test_settings.py; make build.
 
 ### T02 — Frontend skeleton and shared API contract
