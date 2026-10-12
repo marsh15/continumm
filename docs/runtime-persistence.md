@@ -111,6 +111,53 @@ window waits for an operator-triggered later transition. Invalid input and
 unsupported environments fail without retry. Unknown effects, conflicts,
 corrupt artifacts, and lost model responses stop in `needs_attention`.
 
+## Cancellation and dispatch boundary (T11)
+
+Migration `20261011_07` adds owner-scoped resource reservation metadata,
+dispatch intents with optional observations, and pending cleanup intents. It
+also permits cancelled step and attempt labels. The cancellation service
+requires the authenticated `Principal`; it does not check GitHub access.
+Cancellation locks run → sorted steps → sorted jobs → attempts → dispatch
+intents; it reads reservation metadata under the run lock, then reads database
+time and marks the run terminal. It cancels queued/leased work, advances active
+job generations, clears leases, and marks running attempts `unknown`. It
+commits a `run.cancelled` event and pending
+`stop_execution` and `observe_effects` cleanup intents in that same transaction.
+The account's active-run uniqueness slot is released by the terminal run state.
+
+`CancellationService.expire_due(limit=...)` applies the same terminalization
+boundary to overdue runs, processing at most 100 owner-scoped rows per call.
+It selects due runs with `SKIP LOCKED`, takes the same child and ledger locks,
+then rechecks the deadline using database time. It records `run.expired` as a
+system event, fences work, and releases the active-run slot. A cancel/expiry
+race preserves whichever terminal commit obtains the run lock first.
+
+An intent committed by `DispatchIntentService.authorize()` is the dispatch
+authorization boundary. A worker may send that already-authorized request after
+cancellation if it was paused between the intent commit and its remote call.
+The T11 service performs no remote call and does not claim an immediate remote
+stop. Cleanup intents are durable pending work for a later dispatcher; T11
+does not claim that either cleanup action has completed. Cleanup handling is
+deferred to T16 and T28.
+
+Cancellation leaves resource reservation status and dispatch intent
+observations unchanged. In particular, an `unknown` reservation remains
+unknown. The reservation table stores metadata only; T11 does not allocate
+resources or account capacity, which belongs to T16. A later internal
+observation can update an existing dispatch intent and append an audit event
+after cancellation, but cannot reopen the run or authorize another dispatch.
+Replaying the same committed intent or observation is read-only and idempotent.
+Adopting a committed dispatch receipt does not
+authorize a second send; a later controller must treat it as the same
+pre-cancellation authorization. The observation API accepts recorded metadata;
+it does not contact a provider. Dispatch sending and observation reconciliation
+remain later controller work.
+
+Downgrading `20261011_07` drops the T11 resource, dispatch, and cleanup tables.
+For compatibility with the earlier schema it maps cancelled steps to skipped
+and clears the cancelled attempt failure label. The run remains cancelled and
+its immutable `run.cancelled` event remains available to explain that downgrade.
+
 The T10 integration fixture requires an administrative URL for a disposable
 loopback PostgreSQL 17 database named `continuum_t10_test`. It creates and
 removes the runtime roles and private schemas while proving restart-safe retry
@@ -120,6 +167,15 @@ recovery, and explicit capacity waits.
 ```sh
 CONTINUUM_T10_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:55440/continuum_t10_test' \
   make test-target TARGET=tests/integration/test_scheduler.py
+```
+
+The T11 fixture requires its own disposable PostgreSQL 17 instance, named
+`continuum_t11_test`. It proves cancellation, expiry, dispatch/result races,
+ownership isolation, late observations, and migration downgrade/re-upgrade.
+
+```sh
+CONTINUUM_T11_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:<port>/continuum_t11_test' \
+  make test-target TARGET=tests/integration/test_cancellation.py
 ```
 
 Run each integration target on its own disposable PostgreSQL 17 instance.

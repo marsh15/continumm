@@ -90,7 +90,23 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   passed; unchanged frontend/Edge checks passed with 3/21 tests. The owned
   fixture was removed and unrelated containers preserved. Hosted gates remain
   open. See [runtime setup](../docs/runtime-persistence.md).
-- T11 onward: pending their declared dependencies.
+- T12 onward: pending their declared dependencies.
+
+## 12 October 2026
+
+- T11: local cancellation and deadline terminality complete. Owner cancellation
+  requires no GitHub reauthorization; cancellation/expiry commit lease and
+  generation revocation, terminal state, event and pending cleanup intents
+  together. The account slot is released while unresolved reservations and
+  dispatch observations remain independent. Late observations and exact receipt
+  adoption cannot reopen execution. Bounded database-time expiry uses the same
+  terminalization path; competing cancellation/expiry preserves the first
+  terminal outcome. The isolated PostgreSQL 17 target passed ownership, stale
+  writes, dispatch/result/cancellation races, before/due deadline checks, and
+  populated migration downgrade/re-upgrade. `make check build-package` passed
+  with 101 Python tests, 9 expected integration environment skips, 3 frontend
+  tests and 21 Edge tests. Cleanup intents remain pending for later adapter
+  dispatch; no remote stop or mutation was performed. Hosted gates remain open.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

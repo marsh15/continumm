@@ -144,8 +144,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T10.
 - **Scope:** Medium; cancellation transition and race tests.
-- [ ] Commit cancellation, revoke new dispatch authorizations, and release the account slot even when GitHub access has been removed.
-- [ ] Preserve independent unresolved-effect/resource state; late observations cannot reopen the run.
+- [x] Commit cancellation, revoke new dispatch authorizations, and release the account slot even when GitHub access has been removed.
+- [x] Preserve independent unresolved-effect/resource state; late observations cannot reopen the run.
 - **Verify:** make test-target TARGET=tests/integration/test_cancellation.py.
 
 ### T12 — Minimal run timeline
