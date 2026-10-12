@@ -219,6 +219,7 @@ def create_run_router(principal_resolver: PrincipalResolver | None) -> APIRouter
             last_heartbeat = time.monotonic()
             stream_started = last_heartbeat
             try:
+                yield ": connected\n\n"
                 while True:
                     if time.monotonic() - stream_started >= _MAX_STREAM_SECONDS:
                         return

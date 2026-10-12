@@ -163,6 +163,16 @@ def test_run_snapshot_event_pages_and_sse_reconnect_are_owner_scoped() -> None:
         assert "private-operation-key" not in serialized_events
         assert "observation" not in serialized_events
 
+        connected_body = _run_sse_and_disconnect(
+            owner_app,
+            f"/api/v1/runs/{primary_run}/events?after=4",
+            headers={"accept": "text/event-stream"},
+            stop_marker=b": connected\n\n",
+            disconnect_on_marker=True,
+        )
+        assert connected_body == b": connected\n\n"
+        assert runtime_engine.pool.checkedout() == 0
+
         sse_headers: dict[str, str] = {}
         reconnect_body = _run_sse_and_disconnect(
             owner_app,
@@ -209,10 +219,12 @@ def test_run_snapshot_event_pages_and_sse_reconnect_are_owner_scoped() -> None:
         assert b'"high_watermark":"4"' in future_cursor_body
         assert runtime_engine.pool.checkedout() == 0
 
-        principal_is_valid = True
+        principal_resolution_count = 0
 
         def resolve_revocable_principal(_request: object) -> Principal:
-            if not principal_is_valid:
+            nonlocal principal_resolution_count
+            principal_resolution_count += 1
+            if principal_resolution_count > 3:
                 raise HTTPException(status_code=401, detail="authentication_required")
             return Principal(owner_id)
 
@@ -221,18 +233,12 @@ def test_run_snapshot_event_pages_and_sse_reconnect_are_owner_scoped() -> None:
             runtime_engine=runtime_engine,
         )
 
-        def revoke_after_first_event(chunk: bytes) -> None:
-            nonlocal principal_is_valid
-            if b"id: 1\n" in chunk:
-                principal_is_valid = False
-
         revoked_body = _run_sse_and_disconnect(
             revocable_app,
             f"/api/v1/runs/{page_run}/events?after=0",
             headers={"accept": "text/event-stream"},
             stop_marker=b"event: stream.error\n",
             disconnect_on_marker=False,
-            on_chunk=revoke_after_first_event,
         )
         assert b"id: 1\nevent: run.event\n" in revoked_body
         emitted_event_ids = [
@@ -242,6 +248,7 @@ def test_run_snapshot_event_pages_and_sse_reconnect_are_owner_scoped() -> None:
         ]
         assert emitted_event_ids == [b"id: 1"]
         assert b'"code":"authentication_required","retryable":false' in revoked_body
+        assert principal_resolution_count == 4
         assert runtime_engine.pool.checkedout() == 0
 
         openapi = owner_app.openapi()
@@ -323,6 +330,9 @@ def _run_sse_and_disconnect(
             return await incoming.get()
 
         async def send(message: dict[str, object]) -> None:
+            body = message.get("body")
+            if isinstance(body, bytes) and on_chunk is not None:
+                on_chunk(body)
             await outgoing.put(message)
             if message.get("type") == "http.response.start" and captured_headers is not None:
                 response_headers = message.get("headers", [])
@@ -334,9 +344,6 @@ def _run_sse_and_disconnect(
                             if isinstance(name, bytes) and isinstance(value, bytes)
                         }
                     )
-            body = message.get("body")
-            if isinstance(body, bytes) and on_chunk is not None:
-                on_chunk(body)
             if disconnect_on_marker and isinstance(body, bytes) and stop_marker in body:
                 await incoming.put({"type": "http.disconnect"})
 
