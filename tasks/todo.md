@@ -178,8 +178,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T13.
 - **Scope:** Medium; archive module and adversarial unit tests.
-- [ ] Produce/verify separate archive and canonical tree digests while preserving permitted executable bits.
-- [ ] Reject traversal, links, special files, duplicate/case-colliding paths and expansion bombs.
+- [x] Produce/verify separate archive and canonical tree digests while preserving permitted executable bits.
+- [x] Reject traversal, links, special files, duplicate/case-colliding paths and expansion bombs.
+- **Evidence:** [Canonical format and local verification](../docs/canonical-archives.md); 51 adversarial unit tests, including bounded single-member gzip and raw USTAR header verification without filesystem extraction.
 - **Verify:** make test-target TARGET=tests/unit/test_archives.py.
 
 ### T15 — Committed checkpoint storage

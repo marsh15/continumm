@@ -145,6 +145,15 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   Live GitHub App verification remains pending T33.
   [Contract and local verification](../docs/repository-preflight.md).
 
+- T14: canonical source archives complete locally. Deterministic strict USTAR
+  inside gzip preserves permitted executable modes; separate archive and
+  versioned tree SHA-256 values are verified without filesystem extraction.
+  Bounded single-member inflation precedes raw-header checks; links, sparse and
+  extension records, unsafe/colliding paths, cache directories, corrupt gzip,
+  noncanonical metadata and malformed endings fail closed. The archive target
+  passed 51 tests; Python formatting, lint, typing, regression tests and package
+  build passed. [Format contract](../docs/canonical-archives.md).
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
