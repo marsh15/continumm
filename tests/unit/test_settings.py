@@ -43,6 +43,9 @@ def test_render_port_overrides_container_default_only_in_production(
     monkeypatch.setenv("CONTINUUM_ENVIRONMENT", "production")
     monkeypatch.setenv("CONTINUUM_HOST", "0.0.0.0")
     monkeypatch.setenv("CONTINUUM_DATABASE_URL", "postgresql://user:password@localhost/app")
+    monkeypatch.setenv(
+        "CONTINUUM_RUNTIME_DATABASE_URL", "postgresql://continuum_runtime:password@localhost/app"
+    )
     monkeypatch.setenv("CONTINUUM_ENCRYPTION_KEY", "test-encryption-key")
     monkeypatch.setenv("CONTINUUM_PORT", "8000")
     assert Settings(_env_file=None).port == 10000
@@ -75,6 +78,7 @@ def test_production_requires_explicit_secrets_and_bind_address() -> None:
     message = str(error.value)
     assert "CONTINUUM_HOST" in message
     assert "CONTINUUM_ENCRYPTION_KEY" in message
+    assert "CONTINUUM_RUNTIME_DATABASE_URL" in message
     assert secret not in message
 
 
@@ -84,10 +88,12 @@ def test_production_secret_values_have_masked_representations() -> None:
         environment="production",
         host="0.0.0.0",
         database_url="postgresql://user:very-private-password@db.example.test/app",
+        runtime_database_url="postgresql://continuum_runtime:runtime-password@localhost/app",
         encryption_key="very-private-encryption-key",
     )
 
     assert "very-private-password" not in repr(settings)
+    assert "runtime-password" not in repr(settings)
     assert "very-private-encryption-key" not in repr(settings)
 
 

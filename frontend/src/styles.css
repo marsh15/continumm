@@ -313,9 +313,356 @@ h2 {
   text-underline-offset: 3px;
 }
 
+.run-page {
+  width: min(100% - 40px, 960px);
+  padding-top: 39px;
+  padding-bottom: 56px;
+}
+
+.run-page h1 {
+  max-width: none;
+  margin: 0;
+  font-size: clamp(27px, 3vw, 34px);
+  letter-spacing: -0.035em;
+}
+
+.run-page-heading,
+.run-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.run-page-heading .eyebrow,
+.run-section-heading .eyebrow {
+  margin-bottom: 7px;
+  font-size: 11px;
+}
+
+.run-id-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px 12px;
+  margin: 17px 0 34px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-id-line code,
+.run-facts code,
+.timeline-sequence code,
+.timeline-details code {
+  color: var(--quiet);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.run-snapshot,
+.timeline-section {
+  border-top: 1px solid var(--line-strong);
+  padding-top: 22px;
+}
+
+.run-section-heading h2 {
+  font-size: 19px;
+}
+
+.text-button {
+  min-height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  padding: 7px 10px;
+  text-decoration: none;
+}
+
+.text-button:hover:not(:disabled) {
+  border-color: var(--blue);
+  background: var(--blue-wash);
+}
+
+.text-button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.text-button:disabled {
+  cursor: wait;
+  color: var(--quiet);
+}
+
+.run-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 20px 0 34px;
+  border-top: 1px solid var(--line);
+}
+
+.run-facts > div {
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 13px 14px 13px 0;
+}
+
+.run-facts dt,
+.timeline-details dt {
+  margin-bottom: 6px;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.run-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 9px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  padding: 4px 7px;
+}
+
+.run-status-active {
+  color: #245bd6;
+  background: #f0f5ff;
+}
+
+.run-status-waiting {
+  color: #875c12;
+  background: #fff8e8;
+}
+
+.run-status-positive {
+  color: #25623e;
+  background: #eff8f1;
+}
+
+.run-status-negative {
+  color: #9a2c2c;
+  background: #fff4f3;
+}
+
+.timeline-section {
+  margin-top: 4px;
+}
+
+.timeline-section-heading {
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.stream-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px 12px;
+  max-width: 560px;
+}
+
+.stream-status,
+.stream-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stream-status .status-dot {
+  background: var(--quiet);
+}
+
+.stream-status-connected .status-dot {
+  background: #2d7b50;
+}
+
+.stream-status-reconnecting .status-dot,
+.stream-status-syncing .status-dot {
+  background: #b57c16;
+}
+
+.stream-status-disconnected .status-dot {
+  background: #a12b2b;
+}
+
+.stream-terminal-note {
+  color: var(--quiet);
+}
+
+.stream-notice {
+  color: var(--quiet);
+}
+
+.history-gap {
+  margin: 0 0 16px;
+  border: 1px solid #ddc68d;
+  border-radius: var(--radius);
+  background: #fff9ea;
+  color: #654b18;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 11px 13px;
+}
+
+.run-timeline {
+  position: relative;
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  column-gap: 13px;
+  padding-bottom: 17px;
+}
+
+.timeline-event:not(:last-child)::before {
+  position: absolute;
+  top: 10px;
+  bottom: 0;
+  left: 5px;
+  width: 1px;
+  background: var(--line-strong);
+  content: "";
+}
+
+.timeline-marker {
+  z-index: 1;
+  width: 11px;
+  height: 11px;
+  margin-top: 4px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.timeline-event article {
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+
+.timeline-event:last-child article {
+  border-bottom: 0;
+}
+
+.timeline-event-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px 14px;
+}
+
+.timeline-event h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.timeline-event time,
+.timeline-sequence {
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.timeline-sequence {
+  margin: 5px 0 0;
+}
+
+.timeline-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 11px 0 0;
+}
+
+.timeline-details div {
+  min-width: 110px;
+  max-width: 100%;
+}
+
+.timeline-details dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.timeline-message,
+.timeline-limit,
+.run-loading {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.timeline-message {
+  border-top: 1px solid var(--line);
+  padding: 17px 0;
+}
+
+.timeline-limit {
+  margin-top: 12px;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.load-more-button,
+.retry-button {
+  margin-top: 12px;
+}
+
+.run-loading {
+  margin-top: 16px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
 @media (max-width: 600px) {
   .page-shell {
     width: min(100% - 32px, 920px);
+  }
+
+  .run-page {
+    width: min(100% - 32px, 960px);
+    padding-top: 28px;
   }
 
   .app-header {
@@ -335,6 +682,25 @@ h2 {
     align-items: start;
     flex-direction: column;
     gap: 7px;
+  }
+
+  .run-page-heading,
+  .run-section-heading {
+    align-items: start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .timeline-section-heading {
+    gap: 13px;
+  }
+
+  .stream-status-row {
+    justify-content: flex-start;
+  }
+
+  .run-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .checks-grid {

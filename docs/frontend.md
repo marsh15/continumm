@@ -1,6 +1,8 @@
-# Frontend foundation
+# Frontend console
 
-The current browser experience is a foundation status page. The public service has not launched, and the page does not imply that sign-in, repository connection, runs, review, or publication are available. Its two live checks read the FastAPI `/health/live` and `/health/ready` endpoints. The readiness endpoint currently reports the database check as unverified, so the page displays that API error and its request ID.
+The root route remains a foundation status page. The public service has not launched, and it does not imply that sign-in, repository connection, run creation, review, or publication are available. Its live checks read `/health/live` and `/health/ready`; readiness currently reports the database check as unverified, so the page displays that API error and request ID.
+
+The direct `/runs/:runId` route reads a real run snapshot and its committed event history. There is no run-list API yet, so the route is not linked from the status page or header. Authentication is an injected backend boundary; the default app resolver returns 401. The route therefore shows the API's access error until a trusted session boundary is configured.
 
 ## Reference lock and decision ledger
 
@@ -15,13 +17,17 @@ Refero MCP research was unavailable for this task. The direct-build reference is
 | Keyboard focus, labelled structure, responsive stacking, reduced motion | Plan §10.5 and bundled craft guidance | Links use native anchors; focus is visible; health updates use announced status/error regions |
 | No bitmap imagery | The foundation screen has no image-led reference or product evidence | Keep the surface code-native and use no decorative illustration |
 
-The distinctive detail is a compact live-check row that reports real process and readiness responses. It must not gain sample runs, timeline entries, aggregate metrics, or success wording without corresponding API evidence.
+The status page keeps its compact live-check row. Run detail shows a causal timeline only for the run ID supplied in the URL and only from API responses. It must not gain sample runs, timeline entries, aggregate metrics, or success wording without corresponding API evidence.
 
 ## Frontend and API contract
 
 The app uses React, TypeScript, Vite, React Router, and TanStack Query. `frontend/openapi.json` is exported from the FastAPI app by `scripts/export_openapi.py`; `frontend/src/api/generated.ts` is generated from that committed schema with `openapi-typescript`. Application code imports endpoint and error types from the generated file. Do not maintain a second handwritten API model.
 
-API errors use `code`, `message`, `retryable`, and `request_id`; the server also returns the request ID in `X-Request-ID`. The typed API client rejects malformed successful health responses as well as non-2xx responses, so an unexpected HTML page or unknown status cannot appear as “Available.”
+API errors use `code`, `message`, `retryable`, and `request_id`; the server also returns the request ID in `X-Request-ID`. The typed client validates health, run snapshot, event page, and event payload responses against the generated types before rendering them. An unexpected HTML page or unknown status cannot appear as available, and the timeline displays only the backend's allowlisted event metadata.
+
+Run event sequence numbers and cursors stay as decimal strings. The client uses `BigInt` to order and deduplicate them without losing PostgreSQL `int8` precision. Event history loads in pages of 50, with a maximum of 10 saved pages and a bounded 500-event live buffer. The “Load more events” control advances the history cursor; the run snapshot remains the source of current status.
+
+The same-origin `EventSource` uses the session cookie and listens for `run.event`, `history.reset`, and `stream.error`. A committed event advances the timeline and triggers a run snapshot refetch. Duplicate replay is ignored. A sequence gap or reset closes the current source, refetches the snapshot and first event page, then starts a replacement stream at the refreshed watermark. Native reconnects preserve `Last-Event-ID`; new sources start from the latest snapshot watermark. Connection retries use bounded exponential delays, stop after three failed attempts, and require a user retry after the budget is exhausted or the server closes the stream. A CLOSED stream or authentication event also clears and rechecks cached run data so a revoked session cannot leave stale private details on screen. Unmounting or changing the run closes the stream.
 
 FastAPI serves the Vite production output from `frontend/dist` in a local checkout and `/app/static` in the container. Only files resolved within that static directory are served. Extensionless browser routes receive the SPA shell; missing `/api`, `/auth`, and `/health` routes remain JSON errors.
 

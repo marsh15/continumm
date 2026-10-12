@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/v1/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Snapshot */
+        get: operations["get_run_snapshot_api_v1_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run Events */
+        get: operations["get_run_events_api_v1_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health/live": {
         parameters: {
             query?: never;
@@ -63,6 +97,68 @@ export interface components {
             retryable: boolean;
         };
         /**
+         * EventData
+         * @description Only metadata the timeline is allowed to expose from stored event JSON.
+         */
+        EventData: {
+            /** Attempt Id */
+            attempt_id?: string | null;
+            /** Cancelled Jobs */
+            cancelled_jobs?: string | null;
+            /** Capacity Resume At */
+            capacity_resume_at?: string | null;
+            /** Failure Class */
+            failure_class?: ("invalid_input" | "missing_credential" | "transient_read" | "unsupported_environment" | "resource_exhaustion" | "model_response_lost" | "unknown_effect" | "remote_conflict" | "corrupt_artifact") | null;
+            /** Failure Count */
+            failure_count?: string | null;
+            /** Generation */
+            generation?: string | null;
+            /** Invalidated Attempts */
+            invalidated_attempts?: string | null;
+            /** Job Id */
+            job_id?: string | null;
+            /** Next Job Id */
+            next_job_id?: string | null;
+            /** Replay Policy */
+            replay_policy?: ("replay_safe" | "attention_on_unknown") | null;
+            /** Retry At */
+            retry_at?: string | null;
+            /** Retry Scheduled */
+            retry_scheduled?: boolean | null;
+            status?: components["schemas"]["RunStatus"] | null;
+            /** Step Id */
+            step_id?: string | null;
+            target_run_status?: components["schemas"]["RunStatus"] | null;
+        };
+        /** EventPageResponse */
+        EventPageResponse: {
+            /** After Sequence */
+            after_sequence: string;
+            /** Events */
+            events: components["schemas"]["TimelineEventResponse"][];
+            /** High Watermark */
+            high_watermark: string;
+            /** History Gap */
+            history_gap: boolean;
+            /** Next Cursor */
+            next_cursor: string | null;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+        };
+        /** EventStreamErrorPayload */
+        EventStreamErrorPayload: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "authentication_required" | "event_stream_unavailable";
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
          * HealthResponse
          * @description Documented successful health response shape.
          */
@@ -77,6 +173,64 @@ export interface components {
              */
             status: "ok" | "ready";
         };
+        /** HistoryResetPayload */
+        HistoryResetPayload: {
+            /** High Watermark */
+            high_watermark: string;
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "cursor_ahead" | "history_gap";
+        };
+        /** RunSnapshotResponse */
+        RunSnapshotResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deadline At */
+            deadline_at: string | null;
+            /** Event Watermark */
+            event_watermark: string;
+            /** Revision */
+            revision: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            status: components["schemas"]["RunStatus"];
+        };
+        /**
+         * RunStatus
+         * @enum {string}
+         */
+        RunStatus: "queued" | "running" | "waiting_approval" | "waiting_credentials" | "waiting_capacity" | "needs_attention" | "succeeded" | "failed" | "cancelled" | "expired";
+        /** TimelineEventResponse */
+        TimelineEventResponse: {
+            data: components["schemas"]["EventData"];
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Sequence */
+            sequence: string;
+            /** Type */
+            type: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -86,6 +240,146 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_run_snapshot_api_v1_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSnapshotResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_run_events_api_v1_runs__run_id__events_get: {
+        parameters: {
+            query?: {
+                after?: string | null;
+                limit?: number;
+            };
+            header?: {
+                "Last-Event-ID"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description JSON event page or replayable server-sent event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventPageResponse"];
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     live_health_live_get: {
         parameters: {
             query?: never;

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: SecretStr | None = None
+    runtime_database_url: SecretStr | None = None
     encryption_key: SecretStr | None = None
 
     @model_validator(mode="before")
@@ -58,6 +59,8 @@ class Settings(BaseSettings):
                 missing.append("CONTINUUM_HOST")
             if self._is_missing_secret(self.database_url):
                 missing.append("CONTINUUM_DATABASE_URL")
+            if self._is_missing_secret(self.runtime_database_url):
+                missing.append("CONTINUUM_RUNTIME_DATABASE_URL")
             if self._is_missing_secret(self.encryption_key):
                 missing.append("CONTINUUM_ENCRYPTION_KEY")
             if missing:

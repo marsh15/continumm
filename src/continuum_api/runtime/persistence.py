@@ -80,6 +80,7 @@ class RunRecord:
     revision: int
     created_at: datetime
     deadline_at: datetime | None
+    event_watermark: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,9 +156,15 @@ class RuntimeRepository:
                 text(
                     """
                 SELECT run_id, owner_id, github_repository_id, issue_number,
-                       status, revision, created_at, deadline_at
-                FROM runtime_private.runs
-                WHERE owner_id = :owner_id AND run_id = :run_id
+                       status, revision, created_at, deadline_at,
+                       coalesce((
+                           SELECT max(event.sequence)
+                           FROM runtime_private.events AS event
+                           WHERE event.owner_id = run.owner_id
+                             AND event.run_id = run.run_id
+                       ), 0) AS event_watermark
+                FROM runtime_private.runs AS run
+                WHERE run.owner_id = :owner_id AND run.run_id = :run_id
                 """
                 ),
                 {"owner_id": self._principal.account_id, "run_id": run_id},
@@ -176,6 +183,7 @@ class RuntimeRepository:
             revision=row["revision"],
             created_at=row["created_at"],
             deadline_at=row["deadline_at"],
+            event_watermark=row["event_watermark"],
         )
 
     def create_step(
@@ -349,7 +357,7 @@ class RuntimeRepository:
         after_sequence: int = 0,
         limit: int = 100,
     ) -> tuple[RuntimeEvent, ...]:
-        if after_sequence < 0 or not 1 <= limit <= 100:
+        if after_sequence < 0 or not 1 <= limit <= 101:
             raise ValueError("runtime_event_cursor_invalid")
         rows = self._connection.execute(
             text(

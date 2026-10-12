@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, Route, Routes } from "react-router";
 import { getLiveness, getReadiness } from "./api/client";
+import { RunDetailPage } from "./components/RunDetailPage";
 import { ServiceCheck } from "./components/ServiceCheck";
 
 function FoundationPage() {
@@ -73,6 +74,7 @@ export function App() {
       </header>
       <Routes>
         <Route path="/" element={<FoundationPage />} />
+        <Route path="/runs/:runId" element={<RunDetailPage />} />
         <Route path="*" element={<UnknownPage />} />
       </Routes>
     </div>

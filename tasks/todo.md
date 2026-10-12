@@ -152,8 +152,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T02, T08.
 - **Scope:** Medium; run query endpoint, event endpoint, timeline and component tests.
-- [ ] Render authoritative state and ordered events with explicit empty/error/disconnected states.
-- [ ] SSE reconnect deduplicates events and refetches a snapshot after gaps.
+- [x] Render authoritative state and ordered events with explicit empty/error/disconnected states.
+- [x] SSE reconnect deduplicates events and refetches a snapshot after gaps.
 - **Verify:** make test-ui; make test-target TARGET=tests/integration/test_events.py.
 
 ### Checkpoint D — Runtime demonstration

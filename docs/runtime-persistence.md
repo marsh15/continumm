@@ -158,6 +158,70 @@ For compatibility with the earlier schema it maps cancelled steps to skipped
 and clears the cancelled attempt failure label. The run remains cancelled and
 its immutable `run.cancelled` event remains available to explain that downgrade.
 
+## Run timeline API (T12)
+
+The read API is available at `GET /api/v1/runs/{run_id}` and
+`GET /api/v1/runs/{run_id}/events`. Both routes require an injected trusted
+server-side principal resolver. The default app has no resolver and returns
+401; it does not infer an account from a browser header, query, or request body.
+This is the API boundary for the later identity task, not a login implementation.
+Unknown and other-account run IDs both return 404.
+
+The run snapshot includes its state, revision, deadline, and `event_watermark`.
+The run row and watermark are read in one repeatable-read transaction. Event
+pages are ordered and capped at 100 rows. Snapshot watermarks and event
+sequences are decimal strings so PostgreSQL `bigint` values remain exact in
+JavaScript. Each page includes `high_watermark`, `next_cursor`, and
+`history_gap`. The event response projects only fixed identifiers, state labels,
+retry metadata, counts, and timestamps; dispatch observations, provider data,
+raw result payloads, worker identities, and arbitrary event fields are omitted.
+Snapshots and JSON pages use `Cache-Control: private, no-store`.
+
+The events resource returns JSON by default. `Accept: text/event-stream`
+selects SSE; committed events use the stable `run.event` name and carry the same
+typed event object as the page response. Native EventSource reconnects keep the
+initial `?after=` URL but advance the `Last-Event-ID` header, so the header wins
+for SSE. JSON requests that supply both cursor forms must use the same value.
+An SSE cursor ahead of the current watermark or a missing sequence emits the
+control event `history.reset` with a reason and watermark, then closes. The
+client fetches a fresh snapshot and event page, renders any missing history,
+and resumes after the snapshot watermark. JSON pages retain available events
+and mark gaps explicitly.
+
+SSE polls PostgreSQL once per second in short repeatable-read transactions and
+closes each transaction before waiting. It sends heartbeat comments every 15
+seconds, allows two streams per principal in the API process, and ends each
+stream after 60 seconds so native reconnect rechecks the principal. The trusted
+resolver is also rechecked before every event. Disconnect or identity change
+releases the stream slot without leaving a database connection checked out.
+Streams remain open after a terminal run state to deliver late audit events,
+such as `dispatch.observed`. They are still replayable from the event page after
+a reconnect. Browser EventSource error responses are generic and never contain
+database exception details.
+
+The API opens its database lazily from the dedicated
+`CONTINUUM_RUNTIME_DATABASE_URL`; it never falls back to the migration, wake, or
+ingress URL. The URL login must be `continuum_runtime`, and the connection pool
+is capped at two connections with five-second statement and two-second lock
+timeouts. TLS may be disabled only for loopback development. Remote and
+production connections require `sslmode=verify-full&sslrootcert=system`, using
+PostgreSQL 17's system CA roots and server-name verification ([libpq SSL
+settings](https://www.postgresql.org/docs/17/libpq-connect.html#LIBPQ-CONNECT-SSLROOTCERT)).
+Missing or unsafe runtime database configuration leaves run reads unavailable
+with a 503 response.
+
+The T12 integration fixture requires its own disposable PostgreSQL 17 instance
+and an administrative URL for a database named `continuum_t12_test`. It proves
+owner isolation, consistent watermarks, int8-safe cursors, maximum page-size
+lookahead, privacy projection, explicit history gaps, native EventSource header
+precedence, stream reset events, resolver revocation, and connection release
+after client disconnect.
+
+```sh
+CONTINUUM_T12_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:55482/continuum_t12_test' \
+  make test-target TARGET=tests/integration/test_events.py
+```
+
 The T10 integration fixture requires an administrative URL for a disposable
 loopback PostgreSQL 17 database named `continuum_t10_test`. It creates and
 removes the runtime roles and private schemas while proving restart-safe retry

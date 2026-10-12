@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import Engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
+from continuum_api.api_models import ErrorResponse
 from continuum_api.wake import create_wake_router
 
 logger = logging.getLogger(__name__)
@@ -27,17 +32,13 @@ class HealthResponse(BaseModel):
     checks: dict[str, Literal["ok"]] | None = None
 
 
-class ErrorResponse(BaseModel):
-    """Uniform machine-readable API error shape."""
-
-    code: str
-    message: str
-    retryable: bool
-    request_id: str
-
-
-def create_app(static_dir: Path | None = None) -> FastAPI:
-    """Build the API application and serve only files from the built frontend."""
+def create_app(
+    static_dir: Path | None = None,
+    *,
+    principal_resolver: Callable[[Request], Any] | None = None,
+    runtime_engine: Engine | None = None,
+) -> FastAPI:
+    """Build the API with an injected identity boundary and runtime database."""
     if static_dir is None:
         configured_static_dir = os.environ.get("CONTINUUM_STATIC_DIR")
         static_dir = (
@@ -47,13 +48,34 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
         )
     static_root = static_dir.resolve()
 
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            if application.state.owns_runtime_engine:
+                application.state.runtime_engine.dispose()
+
     application = FastAPI(
         title="Continumm API",
         version="0.1.0",
         docs_url="/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
     application.include_router(create_wake_router())
+    application.state.runtime_engine = runtime_engine
+    application.state.owns_runtime_engine = False
+    application.state.runtime_engine_lock = threading.Lock()
+    from continuum_api.runtime.run_routes import (
+        _StreamLimiter,
+        create_run_router,
+        install_sse_openapi,
+    )
+
+    application.state.sse_stream_limiter = _StreamLimiter()
+    application.include_router(create_run_router(principal_resolver))
+    install_sse_openapi(application)
 
     @application.middleware("http")
     async def structured_request_log(
@@ -103,10 +125,31 @@ def create_app(static_dir: Path | None = None) -> FastAPI:
 
     @application.exception_handler(StarletteHTTPException)
     async def http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        messages = {
+            "authentication_required": ("authentication_required", "Authentication is required."),
+            "event_cursor_invalid": ("event_cursor_invalid", "The event cursor is invalid."),
+            "event_cursor_ahead": ("event_cursor_ahead", "The cursor is newer than run history."),
+            "event_stream_limit_reached": (
+                "event_stream_limit_reached",
+                "The event stream limit has been reached.",
+            ),
+            "runtime_database_unavailable": (
+                "runtime_database_unavailable",
+                "Run history is temporarily unavailable.",
+            ),
+            "not_found": ("not_found", "The requested API resource was not found."),
+        }
+        mapped = messages.get(exc.detail) if isinstance(exc.detail, str) else None
         message = (
             exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
         )
-        code = "not_found" if exc.status_code == 404 else "http_error"
+        if mapped is None:
+            if exc.status_code == 404:
+                code = "not_found"
+            else:
+                code = "http_error"
+        else:
+            code, message = mapped
         retryable = exc.status_code in (408, 425, 429) or exc.status_code >= 500
         return error_response(
             request,

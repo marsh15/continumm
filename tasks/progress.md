@@ -90,7 +90,7 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   passed; unchanged frontend/Edge checks passed with 3/21 tests. The owned
   fixture was removed and unrelated containers preserved. Hosted gates remain
   open. See [runtime setup](../docs/runtime-persistence.md).
-- T12 onward: pending their declared dependencies.
+- T13 onward: pending their declared dependencies.
 
 ## 12 October 2026
 
@@ -107,6 +107,19 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   with 101 Python tests, 9 expected integration environment skips, 3 frontend
   tests and 21 Edge tests. Cleanup intents remain pending for later adapter
   dispatch; no remote stop or mutation was performed. Hosted gates remain open.
+
+- T12: local run timeline complete. Owner-scoped snapshots and event pages use
+  consistent database snapshots; decimal-string SSE cursors replay without JS
+  precision loss. Typed privacy projections, access rechecks, bounded streams,
+  disconnect cleanup, and gap/reset recovery are verified. The default identity
+  boundary remains closed until the identity slice. `make check build-frontend
+  build-package` passed with 119 Python tests, 10 expected integration environment
+  skips, 16 frontend tests and 21 Edge tests; the isolated PostgreSQL 17 event
+  target passed. A loopback-only app with a trusted test identity rendered a real
+  PostgreSQL-backed waiting-credentials snapshot and two committed runtime
+  events; status refresh and connected timeline were checked in the browser.
+  No public auth, model or GitHub execution was enabled. Checkpoint D's process
+  loss and paused-worker demonstrations are next; hosted gates remain open.
 
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
