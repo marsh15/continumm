@@ -222,6 +222,63 @@ CONTINUUM_T12_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:5548
   make test-target TARGET=tests/integration/test_events.py
 ```
 
+## Checkpoint D process recovery proof
+
+`tests/integration/test_runtime_demonstration.py` runs two subprocess proofs
+against an isolated PostgreSQL 17 database named `continuum_checkpoint_d_test`.
+The child processes use the real `QueueService`, `persist_checkpoint`, and
+`TransitionService` with a dedicated runtime login. They do not call a model,
+GitHub, or any cloud provider.
+
+For the crash case, the test waits for the worker's checkpoint transaction to
+commit, sends `SIGKILL`, and waits for the child PID to exit. It then reads the
+checkpoint from PostgreSQL, expires the database lease, runs
+`RuntimeRecoveryService`, claims generation 2, and accepts its result. The test
+recovery handler reloads the generation-1 checkpoint through the owning
+`Principal`, recalculates its SHA-256 digest, and derives the generation-2
+accepted result from that stored payload. It checks that `accepted_results`
+contains only generation 2 and references the verified checkpoint ID,
+generation, and digest.
+
+For the paused-worker case, the child commits a checkpoint and waits on a pipe
+with no database transaction open. The parent sends `SIGSTOP`, verifies the
+process state through `ps`, and checks that the worker's PostgreSQL backend is
+idle with no transaction or locks. It expires the lease using PostgreSQL time,
+recovers the job, and has generation 2 commit a checkpoint. After `SIGCONT`, the
+old worker attempts both an intermediate checkpoint and a final transition;
+both raise `LeaseLost`, and no stale checkpoint or accepted result is stored.
+Generation 2 then commits the accepted result.
+
+This local fixture shortens the otherwise 60-second lease by updating only its
+`lease_expires_at` to `clock_timestamp() - interval '1 second'` in the disposable
+test database. It does not mock or change the application clock. The timeline
+test observer appends `runtime.checkpoint_committed` only after reading the
+checkpoint row back, and appends `runtime.stale_write_rejected` only after it
+receives both `LeaseLost` outcomes. Production worker code never writes those
+observer events. The final run snapshots and event pages are read through the
+T12 API, so the proof also verifies the visible sequence of committed,
+recovered, rejected, and accepted work. See the [local Checkpoint D evidence](evidence/checkpoint-d-local.md).
+
+Use a separate PostgreSQL 17 server for this fixture because it creates and
+removes the same cluster-wide runtime roles used by the other integration
+tests. Do not run it concurrently with another destructive runtime integration
+test on the same server.
+
+```sh
+CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL='postgresql://postgres:<password>@127.0.0.1:55484/continuum_checkpoint_d_test' \
+  make test-target TARGET=tests/integration/test_runtime_demonstration.py
+```
+
+For local browser review only, set `CONTINUUM_CHECKPOINT_D_RETAIN_PATH` to a
+private directory under `/tmp` before running this target. The fixture preserves
+the two synthetic run records and writes the runtime URL in a mode-0600 file
+plus mode-0600 run metadata. The test-only
+`scripts/serve_checkpoint_d_visual.py` wrapper reads those files, injects a
+fixed trusted test principal for each run, and serves the UI on loopback port
+8013. It does not alter the default closed identity boundary. The wrapper
+rejects non-loopback runtime URLs and never prints the database URL. Remove the
+retained directory and stop the dedicated PostgreSQL server after review.
+
 The T10 integration fixture requires an administrative URL for a disposable
 loopback PostgreSQL 17 database named `continuum_t10_test`. It creates and
 removes the runtime roles and private schemas while proving restart-safe retry

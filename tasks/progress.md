@@ -121,6 +121,19 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   No public auth, model or GitHub execution was enabled. Checkpoint D's process
   loss and paused-worker demonstrations are next; hosted gates remain open.
 
+- Checkpoint D: complete locally. Separate real SIGKILL and SIGSTOP/SIGCONT
+  worker tests passed against PostgreSQL 17. Generation 2 reloads and validates
+  generation 1's committed checkpoint before deriving its accepted result;
+  a resumed stale worker receives `LeaseLost` for intermediate and final writes.
+  Controlled database lease expiry is documented separately from the production
+  60-second lease. The rendered seven-event timeline shows recovery, rejection
+  and accepted progress. The process target passed 2 tests and the focused event
+  target passed; formatting, lint, typing, 119 Python tests (12 expected
+  integration environment skips) and package build passed. The idle-SSE
+  connection acknowledgment fix was separately committed and pushed. All owned
+  apps/clusters and private retained credentials were removed.
+  [Local evidence](../docs/evidence/checkpoint-d-local.md).
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

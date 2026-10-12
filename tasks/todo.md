@@ -158,9 +158,10 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 ### Checkpoint D — Runtime demonstration
 
-- [ ] SIGKILL recovery and paused-stale-worker rejection are separate successful demonstrations.
-- [ ] A timeline shows what committed, what was rejected, and what resumed.
-- [ ] Model or GitHub integrations are not required to prove the queue.
+- [x] SIGKILL recovery and paused-stale-worker rejection are separate successful demonstrations.
+- [x] A timeline shows what committed, what was rejected, and what resumed.
+- [x] Model or GitHub integrations are not required to prove the queue.
+- **Evidence:** [Local Checkpoint D process recovery proof](../docs/evidence/checkpoint-d-local.md).
 
 ## Phase 2 — Safe workspace execution
 
