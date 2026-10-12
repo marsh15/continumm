@@ -134,6 +134,17 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   apps/clusters and private retained credentials were removed.
   [Local evidence](../docs/evidence/checkpoint-d-local.md).
 
+- T13: local repository preflight implemented. Numeric repository/commit/profile
+  identities, fail-closed trusted authorization, fixed-origin bounded metadata
+  reads, strict Python/npm profiles, and Python dependency closure validation
+  precede any allocation. Migration 08 adds durable five-check/hour admission,
+  one active reservation, ten-minute technical caching, DB-clock stale-check
+  fencing, and owner RLS. Dedicated PostgreSQL 17 verification passed, including
+  concurrent reservations and migration rollback. Full local checks and package
+  build passed; final focused regression totals are in the preflight evidence.
+  Live GitHub App verification remains pending T33.
+  [Contract and local verification](../docs/repository-preflight.md).
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

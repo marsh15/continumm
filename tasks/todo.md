@@ -169,8 +169,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T03, T07.
 - **Scope:** Medium; repository adapter, profile definitions and eligibility tests.
-- [ ] Pin a repository/commit and enforce visibility, size, file type, package source and profile boundaries.
-- [ ] Metadata-only preflight is rate/byte bounded; unsupported repositories fail before model calls or sandbox allocation.
+- [x] Pin a repository/commit and enforce visibility, size, file type, package source and profile boundaries.
+- [x] Metadata-only preflight is rate/byte bounded; unsupported repositories fail before model calls or sandbox allocation.
+- **Evidence:** [Local preflight contract and verification](../docs/repository-preflight.md); 49 unit tests and a dedicated PostgreSQL 17 quota/cache/RLS proof. Live GitHub App verification remains fail closed until T33.
 - **Verify:** make test-target TARGET=tests/unit/test_repository_eligibility.py.
 
 ### T14 — Canonical archives and manifests
