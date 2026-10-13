@@ -335,12 +335,12 @@ async def test_new_checkpoint_posts_once_reads_back_and_commits_after_verificati
 
 @_async_test
 async def test_total_deadline_cancels_slow_post_and_replay_never_posts_again() -> None:
-    storage = _StorageFixture(post_delay_seconds=0.3, get_responses=[])
+    storage = _StorageFixture(post_delay_seconds=1.0, get_responses=[])
     persistence = _FakePersistence()
     service, _, transitions, _ = _service(
         storage,
         persistence,
-        deadline_seconds=0.1,
+        deadline_seconds=0.5,
     )
     principal, lease = _principal_and_lease()
     files = (ArchiveFile("src/main.py", b"ready"),)
@@ -357,8 +357,9 @@ async def test_total_deadline_cancels_slow_post_and_replay_never_posts_again() -
     assert persistence.reservation.status == "uploading"
     storage.post_delay_seconds = 0
     storage.get_responses.append((404, b"", {}))
+    replay_service, _, _, _ = _service(storage, persistence, transitions)
     with pytest.raises(CheckpointStorageError, match="artifact_upload_outcome_unknown"):
-        await service.commit_checkpoint(
+        await replay_service.commit_checkpoint(
             principal,
             lease,
             "tool:one",
