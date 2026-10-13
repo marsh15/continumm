@@ -203,8 +203,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T04, T09.
 - **Scope:** Medium; allocation persistence, adapter lifecycle and tests.
-- [ ] Reserve before creation and correlate remote allocation with a stable attempt identity.
-- [ ] Unknown creation or stop retains capacity; replacement waits for observed termination, never a local-time assumption about a delayed request.
+- [x] Reserve before creation and correlate remote allocation with a stable attempt identity.
+- [x] Unknown creation or stop retains capacity; replacement waits for observed termination, never a local-time assumption about a delayed request.
+- **Evidence:** [Allocation accounting and local proof](../docs/sandbox-allocation-accounting.md); dedicated PostgreSQL 17 and fake SDK/provider tests. Hosted allocation remains pending.
 - **Verify:** make test-target TARGET=tests/integration/test_sandbox_allocations.py.
 
 ### T17 — Python profile

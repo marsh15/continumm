@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -17,7 +17,11 @@ from vercel.sandbox._internal.state import (
     SandboxState,
 )
 
-from continuum_api.sandbox.config import SandboxLimits, VercelCredentials
+from continuum_api.sandbox.config import (
+    SandboxAllocationLimits,
+    SandboxLimits,
+    VercelCredentials,
+)
 from continuum_api.sandbox.contracts import EffectState, SandboxEffectError
 from continuum_api.sandbox.vercel import VercelSandboxProvider, _is_stopped
 
@@ -101,6 +105,7 @@ class FakeProcess:
 class FakeRuntimeSession:
     def __init__(self, *, stdout: str = "hello\n", stderr: str = "") -> None:
         self.id = "session-fixture"
+        self.sandbox_name = ""
         self.status = SandboxStatus.RUNNING
         self.fs = FakeFilesystem()
         self.process = FakeProcess(stdout, stderr)
@@ -126,9 +131,14 @@ class FakeSandbox:
     def __init__(self, name: str, runtime: FakeRuntimeSession) -> None:
         self.name = name
         self.current_session = runtime
+        runtime.sandbox_name = name
         self.status = SandboxStatus.RUNNING
         self.destroy_calls = 0
         self.destroy_error: Exception | None = None
+
+    @property
+    def current_session_id(self) -> str | None:
+        return None if self.current_session is None else self.current_session.id
 
     async def destroy(self, *, delete_orphan_snapshots: bool = False) -> None:
         assert delete_orphan_snapshots is True
@@ -140,6 +150,7 @@ class FakeSandbox:
 class FakeSDK:
     def __init__(self, runtime: FakeRuntimeSession) -> None:
         self.runtime = runtime
+        self.sessions = [runtime]
         self.create_calls: list[dict[str, Any]] = []
         self.box: FakeSandbox | None = None
 
@@ -147,6 +158,16 @@ class FakeSDK:
         self.create_calls.append(kwargs)
         self.box = FakeSandbox(kwargs["name"], self.runtime)
         return self.box
+
+    async def query_sessions(
+        self, *, name: str, page_size: int, sort_order: str
+    ) -> AsyncIterator[FakeRuntimeSession]:
+        assert page_size == 20
+        assert sort_order == "desc"
+        if self.box is not None and self.box.name == name:
+            for runtime in self.sessions:
+                if runtime.sandbox_name == name:
+                    yield runtime
 
     async def get_sandbox(self, *, name: str) -> FakeSandbox:
         if self.box is None or self.box.name != name or self.box.destroy_calls:
@@ -159,6 +180,7 @@ class FakeSDK:
 def make_provider(
     sdk: FakeSDK,
     seen_options: list[Sequence[object]],
+    limits: SandboxLimits | SandboxAllocationLimits | None = None,
 ) -> VercelSandboxProvider:
     @asynccontextmanager
     async def fake_session(*, service_options: Sequence[object]):
@@ -170,7 +192,7 @@ def make_provider(
         yield object()
 
     return VercelSandboxProvider(
-        limits=SandboxLimits(image=f"vercel/sandbox/python:3.14@sha256:{'c' * 64}"),
+        limits=limits or SandboxLimits(image=f"vercel/sandbox/python:3.14@sha256:{'c' * 64}"),
         credentials=VercelCredentials(
             token="control-token", team_id="team-test", project_id="project-test"
         ),
@@ -224,6 +246,63 @@ def test_adapter_lifecycle_uses_pinned_bounded_session_without_injecting_credent
         assert runtime.stop_calls == 1
         assert sdk.box is not None and sdk.box.destroy_calls == 1
         assert runtime.process.kill_calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_t16_provider_uses_reserved_runtime_envelope_and_correlation_tag() -> None:
+    async def scenario() -> None:
+        runtime = FakeRuntimeSession()
+        sdk = FakeSDK(runtime)
+        provider = make_provider(
+            sdk,
+            [],
+            SandboxAllocationLimits(
+                image=f"vercel/sandbox/python:3.14@sha256:{'e' * 64}",
+                session_seconds=900,
+            ),
+        )
+
+        async with provider.connection():
+            await provider.create(
+                "continuum-t16-allocationfixture001",
+                tags={"continuum-allocation-id": "allocation-fixture"},
+            )
+
+        request = sdk.create_calls[0]
+        assert request["execution_time_limit"] == timedelta(seconds=900)
+        assert request["resources"].vcpus == 2
+        assert request["resources"].memory == 4_096
+        assert request["persistent"] is False
+        assert request["ports"] == []
+        assert request["env"] is None
+        assert request["tags"] == {"continuum-allocation-id": "allocation-fixture"}
+
+    asyncio.run(scenario())
+
+
+def test_exact_session_lookup_is_passive_and_does_not_adopt_current_session() -> None:
+    async def scenario() -> None:
+        current = FakeRuntimeSession()
+        historical = FakeRuntimeSession()
+        historical.id = "persisted-session"
+        historical.status = SandboxStatus.STOPPED
+        sdk = FakeSDK(current)
+        box = FakeSandbox("continuum-t16-exactsession0001", current)
+        historical.sandbox_name = box.name
+        sdk.box = box
+        sdk.sessions.append(historical)
+        provider = make_provider(sdk, [])
+
+        async with provider.connection():
+            observed = await provider.observe_exact_session(box.name, historical.id)
+
+        assert observed is not None
+        assert observed.session_id == "persisted-session"
+        assert observed.current_session_id == current.id
+        assert observed.observation().session_status == "stopped"
+        assert current.create_process_calls == []
+        assert historical.create_process_calls == []
 
     asyncio.run(scenario())
 

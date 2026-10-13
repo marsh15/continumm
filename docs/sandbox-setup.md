@@ -1,5 +1,15 @@
 # T04 Vercel Sandbox setup
 
+T16 replaces unaccounted live mutations with
+[durable allocation accounting](sandbox-allocation-accounting.md). The legacy
+`lifecycle`, `crash-fixture`, and `cleanup` CLI commands below now refuse with
+`sandbox_allocation_accounting_required` before provider construction, even when
+the old opt-in flag is set. These are historical spike procedures rather than a
+current hosted execution path. Passive `sandbox-observe` remains available.
+Use provider dashboard controls for protective cleanup of a legacy resource;
+new hosted experiments require an accounted allocation and explicit billing
+period configuration. No hosted acceptance has been claimed.
+
 **Purpose:** run one explicitly enabled, owner-controlled lifecycle fixture for T04.  
 **Current state:** local preparation is complete; no Vercel project has been configured and no hosted call has been made. See [the T04 evidence record](evidence/t04-hosted.md).  
 **SDK reference checked:** 11 October 2026; `vercel==0.11.6` is pinned in `pyproject.toml` and `uv.lock`.

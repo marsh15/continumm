@@ -243,6 +243,15 @@ async def _run(args: argparse.Namespace) -> int:
         _emit({"result": "blocked", "reason": str(error)})
         return 2
 
+    if args.command in {"lifecycle", "crash-fixture", "cleanup"}:
+        _emit(
+            {
+                "result": "blocked",
+                "reason": "sandbox_allocation_accounting_required",
+            }
+        )
+        return 2
+
     provider = VercelSandboxProvider(limits=limits, credentials=credentials)
     outcome: dict[str, Any] | None = None
     exit_code = 2

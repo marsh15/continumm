@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import subprocess
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import timedelta
 from typing import Any, Protocol, TypeVar
@@ -30,6 +30,7 @@ from continuum_api.sandbox.config import (
     MAX_TRANSFER_BYTES,
     SANDBOX_WORKING_DIRECTORY,
     TRANSFER_CHUNK_BYTES,
+    SandboxAllocationLimits,
     SandboxLimits,
     VercelCredentials,
     validate_fixture_filename,
@@ -51,6 +52,7 @@ _OBSERVE_TIMEOUT_SECONDS = 10
 _SESSION_STOP_TIMEOUT_SECONDS = 20
 _DESTROY_TIMEOUT_SECONDS = 20
 _FILE_TRANSFER_TIMEOUT_SECONDS = 20
+_MAX_EXACT_SESSION_LOOKUPS = 20
 _PROCESS_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
@@ -58,6 +60,10 @@ class _SandboxAPI(Protocol):
     def create_sandbox(self, **kwargs: Any) -> Awaitable[Sandbox]: ...
 
     async def get_sandbox(self, *, name: str) -> Sandbox: ...
+
+    def query_sessions(
+        self, *, name: str, page_size: int, sort_order: str
+    ) -> AsyncIterator[SandboxRuntimeSession]: ...
 
 
 def _error_effect(action: SandboxAction, error: Exception) -> SandboxEffectError:
@@ -114,7 +120,7 @@ class VercelSandboxProvider:
     def __init__(
         self,
         *,
-        limits: SandboxLimits,
+        limits: SandboxLimits | SandboxAllocationLimits,
         credentials: VercelCredentials,
         sdk: _SandboxAPI = vercel_sandbox,
         sdk_session_factory: Callable[..., AbstractAsyncContextManager[Any]] = sdk_session,
@@ -144,7 +150,12 @@ class VercelSandboxProvider:
         async with self._sdk_session_factory(service_options=[options]):
             yield self
 
-    async def create(self, name: str) -> VercelSandboxAllocation:
+    async def create(
+        self,
+        name: str,
+        *,
+        tags: Mapping[str, str] | None = None,
+    ) -> VercelSandboxAllocation:
         """Create one bounded, deny-all, non-persistent named sandbox."""
 
         validate_sandbox_name(name)
@@ -172,6 +183,7 @@ class VercelSandboxProvider:
                     persistent=False,
                     network_policy=NetworkPolicy.deny_all(),
                     env=None,
+                    tags=None if tags is None else dict(tags),
                     mounts=None,
                     source=None,
                 ),
@@ -194,8 +206,60 @@ class VercelSandboxProvider:
         """Read a stable name without resuming it or repeating creation."""
 
         validate_sandbox_name(name)
+        box = await self._observe_box(name)
+        return None if box is None else VercelSandboxAllocation(self, box, box.current_session)
+
+    async def observe_exact_session(
+        self, name: str, expected_session_id: str
+    ) -> VercelSandboxAllocation | None:
+        """Passively locate one previously bound session without resuming it."""
+
+        validate_sandbox_name(name)
+        if not expected_session_id or len(expected_session_id) > 128:
+            raise SandboxEffectError(
+                SandboxAction.OBSERVE,
+                EffectState.NOT_APPLIED,
+                "session_identity_invalid",
+            )
+        box = await self._observe_box(name)
+        if box is None:
+            return None
+        current = box.current_session
+        if current is not None and current.id == expected_session_id:
+            return VercelSandboxAllocation(self, box, current)
+        query_sessions = getattr(self._sdk, "query_sessions", None)
+        if not callable(query_sessions):
+            raise SandboxEffectError(
+                SandboxAction.OBSERVE,
+                EffectState.UNKNOWN,
+                "exact_session_lookup_unavailable",
+            )
         try:
-            box = await self._call(
+            async with asyncio.timeout(_OBSERVE_TIMEOUT_SECONDS):
+                count = 0
+                async for runtime in query_sessions(
+                    name=name,
+                    page_size=_MAX_EXACT_SESSION_LOOKUPS,
+                    sort_order="desc",
+                ):
+                    count += 1
+                    if runtime.id == expected_session_id and runtime.sandbox_name == name:
+                        return VercelSandboxAllocation(self, box, runtime)
+                    if count >= _MAX_EXACT_SESSION_LOOKUPS:
+                        break
+        except SandboxEffectError as error:
+            raise error
+        except Exception as error:
+            raise _error_effect(SandboxAction.OBSERVE, error) from None
+        raise SandboxEffectError(
+            SandboxAction.OBSERVE,
+            EffectState.UNKNOWN,
+            "exact_session_not_observed_within_bound",
+        )
+
+    async def _observe_box(self, name: str) -> Sandbox | None:
+        try:
+            return await self._call(
                 SandboxAction.OBSERVE,
                 _OBSERVE_TIMEOUT_SECONDS,
                 self._sdk.get_sandbox(name=name),
@@ -204,7 +268,6 @@ class VercelSandboxProvider:
             if error.reason == "provider_not_found":
                 return None
             raise
-        return VercelSandboxAllocation(self, box, box.current_session)
 
     async def _call(self, action: SandboxAction, timeout: int, operation: Awaitable[_T]) -> _T:
         try:
@@ -259,6 +322,19 @@ class VercelSandboxAllocation:
     @property
     def session_id(self) -> str | None:
         return None if self._runtime is None else self._runtime.id
+
+    @property
+    def current_session_id(self) -> str | None:
+        current_id = getattr(self._box, "current_session_id", None)
+        if current_id is not None:
+            return str(current_id)
+        current = getattr(self._box, "current_session", None)
+        return None if current is None else str(current.id)
+
+    @property
+    def current_session_status(self) -> str | None:
+        current = getattr(self._box, "current_session", None)
+        return None if current is None else _status_text(current.status)
 
     def observation(self) -> SandboxObservation:
         return SandboxObservation(

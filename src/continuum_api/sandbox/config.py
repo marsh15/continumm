@@ -13,6 +13,9 @@ _DIGEST_IMAGE = re.compile(r"^[A-Za-z0-9._/:+-]+@sha256:[0-9a-f]{64}$")
 _SANDBOX_NAME = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 
 MAX_SESSION_SECONDS = 300
+MAX_ALLOCATION_SECONDS = 900
+ALLOCATION_VCPUS = 2
+ALLOCATION_MEMORY_MB = 4_096
 MAX_COMMAND_SECONDS = 20
 MAX_OUTPUT_BYTES = 4_096
 MAX_TRANSFER_BYTES = 64 * 1_024
@@ -36,6 +39,24 @@ class SandboxLimits:
             raise ValueError(f"session_seconds must be between 1 and {MAX_SESSION_SECONDS}")
         if self.vcpus != 1 or self.memory_mb != 2_048:
             raise ValueError("T04 sandbox resources are fixed at 1 vCPU and 2048 MiB")
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxAllocationLimits:
+    """T16 runtime envelope; its duration is reserved by PostgreSQL first."""
+
+    image: str
+    session_seconds: int
+    vcpus: int = ALLOCATION_VCPUS
+    memory_mb: int = ALLOCATION_MEMORY_MB
+
+    def __post_init__(self) -> None:
+        if _DIGEST_IMAGE.fullmatch(self.image) is None:
+            raise ValueError("sandbox image must include an immutable sha256 digest")
+        if not 1 <= self.session_seconds <= MAX_ALLOCATION_SECONDS:
+            raise ValueError(f"session_seconds must be between 1 and {MAX_ALLOCATION_SECONDS}")
+        if self.vcpus != ALLOCATION_VCPUS or self.memory_mb != ALLOCATION_MEMORY_MB:
+            raise ValueError("T16 sandbox resources are fixed at 2 vCPUs and 4096 MiB")
 
 
 def validate_sandbox_name(name: str) -> str:

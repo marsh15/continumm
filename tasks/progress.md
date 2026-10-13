@@ -173,6 +173,18 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   attention are covered without substituting local files for committed state.
   [Evidence](../docs/evidence/checkpoint-e-local.md). Hosted restoration is pending.
 
+- T16: managed allocation accounting complete locally. Migration 10 records
+  stable attempts, explicit provider-period pools, full compute reservations and
+  one global slot. Unknown creates/stops retain capacity; exact terminal evidence
+  frees concurrency without refunding dispatched compute. Protected cleanup
+  recovers never-authorized reservations after worker loss. Period rollover
+  preserves resource identity and carries charge once. A dedicated PostgreSQL
+  proof passed; 41 focused tests and 267 Python regression tests passed (15
+  optional integration environment skips), along with formatting, lint, typing
+  and package build. Legacy unaccounted CLI mutations now fail closed.
+  [Local contract and verification](../docs/sandbox-allocation-accounting.md).
+  Hosted allocation is still pending.
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

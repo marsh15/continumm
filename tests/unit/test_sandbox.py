@@ -12,7 +12,11 @@ from pathlib import Path
 import pytest
 
 from continuum_api.sandbox.config import (
+    ALLOCATION_MEMORY_MB,
+    ALLOCATION_VCPUS,
+    MAX_ALLOCATION_SECONDS,
     MAX_SESSION_SECONDS,
+    SandboxAllocationLimits,
     SandboxLimits,
     SandboxSmokeSettings,
     VercelCredentials,
@@ -37,6 +41,22 @@ def test_sandbox_limits_require_digest_image_and_fixed_resources() -> None:
             image=f"vercel/sandbox/python:3.14@sha256:{digest}",
             session_seconds=MAX_SESSION_SECONDS + 1,
         )
+
+
+def test_t16_runtime_envelope_is_separate_from_fixed_t04_limits() -> None:
+    image = f"vercel/sandbox/python:3.14@sha256:{'e' * 64}"
+    limits = SandboxAllocationLimits(image=image, session_seconds=MAX_ALLOCATION_SECONDS)
+
+    assert (limits.vcpus, limits.memory_mb, limits.session_seconds) == (
+        ALLOCATION_VCPUS,
+        ALLOCATION_MEMORY_MB,
+        900,
+    )
+    assert SandboxLimits(image=image).session_seconds == 120
+    with pytest.raises(ValueError, match="session_seconds"):
+        SandboxAllocationLimits(image=image, session_seconds=MAX_ALLOCATION_SECONDS + 1)
+    with pytest.raises(ValueError, match="2 vCPUs and 4096 MiB"):
+        SandboxAllocationLimits(image=image, session_seconds=120, vcpus=1)
 
 
 def test_sandbox_names_and_fixture_paths_cannot_escape_scope() -> None:
@@ -160,6 +180,43 @@ def test_hosted_smoke_cli_sanitizes_malformed_secret_bearing_environment() -> No
     assert "secret-sentinel" not in completed.stdout + completed.stderr
     assert "control-token-sentinel" not in completed.stdout + completed.stderr
     assert "invalid-boolean-secret-sentinel" not in completed.stdout + completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["lifecycle"],
+        ["crash-fixture"],
+        ["cleanup", "--name", "continuum-t04-123e4567e89b12d3a456426614174000"],
+    ],
+)
+def test_t04_hosted_mutations_are_blocked_until_allocation_accounting(
+    arguments: list[str],
+) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "CONTINUUM_ENABLE_SANDBOX_SMOKE": "1",
+            "CONTINUUM_SANDBOX_IMAGE": f"vercel/sandbox/python:3.14@sha256:{'f' * 64}",
+            "CONTINUUM_T04_SMOKE_ID": "123e4567-e89b-12d3-a456-426614174000",
+            "CONTINUUM_VERCEL_TOKEN": "non-secret-test-token",
+            "CONTINUUM_VERCEL_TEAM_ID": "team-fixture",
+            "CONTINUUM_VERCEL_PROJECT_ID": "project-fixture",
+        }
+    )
+    completed = subprocess.run(
+        [sys.executable, "-m", "continuum_api.sandbox.smoke", *arguments],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 2
+    assert "sandbox_allocation_accounting_required" in completed.stdout
+    assert "non-secret-test-token" not in completed.stdout + completed.stderr
     assert "Traceback" not in completed.stderr
 
 
