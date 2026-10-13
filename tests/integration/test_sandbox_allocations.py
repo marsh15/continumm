@@ -677,6 +677,22 @@ def _assert_exact_stop_and_concurrent_capacity(
     assert _active_allocation(admin_engine) == winner.allocation_id
     observed = SandboxObservation(winner.provider_name, "running", "session-17", "running")
     store.record_observation(racers[winner_index], winner.allocation_id, observed, "period-b")
+    action_budget = store.authorize_profile_action(
+        racers[winner_index],
+        leases[winner_index],
+        winner.allocation_id,
+        "session-17",
+        "period-b",
+    )
+    assert 0 < action_budget <= 100
+    with pytest.raises(SandboxAllocationObservationConflict):
+        store.authorize_profile_action(
+            racers[winner_index],
+            leases[winner_index],
+            winner.allocation_id,
+            "other-session",
+            "period-b",
+        )
     assert store.authorize_stop(racers[winner_index], winner.allocation_id, "session-17")
     assert not store.authorize_stop(racers[winner_index], winner.allocation_id, "session-17")
     store.mark_stop_unknown(racers[winner_index], winner.allocation_id)

@@ -6,7 +6,7 @@ import re
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
@@ -391,6 +391,105 @@ class SandboxAllocationStore:
             )
             self._assert_creation_fence(connection, locked, row, period_id)
             return True
+
+    def authorize_profile_action(
+        self,
+        principal: Principal,
+        lease: ExecutionLease,
+        allocation_id: UUID,
+        expected_session_id: str,
+        provider_period_id: str | None,
+    ) -> int:
+        """Fence one sandbox mutation and return its DB-computed time budget."""
+        if principal.account_id != lease.owner_id:
+            raise LeaseLost("runtime_lease_owner_mismatch")
+        if not expected_session_id:
+            raise SandboxAllocationObservationConflict()
+
+        deferred_error: SandboxAllocationError | LeaseLost | None = None
+        remaining_seconds: int | None = None
+        with self._connection(principal) as connection:
+            period = self._lock_current_period(connection, provider_period_id)
+            assert provider_period_id is not None
+            usage = self._lock_period_usage(connection, provider_period_id)
+            capacity = self._lock_capacity(connection)
+
+            # The current billing pool receives the full conservative charge
+            # before any source, policy, setup, or test mutation is authorized.
+            if capacity["active_allocation_id"] is not None:
+                carry_error = self._carry_active_charge(
+                    connection, capacity, provider_period_id, usage, period
+                )
+                if carry_error is not None:
+                    deferred_error = carry_error
+            elif set(usage) != {"operator", "public"}:
+                deferred_error = SandboxAllocationError("sandbox_allocation_period_unavailable")
+
+            if deferred_error is None:
+                if capacity["active_allocation_id"] != allocation_id:
+                    deferred_error = SandboxAllocationReservationLost()
+                else:
+                    try:
+                        locked = lock_current_execution(connection, principal, lease)
+                        self._assert_live_again(connection, locked)
+                        row = self._lock_by_id(connection, principal, lease, allocation_id)
+                        if row["status"] != "running" or row["create_authorized_at"] is None:
+                            raise SandboxAllocationReservationLost()
+                        if row["provider_session_id"] != expected_session_id:
+                            raise SandboxAllocationObservationConflict()
+                        self._assert_live_again(connection, locked)
+
+                        current_period_count: int
+                        current_period_id: str | None
+                        current_period_count, current_period_id = cast(
+                            tuple[int, str | None],
+                            connection.execute(
+                                text(
+                                    "WITH db_clock AS (SELECT clock_timestamp() AS now) "
+                                    "SELECT count(*), min(provider_period_id) "
+                                    "FROM runtime_private.sandbox_provider_periods, db_clock "
+                                    "WHERE starts_at <= db_clock.now "
+                                    "AND ends_at > db_clock.now"
+                                )
+                            ).one(),
+                        )
+                        if current_period_count != 1 or current_period_id != provider_period_id:
+                            raise SandboxAllocationError("sandbox_allocation_period_unavailable")
+
+                        session_deadline = row["create_authorized_at"] + timedelta(
+                            seconds=int(row["requested_seconds"])
+                        )
+                        remaining_seconds = int(
+                            connection.execute(
+                                text(
+                                    "WITH db_clock AS (SELECT clock_timestamp() AS now) "
+                                    "SELECT CASE WHEN db_clock.now >= :lease_deadline THEN 0 "
+                                    "ELSE floor(extract(epoch FROM LEAST("
+                                    ":session_deadline, "
+                                    "coalesce(:run_deadline, :session_deadline), "
+                                    ":period_deadline) - db_clock.now))::integer END "
+                                    "FROM db_clock"
+                                ),
+                                {
+                                    "session_deadline": session_deadline,
+                                    "run_deadline": locked.run_deadline_at,
+                                    "lease_deadline": locked.lease_expires_at,
+                                    "period_deadline": period["ends_at"],
+                                },
+                            ).scalar_one()
+                        )
+                        if remaining_seconds <= 0:
+                            raise SandboxAllocationError(
+                                "sandbox_allocation_action_deadline_exhausted"
+                            )
+                    except (SandboxAllocationError, LeaseLost) as error:
+                        deferred_error = error
+
+        if deferred_error is not None:
+            raise deferred_error
+        if remaining_seconds is None or remaining_seconds <= 0:
+            raise SandboxAllocationError("sandbox_allocation_action_deadline_exhausted")
+        return remaining_seconds
 
     def release_undispatched(
         self, principal: Principal, lease: ExecutionLease, allocation_id: UUID

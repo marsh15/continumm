@@ -10,7 +10,13 @@ from typing import Any
 
 import httpx2
 import pytest
-from vercel.sandbox import Sandbox, SandboxApiError, SandboxCredentials, SandboxStatus
+from vercel.sandbox import (
+    NetworkPolicyReadback,
+    Sandbox,
+    SandboxApiError,
+    SandboxCredentials,
+    SandboxStatus,
+)
 from vercel.sandbox._internal.state import (
     RuntimeSessionStopState,
     SandboxRuntimeSessionState,
@@ -94,12 +100,19 @@ class FakeProcess:
         self.stderr = FakeReader(stderr)
         self.returncode = 0
         self.kill_calls = 0
+        self.wait_entered = asyncio.Event()
+        self.wait_released = asyncio.Event()
+        self.block_wait = False
 
     async def wait(self) -> int:
+        self.wait_entered.set()
+        if self.block_wait:
+            await self.wait_released.wait()
         return self.returncode
 
     async def kill(self) -> None:
         self.kill_calls += 1
+        self.wait_released.set()
 
 
 class FakeRuntimeSession:
@@ -112,6 +125,8 @@ class FakeRuntimeSession:
         self.create_process_calls: list[tuple[str, Sequence[str], dict[str, Any]]] = []
         self.stop_calls = 0
         self.stop_error: Exception | None = None
+        self.network_policy = NetworkPolicyReadback(mode="deny-all")
+        self.network_policy_updates: list[Any] = []
 
     async def create_process(self, command: str, args: Sequence[str], **kwargs: Any) -> FakeProcess:
         self.create_process_calls.append((command, args, kwargs))
@@ -126,10 +141,22 @@ class FakeRuntimeSession:
     async def refresh(self) -> None:
         return None
 
+    async def update_network_policy(self, network_policy: Any) -> FakeRuntimeSession:
+        self.network_policy_updates.append(network_policy)
+        allowed_domains = (
+            tuple(sorted(network_policy.allow)) if network_policy.mode == "custom" else ()
+        )
+        self.network_policy = NetworkPolicyReadback(
+            mode=network_policy.mode,
+            allowed_domains=allowed_domains,
+        )
+        return self
+
 
 class FakeSandbox:
-    def __init__(self, name: str, runtime: FakeRuntimeSession) -> None:
+    def __init__(self, name: str, runtime: FakeRuntimeSession, *, image: str | None = None) -> None:
         self.name = name
+        self.image = image
         self.current_session = runtime
         runtime.sandbox_name = name
         self.status = SandboxStatus.RUNNING
@@ -156,7 +183,7 @@ class FakeSDK:
 
     async def create_sandbox(self, **kwargs: Any) -> FakeSandbox:
         self.create_calls.append(kwargs)
-        self.box = FakeSandbox(kwargs["name"], self.runtime)
+        self.box = FakeSandbox(kwargs["name"], self.runtime, image=kwargs.get("image"))
         return self.box
 
     async def query_sessions(
@@ -277,6 +304,144 @@ def test_t16_provider_uses_reserved_runtime_envelope_and_correlation_tag() -> No
         assert request["ports"] == []
         assert request["env"] is None
         assert request["tags"] == {"continuum-allocation-id": "allocation-fixture"}
+
+    asyncio.run(scenario())
+
+
+def test_t17_profile_adapter_bounds_commands_archive_writes_and_active_policy_switch() -> None:
+    async def scenario() -> None:
+        runtime = FakeRuntimeSession()
+        sdk = FakeSDK(runtime)
+        provider = make_provider(
+            sdk,
+            [],
+            SandboxAllocationLimits(
+                image=f"vercel/sandbox/python:3.13.12@sha256:{'f' * 64}",
+                session_seconds=900,
+            ),
+        )
+        archive = b"a" * (64 * 1024 + 17)
+
+        async with provider.connection():
+            allocation = await provider.create(
+                "continuum-t17-profilefixture001",
+                tags={"continuum-profile-id": "python-pytest"},
+            )
+            await allocation.write_profile_archive(archive, timeout_seconds=30)
+            result = await allocation.run_profile_command(
+                "/usr/local/bin/python3.13",
+                ["-I", "-S", "/opt/continuum/profile_bootstrap.py", "probe"],
+                cwd="/opt/continuum",
+                env=None,
+                timeout_seconds=120,
+            )
+            allow_readback = await allocation.set_python_profile_network_policy(
+                "package-download", timeout_seconds=10
+            )
+            deny_readback = await allocation.set_python_profile_network_policy(
+                "deny-all", timeout_seconds=10
+            )
+
+        assert result.exit_code == 0
+        assert runtime.create_process_calls[0][0] == "/usr/local/bin/python3.13"
+        assert runtime.create_process_calls[0][2]["cwd"] == "/opt/continuum"
+        assert runtime.create_process_calls[0][2]["kill_after"] == 120
+        assert "env" not in runtime.create_process_calls[0][2]
+        assert runtime.fs.files["source.tar.gz"] == archive
+        assert max(runtime.fs.write_chunk_sizes) <= 64 * 1024
+        assert sum(runtime.fs.write_chunk_sizes) == len(archive)
+        assert allow_readback.mode == "custom"
+        assert set(allow_readback.allowed_domains) == {
+            "pypi.org",
+            "files.pythonhosted.org",
+        }
+        assert deny_readback.mode == "deny-all"
+        assert deny_readback.allowed_domains == ()
+        assert [policy.mode for policy in runtime.network_policy_updates] == [
+            "custom",
+            "deny-all",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_cancelling_profile_command_requests_one_bounded_process_kill() -> None:
+    async def scenario() -> None:
+        runtime = FakeRuntimeSession()
+        runtime.process.block_wait = True
+        sdk = FakeSDK(runtime)
+        provider = make_provider(
+            sdk,
+            [],
+            SandboxAllocationLimits(
+                image=f"vercel/sandbox/python:3.13.12@sha256:{'f' * 64}",
+                session_seconds=900,
+            ),
+        )
+
+        async with provider.connection():
+            allocation = await provider.create("continuum-t17-cancelprofile001")
+            task = asyncio.create_task(
+                allocation.run_profile_command(
+                    "/usr/local/bin/python3.13",
+                    ["-I", "-S", "-c", "pass"],
+                    cwd="/opt/continuum",
+                    env=None,
+                    timeout_seconds=120,
+                )
+            )
+            await asyncio.wait_for(runtime.process.wait_entered.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert runtime.process.kill_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_profile_command_rejects_stopped_or_replaced_current_session() -> None:
+    async def scenario() -> None:
+        runtime = FakeRuntimeSession()
+        sdk = FakeSDK(runtime)
+        provider = make_provider(
+            sdk,
+            [],
+            SandboxAllocationLimits(
+                image=f"vercel/sandbox/python:3.13.12@sha256:{'f' * 64}",
+                session_seconds=900,
+            ),
+        )
+
+        async with provider.connection():
+            allocation = await provider.create("continuum-t17-currentprofile001")
+            runtime.status = SandboxStatus.STOPPED
+            with pytest.raises(SandboxEffectError) as stopped:
+                await allocation.run_profile_command(
+                    "/usr/local/bin/python3.13",
+                    ["-S", "-m", "pytest"],
+                    cwd="/vercel/sandbox/workspace",
+                    env={"PYTHONPATH": "/vercel/sandbox/workspace"},
+                    timeout_seconds=10,
+                )
+            assert stopped.value.reason == "profile_session_not_current"
+            assert runtime.create_process_calls == []
+
+            runtime.status = SandboxStatus.RUNNING
+            assert sdk.box is not None
+            replacement = FakeRuntimeSession()
+            replacement.id = "replacement-session"
+            sdk.box.current_session = replacement
+            with pytest.raises(SandboxEffectError) as replaced:
+                await allocation.run_profile_command(
+                    "/usr/local/bin/python3.13",
+                    ["-S", "-m", "pytest"],
+                    cwd="/vercel/sandbox/workspace",
+                    env={"PYTHONPATH": "/vercel/sandbox/workspace"},
+                    timeout_seconds=10,
+                )
+            assert replaced.value.reason == "profile_session_not_current"
+            assert runtime.create_process_calls == []
 
     asyncio.run(scenario())
 

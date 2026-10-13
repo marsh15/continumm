@@ -20,6 +20,11 @@ MAX_COMMAND_SECONDS = 20
 MAX_OUTPUT_BYTES = 4_096
 MAX_TRANSFER_BYTES = 64 * 1_024
 TRANSFER_CHUNK_BYTES = 64
+MAX_PROFILE_COMMAND_SECONDS = 120
+MAX_PROFILE_COMMAND_OUTPUT_BYTES = 256 * 1_024
+MAX_PROFILE_INVOCATION_OUTPUT_BYTES = 2 * 1_024 * 1_024
+MAX_PROFILE_ARCHIVE_BYTES = 10 * 1_024 * 1_024
+PROFILE_ARCHIVE_CHUNK_BYTES = 64 * 1_024
 SANDBOX_WORKING_DIRECTORY = "/vercel/sandbox"
 
 
@@ -57,6 +62,32 @@ class SandboxAllocationLimits:
             raise ValueError(f"session_seconds must be between 1 and {MAX_ALLOCATION_SECONDS}")
         if self.vcpus != ALLOCATION_VCPUS or self.memory_mb != ALLOCATION_MEMORY_MB:
             raise ValueError("T16 sandbox resources are fixed at 2 vCPUs and 4096 MiB")
+
+
+class PythonProfileSettings(BaseSettings):
+    """Operator-supplied immutable T17 runtime image; unset is fail-closed."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CONTINUUM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    python_profile_image: str | None = None
+
+    def require_image(self) -> str:
+        if self.python_profile_image is None or not self.python_profile_image.strip():
+            raise ValueError("python_profile_image_unconfigured")
+        image = self.python_profile_image.strip()
+        SandboxAllocationLimits(
+            image=image,
+            session_seconds=1,
+            vcpus=ALLOCATION_VCPUS,
+            memory_mb=ALLOCATION_MEMORY_MB,
+        )
+        return image
 
 
 def validate_sandbox_name(name: str) -> str:

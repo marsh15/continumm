@@ -185,6 +185,17 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   [Local contract and verification](../docs/sandbox-allocation-accounting.md).
   Hosted allocation is still pending.
 
+- T17: Python profile complete locally. The pinned CPython 3.13.12 image recipe
+  contains isolated trusted setup and bounded wheel validation. The driver binds
+  committed source to eligibility, fences each remote mutation, verifies active
+  session deny-all egress before local wheel installation and pytest, and uses
+  protected allocation cleanup. Sixteen profile tests, fourteen bootstrap tests,
+  eleven SDK tests and the dedicated PostgreSQL allocation proof passed. The full
+  Python suite passed 300 tests (15 optional integration environment skips), with
+  formatting, lint, typing and package build passing. Image publication and the
+  actual managed fixture are pending; cumulative run output accounting belongs
+  to T30. [Contract and verification](../docs/python-execution-profile.md).
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

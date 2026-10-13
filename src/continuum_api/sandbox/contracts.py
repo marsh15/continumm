@@ -20,6 +20,7 @@ class SandboxAction(StrEnum):
     CREATE = "create"
     COMMAND = "command"
     FILE_WRITE = "file_write"
+    NETWORK_POLICY = "network_policy"
     STOP = "stop"
     DESTROY = "destroy"
     OBSERVE = "observe"

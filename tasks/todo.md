@@ -212,8 +212,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T13, T16.
 - **Scope:** Medium; pinned profile image/setup and profile tests.
-- [ ] Install supported hash-pinned wheels, expose local source through the defined path, and run bounded pytest.
-- [ ] Change the active session policy with the correct SDK operation, prove deny-all test egress, and reject install/build-hook-dependent projects.
+- [x] Implement supported hash-pinned wheel installation, defined local-source paths and bounded pytest; verify locally with synthetic fixtures.
+- [x] Implement and locally verify the active-session policy transition, required deny-all probe and rejection of install/build-hook-dependent projects.
+- **Evidence:** [Python profile contract and local verification](../docs/python-execution-profile.md). Image publication and actual managed fixture smoke remain pending; Checkpoint F is open.
 - **Verify:** make test-target TARGET=tests/adapters/test_python_profile.py; hosted fixture smoke.
 
 ### T18 — Node profile

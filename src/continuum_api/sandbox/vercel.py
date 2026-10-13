@@ -14,6 +14,7 @@ from vercel import sandbox as vercel_sandbox
 from vercel.api import session as sdk_session
 from vercel.sandbox import (
     NetworkPolicy,
+    NetworkPolicyReadback,
     Sandbox,
     SandboxApiError,
     SandboxCredentials,
@@ -27,7 +28,11 @@ from vercel.sandbox import (
 from continuum_api.sandbox.config import (
     MAX_COMMAND_SECONDS,
     MAX_OUTPUT_BYTES,
+    MAX_PROFILE_ARCHIVE_BYTES,
+    MAX_PROFILE_COMMAND_OUTPUT_BYTES,
+    MAX_PROFILE_COMMAND_SECONDS,
     MAX_TRANSFER_BYTES,
+    PROFILE_ARCHIVE_CHUNK_BYTES,
     SANDBOX_WORKING_DIRECTORY,
     TRANSFER_CHUNK_BYTES,
     SandboxAllocationLimits,
@@ -43,6 +48,11 @@ from continuum_api.sandbox.contracts import (
     SandboxAction,
     SandboxEffectError,
     SandboxObservation,
+)
+from continuum_api.sandbox.python_bootstrap_recipe import (
+    ARCHIVE_INPUT_PATH,
+    CONTROL_DIRECTORY,
+    WORKSPACE_PATH,
 )
 
 _T = TypeVar("_T")
@@ -320,6 +330,15 @@ class VercelSandboxAllocation:
         return self._box.name
 
     @property
+    def image(self) -> str | None:
+        image = getattr(self._box, "image", None)
+        return None if image is None else str(image)
+
+    @property
+    def network_policy(self) -> NetworkPolicyReadback | None:
+        return None if self._runtime is None else self._runtime.network_policy
+
+    @property
     def session_id(self) -> str | None:
         return None if self._runtime is None else self._runtime.id
 
@@ -354,23 +373,106 @@ class VercelSandboxAllocation:
     ) -> CommandResult:
         """Run one binary directly, with a server kill deadline and streamed byte cap."""
 
+        return await self._run_bounded(
+            command,
+            args,
+            timeout_seconds=timeout_seconds,
+            output_limit_bytes=output_limit_bytes,
+            max_timeout_seconds=MAX_COMMAND_SECONDS,
+            max_output_bytes=MAX_OUTPUT_BYTES,
+            cwd=SANDBOX_WORKING_DIRECTORY,
+            env=None,
+        )
+
+    async def run_profile_command(
+        self,
+        command: str,
+        args: Sequence[str],
+        *,
+        cwd: str,
+        env: Mapping[str, str] | None,
+        timeout_seconds: int,
+        output_limit_bytes: int = MAX_PROFILE_COMMAND_OUTPUT_BYTES,
+    ) -> CommandResult:
+        """Run one profile phase with its separate 120-second and log caps."""
+        if cwd not in {CONTROL_DIRECTORY, WORKSPACE_PATH}:
+            raise SandboxEffectError(
+                SandboxAction.COMMAND,
+                EffectState.NOT_APPLIED,
+                "profile_working_directory_unsupported",
+            )
+        if env is not None and set(env) != {"PYTHONPATH"}:
+            raise SandboxEffectError(
+                SandboxAction.COMMAND,
+                EffectState.NOT_APPLIED,
+                "profile_environment_unsupported",
+            )
+        if env is not None and len(env["PYTHONPATH"]) > 256:
+            raise SandboxEffectError(
+                SandboxAction.COMMAND,
+                EffectState.NOT_APPLIED,
+                "profile_environment_unsupported",
+            )
+        return await self._run_bounded(
+            command,
+            args,
+            timeout_seconds=timeout_seconds,
+            output_limit_bytes=output_limit_bytes,
+            max_timeout_seconds=MAX_PROFILE_COMMAND_SECONDS,
+            max_output_bytes=MAX_PROFILE_COMMAND_OUTPUT_BYTES,
+            cwd=cwd,
+            env=env,
+        )
+
+    async def _run_bounded(
+        self,
+        command: str,
+        args: Sequence[str],
+        *,
+        timeout_seconds: int,
+        output_limit_bytes: int,
+        max_timeout_seconds: int,
+        max_output_bytes: int,
+        cwd: str,
+        env: Mapping[str, str] | None,
+    ) -> CommandResult:
         if self._runtime is None:
             raise SandboxEffectError(
                 SandboxAction.COMMAND, EffectState.NOT_APPLIED, "no_active_session_handle"
+            )
+        if (
+            self.current_session_id != self.session_id
+            or (_status_text(self._runtime.status) or "").casefold() != "running"
+        ):
+            raise SandboxEffectError(
+                SandboxAction.COMMAND, EffectState.UNKNOWN, "profile_session_not_current"
             )
         if not command or len(command) > 128 or any("\x00" in arg for arg in args):
             raise SandboxEffectError(
                 SandboxAction.COMMAND, EffectState.NOT_APPLIED, "invalid_command_arguments"
             )
-        if not 1 <= timeout_seconds <= MAX_COMMAND_SECONDS:
+        if len(args) > 32 or any(len(arg) > 4_096 for arg in args):
+            raise SandboxEffectError(
+                SandboxAction.COMMAND, EffectState.NOT_APPLIED, "invalid_command_arguments"
+            )
+        if not 1 <= timeout_seconds <= max_timeout_seconds:
             raise SandboxEffectError(
                 SandboxAction.COMMAND, EffectState.NOT_APPLIED, "command_timeout_out_of_range"
             )
-        if not 1 <= output_limit_bytes <= MAX_OUTPUT_BYTES:
+        if not 1 <= output_limit_bytes <= max_output_bytes:
             raise SandboxEffectError(
                 SandboxAction.COMMAND, EffectState.NOT_APPLIED, "output_limit_out_of_range"
             )
 
+        process_options: dict[str, Any] = {
+            "cwd": cwd,
+            "sudo": False,
+            "kill_after": timeout_seconds,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+        }
+        if env is not None:
+            process_options["env"] = dict(env)
         try:
             async with asyncio.timeout(timeout_seconds + 5):
                 process = await self._provider._call(
@@ -379,15 +481,11 @@ class VercelSandboxAllocation:
                     self._runtime.create_process(
                         command,
                         list(args),
-                        cwd=SANDBOX_WORKING_DIRECTORY,
-                        sudo=False,
-                        kill_after=timeout_seconds,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        **process_options,
                     ),
                 )
                 stdout, stderr, return_code, truncated = await self._collect_process(
-                    process, output_limit_bytes
+                    process, output_limit_bytes, timeout_seconds=timeout_seconds
                 )
         except SandboxEffectError:
             raise
@@ -408,7 +506,11 @@ class VercelSandboxAllocation:
         )
 
     async def _collect_process(
-        self, process: Any, maximum_bytes: int
+        self,
+        process: Any,
+        maximum_bytes: int,
+        *,
+        timeout_seconds: int = MAX_COMMAND_SECONDS,
     ) -> tuple[str, str, int | None, bool]:
         output_lock = asyncio.Lock()
         kill_lock = asyncio.Lock()
@@ -452,8 +554,18 @@ class VercelSandboxAllocation:
         stderr_task = asyncio.create_task(drain(process.stderr, stderr_parts))
         wait_task = asyncio.create_task(process.wait())
         try:
-            async with asyncio.timeout(MAX_COMMAND_SECONDS + 5):
+            async with asyncio.timeout(timeout_seconds + 5):
                 await asyncio.gather(stdout_task, stderr_task, wait_task)
+        except asyncio.CancelledError:
+            kill_task = asyncio.create_task(kill_once())
+            try:
+                async with asyncio.timeout(_ACTION_TIMEOUT_SECONDS):
+                    await asyncio.shield(kill_task)
+            except (TimeoutError, asyncio.CancelledError):
+                # The server kill_after remains the final bound if local cleanup
+                # itself is cancelled or its control request stalls.
+                pass
+            raise
         except TimeoutError:
             await kill_once()
             raise
@@ -497,6 +609,118 @@ class VercelSandboxAllocation:
                         await writer.write(content[offset : offset + TRANSFER_CHUNK_BYTES])
         except Exception as error:
             raise _error_effect(SandboxAction.FILE_WRITE, error) from None
+
+    async def write_profile_archive(self, content: bytes, *, timeout_seconds: int) -> None:
+        """Write a verified source archive into the image's fixed control inbox."""
+        if not 1 <= len(content) <= MAX_PROFILE_ARCHIVE_BYTES:
+            raise SandboxEffectError(
+                SandboxAction.FILE_WRITE,
+                EffectState.NOT_APPLIED,
+                "profile_archive_size_invalid",
+            )
+        if not 1 <= timeout_seconds <= MAX_PROFILE_COMMAND_SECONDS:
+            raise SandboxEffectError(
+                SandboxAction.FILE_WRITE,
+                EffectState.NOT_APPLIED,
+                "profile_archive_timeout_invalid",
+            )
+        if self._runtime is None:
+            raise SandboxEffectError(
+                SandboxAction.FILE_WRITE, EffectState.NOT_APPLIED, "no_active_session_handle"
+            )
+        if (
+            self.current_session_id != self.session_id
+            or (_status_text(self._runtime.status) or "").casefold() != "running"
+        ):
+            raise SandboxEffectError(
+                SandboxAction.FILE_WRITE, EffectState.UNKNOWN, "profile_session_not_current"
+            )
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async with self._runtime.fs.open(
+                    "source.tar.gz",
+                    "wb",
+                    cwd=ARCHIVE_INPUT_PATH.rsplit("/", 1)[0],
+                    size=len(content),
+                    permissions=0o600,
+                ) as writer:
+                    for offset in range(0, len(content), PROFILE_ARCHIVE_CHUNK_BYTES):
+                        await writer.write(content[offset : offset + PROFILE_ARCHIVE_CHUNK_BYTES])
+        except SandboxEffectError:
+            raise
+        except TimeoutError:
+            raise SandboxEffectError(
+                SandboxAction.FILE_WRITE, EffectState.UNKNOWN, "profile_archive_write_timeout"
+            ) from None
+        except Exception as error:
+            raise _error_effect(SandboxAction.FILE_WRITE, error) from None
+
+    async def set_python_profile_network_policy(
+        self, policy: str, *, timeout_seconds: int
+    ) -> NetworkPolicyReadback:
+        """Change only between the fixed PyPI allowlist and deny-all."""
+        if policy not in {"package-download", "deny-all"}:
+            raise SandboxEffectError(
+                SandboxAction.NETWORK_POLICY,
+                EffectState.NOT_APPLIED,
+                "profile_network_policy_unsupported",
+            )
+        if not 1 <= timeout_seconds <= MAX_PROFILE_COMMAND_SECONDS:
+            raise SandboxEffectError(
+                SandboxAction.NETWORK_POLICY,
+                EffectState.NOT_APPLIED,
+                "profile_network_policy_timeout_invalid",
+            )
+        if self._runtime is None:
+            raise SandboxEffectError(
+                SandboxAction.NETWORK_POLICY,
+                EffectState.NOT_APPLIED,
+                "no_active_session_handle",
+            )
+        if (
+            self.current_session_id != self.session_id
+            or (_status_text(self._runtime.status) or "").casefold() != "running"
+        ):
+            raise SandboxEffectError(
+                SandboxAction.NETWORK_POLICY,
+                EffectState.UNKNOWN,
+                "profile_session_not_current",
+            )
+        network_policy = (
+            NetworkPolicy.custom(allow={"pypi.org": (), "files.pythonhosted.org": ()})
+            if policy == "package-download"
+            else NetworkPolicy.deny_all()
+        )
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                await self._provider._call(
+                    SandboxAction.NETWORK_POLICY,
+                    timeout_seconds,
+                    self._runtime.update_network_policy(network_policy),
+                )
+                await self._provider._call(
+                    SandboxAction.OBSERVE,
+                    timeout_seconds,
+                    self._runtime.refresh(),
+                )
+        except TimeoutError:
+            raise SandboxEffectError(
+                SandboxAction.NETWORK_POLICY,
+                EffectState.UNKNOWN,
+                "profile_network_policy_transition_unknown",
+            ) from None
+        except SandboxEffectError:
+            raise
+        except Exception as error:
+            raise _error_effect(SandboxAction.NETWORK_POLICY, error) from None
+        readback = self._runtime.network_policy
+        if readback is None:
+            raise SandboxEffectError(
+                SandboxAction.NETWORK_POLICY,
+                EffectState.UNKNOWN,
+                "profile_network_policy_readback_missing",
+            )
+        return readback
 
     async def start_timeout_fixture(self) -> str:
         """Start the harmless server-timed sleep used for the crash proof."""
