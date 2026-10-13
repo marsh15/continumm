@@ -47,13 +47,12 @@ def _storage(
         requests.append(request)
         return handler(request)
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(record))
     return (
         SupabaseStorage(
             _PROJECT_URL,
             _SECRET,
             _BUCKET,
-            client=client,
+            transport=httpx.MockTransport(record),
             fixture_byte_limit=byte_limit,
             request_deadline_seconds=deadline,
         ),
@@ -219,12 +218,11 @@ def test_total_deadline_includes_slow_response_headers() -> None:
             return httpx.Response(200, json={"public": False}, request=request)
 
     transport = SlowHeaders()
-    client = httpx.AsyncClient(transport=transport)
     storage = SupabaseStorage(
         _PROJECT_URL,
         _SECRET,
         _BUCKET,
-        client=client,
+        transport=transport,
         request_deadline_seconds=0.01,
     )
     try:
@@ -235,7 +233,7 @@ def test_total_deadline_includes_slow_response_headers() -> None:
 
         asyncio.run(exercise())
     finally:
-        asyncio.run(client.aclose())
+        asyncio.run(storage.aclose())
 
     assert transport.calls == 1
 
@@ -266,21 +264,31 @@ def test_standard_https_port_is_allowed() -> None:
     asyncio.run(storage.aclose())
 
 
-def test_injected_client_headers_are_not_mutated() -> None:
+def test_transport_injection_ignores_ambient_proxy_and_keeps_credentials_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTPS_PROXY", "invalid-proxy-url")
+    monkeypatch.setenv("https_proxy", "invalid-proxy-url")
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
     requests: list[httpx.Request] = []
-    client = httpx.AsyncClient(
-        headers={"apikey": "caller-owned-default"},
-        transport=httpx.MockTransport(
-            lambda request: requests.append(request) or httpx.Response(200, json={"public": False})
-        ),
+
+    def record_request(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"public": False}, request=request)
+
+    storage = SupabaseStorage(
+        _PROJECT_URL,
+        _SECRET,
+        _BUCKET,
+        transport=httpx.MockTransport(record_request),
     )
-    storage = SupabaseStorage(_PROJECT_URL, _SECRET, _BUCKET, client=client)
-    try:
-        asyncio.run(storage.check_private_bucket())
-        assert client.headers["apikey"] == "caller-owned-default"
-        assert requests[0].headers["apikey"] == _SECRET
-    finally:
-        asyncio.run(client.aclose())
+    asyncio.run(storage.check_private_bucket())
+    assert requests[0].headers["apikey"] == _SECRET
+    assert "authorization" not in requests[0].headers
+    assert "cookie" not in requests[0].headers
+    assert requests[0].headers["accept-encoding"] == "identity"
+    asyncio.run(storage.aclose())
 
 
 def test_unexpected_upload_redirect_is_unknown_and_not_retried() -> None:

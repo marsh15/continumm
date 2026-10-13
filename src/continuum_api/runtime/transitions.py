@@ -8,12 +8,14 @@ import random
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 
+from continuum_api.runtime.artifact_persistence import ArtifactReference
 from continuum_api.runtime.leases import ExecutionLease, LeaseLost, lock_current_execution
 from continuum_api.runtime.persistence import (
     EventActor,
@@ -53,6 +55,18 @@ class ResultIdentityConflict(TransitionError):
     """A logical step already accepted a different transition intent."""
 
 
+class ArtifactTransitionStore(Protocol):
+    """Attach one verified artifact inside the accepted-result transaction."""
+
+    def attach_verified(
+        self,
+        connection: Connection,
+        principal: Principal,
+        lease: ExecutionLease,
+        upload_id: UUID,
+    ) -> ArtifactReference: ...
+
+
 @dataclass(frozen=True, slots=True)
 class NextWork:
     logical_key: str
@@ -74,6 +88,7 @@ class TransitionReceipt:
     next_step_id: UUID | None
     next_job_id: UUID | None
     adopted: bool
+    artifact_id: UUID | None = None
 
 
 class TransitionService:
@@ -85,9 +100,16 @@ class TransitionService:
     No remote operation runs inside this database retry loop.
     """
 
-    def __init__(self, engine: Engine, principal: Principal) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        principal: Principal,
+        *,
+        artifact_persistence: ArtifactTransitionStore | None = None,
+    ) -> None:
         self._engine = engine
         self._principal = principal
+        self._artifact_persistence = artifact_persistence
 
     def commit_result(
         self,
@@ -96,29 +118,18 @@ class TransitionService:
         result: dict[str, Any],
         target_run_status: RunStatus,
         next_work: NextWork | None = None,
+        artifact_id: UUID | None = None,
     ) -> TransitionReceipt:
         self._validate_plan(target_run_status, next_work)
         result_json = _canonical_json(result)
         if len(result_json.encode("utf-8")) > MAX_RESULT_BYTES:
             raise InvalidTransition("accepted_result_too_large")
         result_digest = hashlib.sha256(result_json.encode("utf-8")).digest()
-        intent_json = _canonical_json(
-            {
-                "next_work": None
-                if next_work is None
-                else {
-                    "activity": next_work.activity,
-                    "logical_key": next_work.logical_key,
-                    "revision": next_work.revision,
-                    **(
-                        {"replay_policy": next_work.replay_policy.value}
-                        if next_work.replay_policy is ReplayPolicy.REPLAY_SAFE
-                        else {}
-                    ),
-                },
-                "result": result,
-                "target_run_status": target_run_status.value,
-            }
+        intent_json = _transition_intent_json(
+            result,
+            target_run_status,
+            next_work,
+            artifact_id=artifact_id,
         )
         intent_digest = hashlib.sha256(intent_json.encode("utf-8")).digest()
 
@@ -131,6 +142,7 @@ class TransitionService:
                     intent_digest=intent_digest,
                     target_run_status=target_run_status,
                     next_work=next_work,
+                    artifact_id=artifact_id,
                 )
             except DBAPIError as error:
                 if (
@@ -150,6 +162,7 @@ class TransitionService:
         intent_digest: bytes,
         target_run_status: RunStatus,
         next_work: NextWork | None,
+        artifact_id: UUID | None,
     ) -> TransitionReceipt:
         with self._engine.begin() as connection:
             repository = RuntimeRepository(connection, self._principal)
@@ -238,13 +251,29 @@ class TransitionService:
                     step_id=step_id,
                     job_id=job_id,
                     adopted=True,
+                    artifact_id=artifact_id,
                 )
+
+            if artifact_id is not None and self._artifact_persistence is None:
+                raise InvalidTransition("runtime_artifact_persistence_unavailable")
 
             # Re-locking held rows is safe; this also locks the exact attempt
             # and obtains database time only after run, step, job, and attempt.
             locked = lock_current_execution(connection, self._principal, lease)
             if locked.run_status != RunStatus.RUNNING.value:
                 raise InvalidTransition("runtime_run_not_running")
+
+            artifact_reference: ArtifactReference | None = None
+            if artifact_id is not None:
+                assert self._artifact_persistence is not None
+                artifact_reference = self._artifact_persistence.attach_verified(
+                    connection,
+                    self._principal,
+                    lease,
+                    artifact_id,
+                )
+                if artifact_reference.artifact_id != artifact_id:
+                    raise InvalidTransition("runtime_artifact_identity_mismatch")
 
             connection.execute(
                 text(
@@ -329,23 +358,37 @@ class TransitionService:
                 {"owner_id": owner_id, "run_id": run_id},
             ).scalar_one()
             result_id = uuid4()
+            event_payload: dict[str, Any] = {
+                "next_job_id": None if next_job_id is None else str(next_job_id),
+                "result_id": str(result_id),
+                "result_sha256": result_digest.hex(),
+                "step_id": str(step_id),
+                "target_run_status": target_run_status.value,
+            }
+            if artifact_reference is not None:
+                event_payload.update(
+                    {
+                        "artifact_id": str(artifact_reference.artifact_id),
+                        "archive_sha256": artifact_reference.archive_sha256,
+                        "tree_sha256": artifact_reference.tree_sha256,
+                        "format_version": artifact_reference.format_version,
+                        "compressed_bytes": artifact_reference.compressed_bytes,
+                        "source_bytes": artifact_reference.source_bytes,
+                        "file_count": artifact_reference.file_count,
+                    }
+                )
+                if artifact_reference.parent_artifact_id is not None:
+                    event_payload["parent_artifact_id"] = str(artifact_reference.parent_artifact_id)
             repository.append_event(
                 run_id,
                 event_sequence,
                 "activity.result_accepted",
                 EventActor.WORKER,
                 actor_id=lease.lease_owner,
-                payload={
-                    "next_job_id": None if next_job_id is None else str(next_job_id),
-                    "result_id": str(result_id),
-                    "result_sha256": result_digest.hex(),
-                    "step_id": str(step_id),
-                    "target_run_status": target_run_status.value,
-                },
+                payload=event_payload,
             )
-            connection.execute(
-                text(
-                    """
+            if artifact_id is None:
+                insert_sql = """
                     INSERT INTO runtime_private.accepted_results (
                         result_id, owner_id, run_id, step_id, job_id,
                         result_sha256, intent_sha256, run_status, event_sequence,
@@ -357,24 +400,38 @@ class TransitionService:
                         :lease_owner
                     )
                     """
-                ),
-                {
-                    "result_id": result_id,
-                    "owner_id": owner_id,
-                    "run_id": run_id,
-                    "step_id": step_id,
-                    "job_id": job_id,
-                    "result_sha256": result_digest,
-                    "intent_sha256": intent_digest,
-                    "run_status": target_run_status.value,
-                    "event_sequence": event_sequence,
-                    "next_job_id": next_job_id,
-                    "payload": result_json,
-                    "generation": lease.generation,
-                    "attempt_id": lease.attempt_id,
-                    "lease_owner": lease.lease_owner,
-                },
-            )
+            else:
+                insert_sql = """
+                    INSERT INTO runtime_private.accepted_results (
+                        result_id, owner_id, run_id, step_id, job_id,
+                        result_sha256, intent_sha256, run_status, event_sequence,
+                        next_job_id, payload, generation, attempt_id, lease_owner, artifact_id
+                    ) VALUES (
+                        :result_id, :owner_id, :run_id, :step_id, :job_id,
+                        :result_sha256, :intent_sha256, :run_status, :event_sequence,
+                        :next_job_id, CAST(:payload AS jsonb), :generation, :attempt_id,
+                        :lease_owner, :artifact_id
+                    )
+                    """
+            insert_parameters = {
+                "result_id": result_id,
+                "owner_id": owner_id,
+                "run_id": run_id,
+                "step_id": step_id,
+                "job_id": job_id,
+                "result_sha256": result_digest,
+                "intent_sha256": intent_digest,
+                "run_status": target_run_status.value,
+                "event_sequence": event_sequence,
+                "next_job_id": next_job_id,
+                "payload": result_json,
+                "generation": lease.generation,
+                "attempt_id": lease.attempt_id,
+                "lease_owner": lease.lease_owner,
+            }
+            if artifact_id is not None:
+                insert_parameters["artifact_id"] = artifact_id
+            connection.execute(text(insert_sql), insert_parameters)
             final_database_now: datetime = connection.execute(
                 text("SELECT clock_timestamp()")
             ).scalar_one()
@@ -394,18 +451,12 @@ class TransitionService:
                 next_step_id=next_step_id,
                 next_job_id=next_job_id,
                 adopted=False,
+                artifact_id=artifact_id,
             )
 
     @staticmethod
     def _validate_plan(target_run_status: RunStatus, next_work: NextWork | None) -> None:
-        if target_run_status in {RunStatus.SUCCEEDED, RunStatus.CANCELLED, RunStatus.EXPIRED}:
-            raise InvalidTransition("activity_result_cannot_set_terminal_run_status")
-        if next_work is not None:
-            if target_run_status is not RunStatus.RUNNING:
-                raise InvalidTransition("next_work_requires_running_status")
-            return
-        if target_run_status not in _WAIT_OR_TERMINAL_RUN_STATES:
-            raise InvalidTransition("transition_requires_next_work_or_wait_or_terminal_status")
+        _validate_transition_plan(target_run_status, next_work)
 
 
 def _canonical_json(value: dict[str, Any]) -> str:
@@ -414,8 +465,67 @@ def _canonical_json(value: dict[str, Any]) -> str:
     )
 
 
+def transition_intent_sha256(
+    result: dict[str, Any],
+    target_run_status: RunStatus,
+    next_work: NextWork | None = None,
+) -> bytes:
+    """Return the canonical transition intent digest before an artifact ID exists."""
+    _validate_transition_plan(target_run_status, next_work)
+    result_json = _canonical_json(result)
+    if len(result_json.encode("utf-8")) > MAX_RESULT_BYTES:
+        raise InvalidTransition("accepted_result_too_large")
+    intent_json = _transition_intent_json(result, target_run_status, next_work)
+    return hashlib.sha256(intent_json.encode("utf-8")).digest()
+
+
+def _transition_intent_json(
+    result: dict[str, Any],
+    target_run_status: RunStatus,
+    next_work: NextWork | None,
+    *,
+    artifact_id: UUID | None = None,
+) -> str:
+    intent: dict[str, Any] = {
+        "next_work": None
+        if next_work is None
+        else {
+            "activity": next_work.activity,
+            "logical_key": next_work.logical_key,
+            "revision": next_work.revision,
+            **(
+                {"replay_policy": next_work.replay_policy.value}
+                if next_work.replay_policy is ReplayPolicy.REPLAY_SAFE
+                else {}
+            ),
+        },
+        "result": result,
+        "target_run_status": target_run_status.value,
+    }
+    if artifact_id is not None:
+        intent["artifact_id"] = str(artifact_id)
+    return _canonical_json(intent)
+
+
+def _validate_transition_plan(target_run_status: RunStatus, next_work: NextWork | None) -> None:
+    if target_run_status in {RunStatus.SUCCEEDED, RunStatus.CANCELLED, RunStatus.EXPIRED}:
+        raise InvalidTransition("activity_result_cannot_set_terminal_run_status")
+    if next_work is not None:
+        if target_run_status is not RunStatus.RUNNING:
+            raise InvalidTransition("next_work_requires_running_status")
+        return
+    if target_run_status not in _WAIT_OR_TERMINAL_RUN_STATES:
+        raise InvalidTransition("transition_requires_next_work_or_wait_or_terminal_status")
+
+
 def _receipt_from_row(
-    row: Any, *, run_id: UUID, step_id: UUID, job_id: UUID, adopted: bool
+    row: Any,
+    *,
+    run_id: UUID,
+    step_id: UUID,
+    job_id: UUID,
+    adopted: bool,
+    artifact_id: UUID | None = None,
 ) -> TransitionReceipt:
     next_job_id = row["next_job_id"]
     return TransitionReceipt(
@@ -430,6 +540,7 @@ def _receipt_from_row(
         next_step_id=row["next_step_id"],
         next_job_id=next_job_id,
         adopted=adopted,
+        artifact_id=artifact_id,
     )
 
 

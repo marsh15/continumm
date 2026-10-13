@@ -19,10 +19,17 @@ _BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 class StorageFailure(RuntimeError):
     """A redacted Storage failure with mutation-effect knowledge."""
 
-    def __init__(self, code: str, *, effect: EffectState = EffectState.KNOWN) -> None:
+    def __init__(
+        self,
+        code: str,
+        *,
+        effect: EffectState = EffectState.KNOWN,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.effect = effect
+        self.status_code = status_code
 
 
 class StoragePhase(StrEnum):
@@ -43,7 +50,7 @@ class SupabaseStorage:
         secret_key: str,
         bucket: str,
         *,
-        client: httpx.AsyncClient | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
         fixture_byte_limit: int = 1024,
         request_deadline_seconds: float = 12.0,
     ) -> None:
@@ -80,16 +87,23 @@ class SupabaseStorage:
         self._fixture_byte_limit = fixture_byte_limit
         self._request_deadline_seconds = request_deadline_seconds
         self._base_url = project_url.rstrip("/") + "/storage/v1"
-        self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
+        self._client = httpx.AsyncClient(
+            transport=transport,
+            headers={},
+            cookies={},
+            auth=None,
             timeout=httpx.Timeout(connect=3, read=5, write=5, pool=2),
             follow_redirects=False,
             trust_env=False,
         )
 
     async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
+        await self._client.aclose()
+
+    @property
+    def byte_limit(self) -> int:
+        """Maximum object size this configured adapter accepts and returns."""
+        return self._fixture_byte_limit
 
     async def check_private_bucket(self) -> None:
         url = f"{self._base_url}/bucket/{quote(self._bucket, safe='')}"
@@ -100,7 +114,10 @@ class SupabaseStorage:
                     "GET", url, headers=self._auth_headers()
                 ) as response:
                     if response.status_code < 200 or response.status_code >= 300:
-                        raise StorageFailure(_http_error_code(response.status_code, "bucket_check"))
+                        raise StorageFailure(
+                            _http_error_code(response.status_code, "bucket_check"),
+                            status_code=response.status_code,
+                        )
                     body = await _read_bounded(
                         response,
                         16 * 1024,
@@ -253,8 +270,8 @@ class SupabaseStorage:
         )
 
     def _auth_headers(self) -> dict[str, str]:
-        """Return a request-scoped key so an injected client cannot leak it."""
-        return {"apikey": self._api_key}
+        """Return the credential and identity encoding policy for this request."""
+        return {"apikey": self._api_key, "accept-encoding": "identity"}
 
 
 async def _read_bounded(
@@ -264,6 +281,9 @@ async def _read_bounded(
     *,
     deadline: float,
 ) -> bytes:
+    content_encoding = response.headers.get("content-encoding", "identity").strip().lower()
+    if content_encoding not in {"", "identity"}:
+        raise StorageFailure(f"{phase.value}_content_encoding_unsupported")
     content_length = response.headers.get("content-length")
     if content_length is not None:
         try:
@@ -273,6 +293,9 @@ async def _read_bounded(
             pass
 
     result = bytearray()
+    # HTTPX decodes compressed responses while streaming bytes. Request identity
+    # and reject other encodings above, before this iterator. Source:
+    # https://www.python-httpx.org/async/#streaming-responses
     async for chunk in response.aiter_bytes():
         if time.monotonic() > deadline:
             raise StorageFailure(f"{phase.value}_response_timeout")
@@ -285,10 +308,17 @@ async def _read_bounded(
 def _require_success(status_code: int, *, mutation: bool, operation: str) -> None:
     if 200 <= status_code < 300:
         return
+    uncertain_client_status = status_code in {408, 425, 429}
     outcome = (
-        EffectState.UNKNOWN if mutation and not 400 <= status_code < 500 else EffectState.KNOWN
+        EffectState.UNKNOWN
+        if mutation and (not 400 <= status_code < 500 or uncertain_client_status)
+        else EffectState.KNOWN
     )
-    raise StorageFailure(_http_error_code(status_code, operation), effect=outcome)
+    raise StorageFailure(
+        _http_error_code(status_code, operation),
+        effect=outcome,
+        status_code=status_code,
+    )
 
 
 def _http_error_code(status_code: int, operation: str) -> str:

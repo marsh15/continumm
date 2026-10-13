@@ -154,6 +154,20 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   passed 51 tests; Python formatting, lint, typing, regression tests and package
   build passed. [Format contract](../docs/canonical-archives.md).
 
+## 13 October 2026
+
+- T15: checkpoint storage complete locally. Immutable upload intents reserve
+  bytes before dispatch, fresh access checks precede every source read, and
+  verified objects attach atomically with accepted results/events under fencing.
+  Unknown and orphaned uploads remain charged; stale workers cannot attach them.
+  A dedicated PostgreSQL 17 proof covers parent chains, lost acknowledgments,
+  rollback, quota contention, owner isolation, corruption attention and revision
+  07 compatibility. The focused targets passed 63 tests, the complete Python
+  suite passed 243 tests (14 optional integration environment skips), and
+  formatting, lint, typing and package build passed. Storage HTTP clients now
+  use transport-only test injection without ambient credentials or proxies.
+  [Local evidence](../docs/checkpoint-storage.md). Hosted Storage remains pending.
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

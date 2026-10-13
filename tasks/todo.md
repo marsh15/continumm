@@ -187,8 +187,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T08, T14.
 - **Scope:** Medium; artifact/checkpoint migration, storage service and tests.
-- [ ] Upload and verify before the fenced reference transaction.
-- [ ] Reserve upload bytes and handle orphan/unknown upload, missing object, bad digest, and a late stale uploader.
+- [x] Upload and verify before the fenced reference transaction.
+- [x] Reserve upload bytes and handle orphan/unknown upload, missing object, bad digest, and a late stale uploader.
+- **Evidence:** [Checkpoint storage contract and local proof](../docs/checkpoint-storage.md); private HTTP fixtures plus a dedicated PostgreSQL 17 integration target. Hosted storage remains pending.
 - **Verify:** make test-target TARGET=tests/integration/test_checkpoints.py.
 
 ### Checkpoint E — Artifact correctness
