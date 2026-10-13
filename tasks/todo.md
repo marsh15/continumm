@@ -194,9 +194,10 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 ### Checkpoint E — Artifact correctness
 
-- [ ] Reconstructed trees match committed manifests exactly.
-- [ ] Neither upload success alone nor a worker's local files count as durable progress.
-- [ ] Corruption produces a visible attention state.
+- [x] Reconstructed trees match committed manifests exactly.
+- [x] Neither upload success alone nor a worker's local files count as durable progress.
+- [x] Corruption produces a visible attention state.
+- **Evidence:** [Local artifact correctness proof](../docs/evidence/checkpoint-e-local.md). Actual hosted Storage restoration remains pending.
 
 ### T16 — Sandbox allocation accounting
 

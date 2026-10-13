@@ -168,6 +168,11 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   use transport-only test injection without ambient credentials or proxies.
   [Local evidence](../docs/checkpoint-storage.md). Hosted Storage remains pending.
 
+- Checkpoint E: complete locally through the T15 PostgreSQL/HTTP fixture proof.
+  Exact reconstruction, rejected uncommitted uploads and corrupt/missing-object
+  attention are covered without substituting local files for committed state.
+  [Evidence](../docs/evidence/checkpoint-e-local.md). Hosted restoration is pending.
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

@@ -40,6 +40,7 @@ from continuum_api.runtime.artifact_persistence import (
 )
 from continuum_api.runtime.leases import ExecutionLease, QueueService
 from continuum_api.runtime.persistence import Principal, RunStatus, RuntimeRepository
+from continuum_api.runtime.run_queries import event_page_response, read_event_page, read_run
 from continuum_api.runtime.scheduler import RuntimeRecoveryService
 from continuum_api.runtime.transitions import NextWork, TransitionService
 
@@ -146,6 +147,7 @@ async def _exercise_checkpoint_scenarios(
     restored = await service.restore_archive(principal, second_lease, receipt_one.artifact_id)
     assert restored.manifest == bundle_one.manifest
     assert restored.archive_sha256 == bundle_one.archive_sha256
+    assert restored.files == files_one
 
     files_two = (ArchiveFile("src/main.py", b"print('two')\n", mode=0o755),)
     bundle_two = create_archive(files_two)
@@ -196,10 +198,22 @@ async def _exercise_checkpoint_scenarios(
 
     third_lease = queue.claim_one("checkpoint-worker-3")
     assert third_lease is not None
+    restored_two = await service.restore_archive(principal, third_lease, receipt_two.artifact_id)
+    assert restored_two.files == files_two
+    assert restored_two.manifest == bundle_two.manifest
     objects[receipt_one.object_key] = b"corrupt archive bytes"
     with pytest.raises(CheckpointStorageError, match="corrupt_artifact"):
         await service.restore_archive(principal, third_lease, receipt_one.artifact_id)
     _assert_corrupt_artifact_attention(admin_engine, main_owner, main_run, third_lease)
+    visible_run = read_run(runtime_engine, principal, main_run)
+    assert visible_run is not None and visible_run.status is RunStatus.NEEDS_ATTENTION
+    visible_page = event_page_response(
+        main_run,
+        0,
+        read_event_page(runtime_engine, principal, main_run, after_sequence=0, limit=100),
+    )
+    assert visible_page.events[-1].type == "job.needs_attention"
+    assert visible_page.events[-1].data.failure_class == "corrupt_artifact"
 
     await _exercise_failed_transition_rollback(admin_engine, runtime_engine, persistence, owners[5])
     await _exercise_unknown_upload_replay(admin_engine, runtime_engine, persistence, owners[1])
