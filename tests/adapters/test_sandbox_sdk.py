@@ -29,6 +29,7 @@ from continuum_api.sandbox.config import (
     VercelCredentials,
 )
 from continuum_api.sandbox.contracts import EffectState, SandboxEffectError
+from continuum_api.sandbox.node_bootstrap_recipe import npm_test_environment
 from continuum_api.sandbox.vercel import VercelSandboxProvider, _is_stopped
 
 
@@ -361,6 +362,56 @@ def test_t17_profile_adapter_bounds_commands_archive_writes_and_active_policy_sw
             "custom",
             "deny-all",
         ]
+
+    asyncio.run(scenario())
+
+
+def test_t18_profile_adapter_uses_only_the_public_npm_allowlist_and_fixed_test_env() -> None:
+    async def scenario() -> None:
+        runtime = FakeRuntimeSession()
+        sdk = FakeSDK(runtime)
+        provider = make_provider(
+            sdk,
+            [],
+            SandboxAllocationLimits(
+                image=f"registry.example/node:24.21.0@sha256:{'f' * 64}",
+                session_seconds=900,
+            ),
+        )
+
+        async with provider.connection():
+            allocation = await provider.create("continuum-t18-profilefixture001")
+            allowed = await allocation.set_node_profile_network_policy(
+                "package-download", timeout_seconds=20
+            )
+            result = await allocation.run_profile_command(
+                "/usr/local/bin/node",
+                ["/usr/local/lib/node_modules/npm/bin/npm-cli.js", "--ignore-scripts", "test"],
+                cwd="/vercel/sandbox/workspace",
+                env=npm_test_environment(),
+                timeout_seconds=120,
+            )
+            denied = await allocation.set_node_profile_network_policy(
+                "deny-all", timeout_seconds=20
+            )
+            with pytest.raises(SandboxEffectError) as rejected:
+                await allocation.run_profile_command(
+                    "/usr/local/bin/node",
+                    ["-e", "process.exit(0)"],
+                    cwd="/vercel/sandbox/workspace",
+                    env={"CI": "true", "VERCEL_TOKEN": "must-not-enter"},
+                    timeout_seconds=2,
+                )
+
+        assert set(allowed.allowed_domains) == {"registry.npmjs.org"}
+        assert result.exit_code == 0
+        assert runtime.create_process_calls[0][2]["env"] == npm_test_environment()
+        assert denied.mode == "deny-all"
+        assert [policy.mode for policy in runtime.network_policy_updates] == [
+            "custom",
+            "deny-all",
+        ]
+        assert rejected.value.reason == "profile_environment_unsupported"
 
     asyncio.run(scenario())
 

@@ -221,8 +221,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T13, T16.
 - **Scope:** Medium; pinned Node image/setup and profile tests.
-- [ ] Run npm ci with install scripts disabled and the documented bounded test command.
-- [ ] Reject workspaces, unsupported package sources, native build requirements, and external-service-dependent tests.
+- [x] Implement and locally verify script-disabled npm ci and the documented bounded test command.
+- [x] Reject workspaces, unsupported sources and detected native/browser requirements; enforce deny-all test egress for external-service-dependent tests.
+- **Evidence:** [Node profile contract and local verification](../docs/node-execution-profile.md). Image build/publication and actual managed fixture smoke remain pending; Checkpoint F is open.
 - **Verify:** make test-target TARGET=tests/adapters/test_node_profile.py; hosted fixture smoke.
 
 ### Checkpoint F — Supported execution

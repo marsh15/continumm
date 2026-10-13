@@ -49,6 +49,10 @@ from continuum_api.sandbox.contracts import (
     SandboxEffectError,
     SandboxObservation,
 )
+from continuum_api.sandbox.node_bootstrap_recipe import (
+    npm_ci_environment,
+    npm_test_environment,
+)
 from continuum_api.sandbox.python_bootstrap_recipe import (
     ARCHIVE_INPUT_PATH,
     CONTROL_DIRECTORY,
@@ -401,13 +405,15 @@ class VercelSandboxAllocation:
                 EffectState.NOT_APPLIED,
                 "profile_working_directory_unsupported",
             )
-        if env is not None and set(env) != {"PYTHONPATH"}:
-            raise SandboxEffectError(
-                SandboxAction.COMMAND,
-                EffectState.NOT_APPLIED,
-                "profile_environment_unsupported",
-            )
-        if env is not None and len(env["PYTHONPATH"]) > 256:
+        valid_python_environment = set(env or {}) == {"PYTHONPATH"} and (
+            len(env["PYTHONPATH"]) <= 256 if env is not None else True
+        )
+        node_environment = tuple(sorted((env or {}).items()))
+        valid_node_environment = node_environment in {
+            tuple(sorted(npm_ci_environment().items())),
+            tuple(sorted(npm_test_environment().items())),
+        }
+        if env is not None and not (valid_python_environment or valid_node_environment):
             raise SandboxEffectError(
                 SandboxAction.COMMAND,
                 EffectState.NOT_APPLIED,
@@ -659,6 +665,29 @@ class VercelSandboxAllocation:
         self, policy: str, *, timeout_seconds: int
     ) -> NetworkPolicyReadback:
         """Change only between the fixed PyPI allowlist and deny-all."""
+        return await self._set_profile_network_policy(
+            policy,
+            timeout_seconds=timeout_seconds,
+            allowed_domains={"pypi.org": (), "files.pythonhosted.org": ()},
+        )
+
+    async def set_node_profile_network_policy(
+        self, policy: str, *, timeout_seconds: int
+    ) -> NetworkPolicyReadback:
+        """Change only between the fixed npm registry allowlist and deny-all."""
+        return await self._set_profile_network_policy(
+            policy,
+            timeout_seconds=timeout_seconds,
+            allowed_domains={"registry.npmjs.org": ()},
+        )
+
+    async def _set_profile_network_policy(
+        self,
+        policy: str,
+        *,
+        timeout_seconds: int,
+        allowed_domains: Mapping[str, Sequence[Any]],
+    ) -> NetworkPolicyReadback:
         if policy not in {"package-download", "deny-all"}:
             raise SandboxEffectError(
                 SandboxAction.NETWORK_POLICY,
@@ -686,11 +715,9 @@ class VercelSandboxAllocation:
                 EffectState.UNKNOWN,
                 "profile_session_not_current",
             )
-        network_policy = (
-            NetworkPolicy.custom(allow={"pypi.org": (), "files.pythonhosted.org": ()})
-            if policy == "package-download"
-            else NetworkPolicy.deny_all()
-        )
+        network_policy = NetworkPolicy.custom(allow=allowed_domains)
+        if policy == "deny-all":
+            network_policy = NetworkPolicy.deny_all()
         try:
             async with asyncio.timeout(timeout_seconds):
                 await self._provider._call(

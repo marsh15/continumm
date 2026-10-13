@@ -196,6 +196,18 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   actual managed fixture are pending; cumulative run output accounting belongs
   to T30. [Contract and verification](../docs/python-execution-profile.md).
 
+## 14 October 2026
+
+- T18: Node profile complete locally. Node 24.21.0/npm 11.19.0 run through
+  trusted script-disabled setup, source/manifest binding, per-action allocation
+  fencing, verified deny-all test egress and protected cleanup. Installed content
+  checks include bounded scans, links, hooks and detected native/browser inputs.
+  Thirty-two profile tests and twenty-six bootstrap tests passed. The full Python
+  suite passed 359 tests (15 optional integration environment skips), along with
+  formatting, lint, typing and package build. Independent review found no local
+  blocker. Docker was unavailable; image build/publication and managed fixture
+  acceptance remain pending. [Contract](../docs/node-execution-profile.md).
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

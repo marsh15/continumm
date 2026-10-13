@@ -90,6 +90,32 @@ class PythonProfileSettings(BaseSettings):
         return image
 
 
+class NodeProfileSettings(BaseSettings):
+    """Operator-supplied immutable T18 runtime image; unset is fail-closed."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CONTINUUM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    node_profile_image: str | None = None
+
+    def require_image(self) -> str:
+        if self.node_profile_image is None or not self.node_profile_image.strip():
+            raise ValueError("node_profile_image_unconfigured")
+        image = self.node_profile_image.strip()
+        SandboxAllocationLimits(
+            image=image,
+            session_seconds=1,
+            vcpus=ALLOCATION_VCPUS,
+            memory_mb=ALLOCATION_MEMORY_MB,
+        )
+        return image
+
+
 def validate_sandbox_name(name: str) -> str:
     """Accept only generated, non-user-derived provider names."""
 
