@@ -36,9 +36,22 @@ from continuum_api.sandbox.python_bootstrap_recipe import (
 from continuum_api.sandbox.python_profile import (
     PythonProfileError,
     PythonProfileService,
+    _build_python_candidate_profile_plan,
     build_python_profile_plan,
 )
+from continuum_api.sandbox.validation.preparation import prepare_validation_source
 from continuum_api.sandbox.vercel import VercelSandboxProvider
+from continuum_api.tools.contracts import ToolCapability, ToolStage
+from continuum_api.tools.policy import ToolPolicyContext
+from continuum_api.tools.source_tools import (
+    TextEdit as SourceTextEdit,
+)
+from continuum_api.tools.source_tools import (
+    apply_text_edits,
+    discover_baseline_test_paths,
+    snapshot_from_verified_archive,
+    source_paths,
+)
 
 _IMAGE = f"vercel/sandbox/python:3.13.12@sha256:{'f' * 64}"
 _COMMIT_SHA = "c" * 40
@@ -106,9 +119,15 @@ class _Cleanup:
 
 
 class _Allocation:
-    def __init__(self, events: list[tuple[str, Any]], reservation: AllocationReservation) -> None:
+    def __init__(
+        self,
+        events: list[tuple[str, Any]],
+        reservation: AllocationReservation,
+        plan: Any,
+    ) -> None:
         self.events = events
         self.reservation = reservation
+        self.plan = plan
         self.name = reservation.provider_name
         self.session_id = reservation.provider_session_id
         self.current_session_id = reservation.provider_session_id
@@ -187,15 +206,15 @@ class _Allocation:
                 }
             elif phase == "extract":
                 receipt = {
-                    "archive_sha256": _plan().archive_sha256,
-                    "file_count": 2,
-                    "lockfile_sha256": _plan().lockfile_sha256,
-                    "source_bytes": sum(len(file.content) for file in _SOURCE_FILES),
-                    "tree_sha256": _plan().tree_sha256,
+                    "archive_sha256": self.plan.archive_sha256,
+                    "file_count": self.plan.file_count,
+                    "lockfile_sha256": self.plan.lockfile_sha256,
+                    "source_bytes": self.plan.source_bytes,
+                    "tree_sha256": self.plan.tree_sha256,
                 }
             elif phase == "validate-lock":
                 receipt = {
-                    "lockfile_sha256": _plan().lockfile_sha256,
+                    "lockfile_sha256": self.plan.lockfile_sha256,
                     "package_count": self.lock_package_count_override or 1,
                 }
             elif phase == "probe":
@@ -301,6 +320,61 @@ def _plan():
     return build_python_profile_plan(_eligibility(), verified)
 
 
+def _validation_source():
+    files = (
+        *_SOURCE_FILES,
+        ArchiveFile("tests/test_original.py", b"def test_original_behavior():\n    assert True\n"),
+    )
+    eligibility = _eligibility(files)
+    bundle = create_archive(files)
+    baseline_verified = verify_archive(
+        bundle.archive,
+        expected_archive_sha256=bundle.archive_sha256,
+        expected_tree_sha256=bundle.manifest.tree_sha256,
+        expected_manifest=bundle.manifest,
+    )
+    baseline = snapshot_from_verified_archive(
+        baseline_verified,
+        expected_archive_sha256=bundle.archive_sha256,
+        expected_tree_sha256=bundle.manifest.tree_sha256,
+        expected_manifest=bundle.manifest,
+    )
+    discovered = discover_baseline_test_paths(
+        baseline,
+        PYTHON_PROFILE_ID,
+        expected_tree_sha256=baseline.tree_sha256,
+    )
+    context = ToolPolicyContext(
+        capabilities=frozenset(ToolCapability),
+        profile_id=PYTHON_PROFILE_ID,
+        profile_version=PYTHON_PROFILE_VERSION,
+        actor_can_write_repository=True,
+        app_can_access_repository=True,
+        stage=ToolStage.AGENT_WORK,
+        run_budget_available=True,
+        baseline_tree_sha256=baseline.tree_sha256,
+        baseline_source_paths=frozenset(source_paths(baseline)),
+        baseline_test_paths=discovered,
+        baseline_paths_verified=True,
+        protected_paths=frozenset(),
+    )
+    patch = apply_text_edits(
+        baseline,
+        [SourceTextEdit("module.py", "x = 1", "x = 2")],
+        expected_tree_sha256=baseline.tree_sha256,
+        authorized_write_paths={"module.py"},
+    )
+    baseline_artifact_id = uuid4()
+    authorization = prepare_validation_source(
+        eligibility,
+        baseline_artifact_id,
+        baseline_verified,
+        patch,
+        context,
+    )
+    return eligibility, baseline_verified, baseline_artifact_id, authorization
+
+
 def _service(
     *,
     reservation: AllocationReservation | None = None,
@@ -311,23 +385,28 @@ def _service(
     cleanup_status: str = "stopped",
     forced_probe_allowed: bool | None = None,
     block_phase: str | None = None,
+    eligibility: EligibilityReceipt | None = None,
+    verified: VerifiedArchive | None = None,
+    expected_plan: Any | None = None,
 ) -> tuple[PythonProfileService, list[tuple[str, Any]], _Cleanup, _Provider]:
     selected_reservation = reservation or _reservation()
     principal, lease = _principal_lease(selected_reservation)
     events: list[tuple[str, Any]] = []
-    files_bundle = create_archive(_SOURCE_FILES)
-    verified = verify_archive(
-        files_bundle.archive,
-        expected_archive_sha256=files_bundle.archive_sha256,
-        expected_tree_sha256=files_bundle.manifest.tree_sha256,
-        expected_manifest=files_bundle.manifest,
-    )
+    if verified is None:
+        files_bundle = create_archive(_SOURCE_FILES)
+        verified = verify_archive(
+            files_bundle.archive,
+            expected_archive_sha256=files_bundle.archive_sha256,
+            expected_tree_sha256=files_bundle.manifest.tree_sha256,
+            expected_manifest=files_bundle.manifest,
+        )
+    plan = expected_plan or build_python_profile_plan(eligibility or _eligibility(), verified)
     store = _Store(events, selected_reservation)
     store.remaining_seconds = remaining_seconds
     store.lose_lease_at = lose_lease_at
     cleanup = _Cleanup(events, selected_reservation)
     cleanup.return_status = cleanup_status
-    allocation = _Allocation(events, selected_reservation)
+    allocation = _Allocation(events, selected_reservation, plan)
     allocation.policy_override = policy_override
     allocation.probe_forced_allowed = forced_probe_allowed
     allocation.block_phase = block_phase
@@ -360,6 +439,111 @@ def test_profile_validates_commit_tree_archive_and_manifest_pins() -> None:
     assert plan.file_count == 2
     assert plan.lockfile_sha256
     assert verify_archive(plan.archive).manifest == verified.manifest
+
+
+def test_candidate_profile_sends_only_immutable_candidate_and_preserves_original_tests() -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source()
+        candidate_plan = _build_python_candidate_profile_plan(
+            eligibility,
+            baseline,
+            authorization,
+            baseline_artifact_id=artifact_id,
+        )
+        service, events, cleanup, provider = _service(
+            verified=baseline,
+            expected_plan=candidate_plan,
+        )
+        principal, lease = _principal_lease(provider.allocation.reservation)
+
+        result = await service.run(
+            principal,
+            lease,
+            artifact_id,
+            eligibility,
+            provider.allocation.reservation.allocation_id,
+            validation_source=authorization,
+        )
+
+        sent = provider.allocation.profile_archive
+        assert sent == authorization.candidate_archive
+        candidate = verify_archive(
+            sent,
+            expected_archive_sha256=authorization.candidate_archive_sha256,
+            expected_tree_sha256=authorization.candidate_source_tree_sha256,
+            expected_manifest=authorization.candidate_manifest,
+        )
+        before_tests = next(
+            file.content for file in baseline.files if file.path == "tests/test_original.py"
+        )
+        after_tests = next(
+            file.content for file in candidate.files if file.path == "tests/test_original.py"
+        )
+        assert before_tests == after_tests
+        assert authorization.changed_paths == ("module.py",)
+        assert result.validation_phase == "candidate"
+        assert result.artifact_id == artifact_id
+        assert result.tree_sha256 == authorization.candidate_source_tree_sha256
+        assert result.candidate_archive_sha256 == authorization.candidate_archive_sha256
+        assert [value for kind, value in events if kind == "command"].count("pytest") == 1
+        assert cleanup.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_candidate_profile_rejects_tampered_authorization_and_cleans_up() -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source()
+        service, events, cleanup, provider = _service(
+            verified=baseline,
+            expected_plan=build_python_profile_plan(eligibility, baseline),
+        )
+        principal, lease = _principal_lease(provider.allocation.reservation)
+        tampered = replace(authorization, candidate_archive=b"tampered archive")
+
+        with pytest.raises(
+            PythonProfileError,
+            match="python_profile_candidate_authorization_invalid",
+        ):
+            await service.run(
+                principal,
+                lease,
+                artifact_id,
+                eligibility,
+                provider.allocation.reservation.allocation_id,
+                validation_source=tampered,
+            )
+
+        assert not any(kind == "archive_write" for kind, _value in events)
+        assert cleanup.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_candidate_profile_requires_authorization_baseline_artifact_id() -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source()
+        service, events, cleanup, provider = _service(eligibility=eligibility, verified=baseline)
+        principal, lease = _principal_lease(provider.allocation.reservation)
+
+        with pytest.raises(
+            PythonProfileError,
+            match="python_profile_candidate_baseline_identity_mismatch",
+        ):
+            await service.run(
+                principal,
+                lease,
+                uuid4(),
+                eligibility,
+                provider.allocation.reservation.allocation_id,
+                validation_source=authorization,
+            )
+
+        assert not any(kind == "get_reservation" for kind, _value in events)
+        assert cleanup.calls == 0
+        assert artifact_id == authorization.baseline_artifact_id
+
+    asyncio.run(scenario())
 
 
 def test_python_profile_image_setting_is_operator_supplied_and_fail_closed() -> None:

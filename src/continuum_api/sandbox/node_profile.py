@@ -9,7 +9,7 @@ import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from continuum_api.artifacts.archives import (
@@ -60,10 +60,14 @@ from continuum_api.sandbox.node_bootstrap_recipe import (
 )
 from continuum_api.sandbox.vercel import VercelSandboxAllocation, VercelSandboxProvider
 
+if TYPE_CHECKING:
+    from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
+
 NODE_PROFILE_ID = NODE_NPM_PROFILE.profile_id
 NODE_PROFILE_VERSION = NODE_NPM_PROFILE.version
 NODE_PROFILE_EGRESS_DOMAINS = ("registry.npmjs.org",)
 NODE_PROFILE_ACTION_DEADLINE_SECONDS = 900.0
+NODE_PROFILE_COMMAND_ID = "node-npm-test-v1"
 _NATIVE_SUFFIXES = (
     ".a",
     ".c",
@@ -183,6 +187,13 @@ class NodeProfileResult:
     tree_sha256: str
     artifact_id: UUID
     allocation_id: UUID
+    validation_phase: Literal["baseline", "candidate"]
+    image: str
+    command_id: str
+    baseline_git_tree_sha256: str
+    baseline_archive_tree_sha256: str
+    candidate_archive_sha256: str | None
+    candidate_source_tree_sha256: str | None
     package_count: int
     test_exit_code: int
     test_passed: bool
@@ -221,7 +232,27 @@ class NodeAllocationCleanup(Protocol):
 def build_node_profile_plan(
     eligibility: EligibilityReceipt, verified: VerifiedArchive
 ) -> NodeProfilePlan:
-    """Bind the restored T14 archive to T13's complete Git tree and manifests."""
+    """Bind a committed T14 archive to T13's complete Git tree and manifests."""
+    return _build_node_profile_plan(eligibility, verified)
+
+
+def _build_node_profile_plan(
+    eligibility: EligibilityReceipt,
+    verified: VerifiedArchive,
+    *,
+    candidate_authorization: ValidationSourceAuthorization | None = None,
+) -> NodeProfilePlan:
+    """Build baseline or already-authorized candidate bytes for the profile runner."""
+    expected_file_count = (
+        eligibility.file_count
+        if candidate_authorization is None
+        else candidate_authorization.candidate_file_count
+    )
+    expected_source_bytes = (
+        eligibility.source_bytes
+        if candidate_authorization is None
+        else candidate_authorization.candidate_source_bytes
+    )
     if (
         eligibility.profile_id != NODE_PROFILE_ID
         or eligibility.profile_version != NODE_PROFILE_VERSION
@@ -239,8 +270,8 @@ def build_node_profile_plan(
         or re.fullmatch(r"[0-9a-f]{64}", verified.archive_sha256) is None
         or type(eligibility.file_count) is not int
         or type(eligibility.source_bytes) is not int
-        or len(verified.manifest.entries) != eligibility.file_count
-        or sum(entry.size for entry in verified.manifest.entries) != eligibility.source_bytes
+        or len(verified.manifest.entries) != expected_file_count
+        or sum(entry.size for entry in verified.manifest.entries) != expected_source_bytes
     ):
         raise NodeProfileError("node_profile_eligibility_archive_mismatch")
 
@@ -339,13 +370,26 @@ def build_node_profile_plan(
         if manifest_file is None or _git_blob_sha(manifest_file.content, hash_name) != expected_sha:
             raise NodeProfileError("node_profile_manifest_pin_mismatch")
 
-    if _git_tree_sha(verified.files, hash_name) != eligibility.tree_sha:
+    if (
+        candidate_authorization is None
+        and _git_tree_sha(verified.files, hash_name) != eligibility.tree_sha
+    ):
         raise NodeProfileError("node_profile_source_tree_mismatch")
     try:
         bundle = create_archive(verified.files)
     except ArchiveError as error:
         raise NodeProfileError(error.code) from None
-    if bundle.manifest != verified.manifest or len(bundle.archive) > MAX_COMPRESSED_BYTES:
+    if (
+        bundle.manifest != verified.manifest
+        or len(bundle.archive) > MAX_COMPRESSED_BYTES
+        or (
+            candidate_authorization is not None
+            and (
+                bundle.archive != candidate_authorization.candidate_archive
+                or bundle.archive_sha256 != candidate_authorization.candidate_archive_sha256
+            )
+        )
+    ):
         raise NodeProfileError("node_profile_archive_rebuild_mismatch")
     try:
         rechecked = verify_archive(
@@ -364,8 +408,49 @@ def build_node_profile_plan(
         tree_sha256=bundle.manifest.tree_sha256,
         lockfile_sha256=hashlib.sha256(lock_file.content).hexdigest(),
         package_count=eligibility.package_count,
-        file_count=eligibility.file_count,
-        source_bytes=eligibility.source_bytes,
+        file_count=expected_file_count,
+        source_bytes=expected_source_bytes,
+    )
+
+
+def _build_node_candidate_profile_plan(
+    eligibility: EligibilityReceipt,
+    restored_baseline: VerifiedArchive,
+    validation_source: ValidationSourceAuthorization,
+    *,
+    baseline_artifact_id: UUID,
+) -> NodeProfilePlan:
+    """Validate the committed baseline, then plan only the reauthorized candidate."""
+    from continuum_api.sandbox.validation.preparation import (
+        verify_validation_source_authorization,
+    )
+
+    try:
+        candidate = verify_validation_source_authorization(
+            validation_source,
+            eligibility=eligibility,
+            baseline_artifact_id=baseline_artifact_id,
+            restored_baseline=restored_baseline,
+        )
+        authorization_matches = (
+            validation_source.profile_id == NODE_PROFILE_ID
+            and validation_source.profile_version == NODE_PROFILE_VERSION
+            and validation_source.eligibility.to_cache_payload() == eligibility.to_cache_payload()
+            and validation_source.candidate_archive_sha256 == candidate.archive_sha256
+            and validation_source.candidate_source_tree_sha256 == candidate.manifest.tree_sha256
+            and validation_source.candidate_manifest == candidate.manifest
+            and validation_source.candidate_file_count == len(candidate.manifest.entries)
+            and validation_source.candidate_source_bytes
+            == sum(entry.size for entry in candidate.manifest.entries)
+        )
+    except Exception:
+        raise NodeProfileError("node_profile_candidate_authorization_invalid") from None
+    if not authorization_matches:
+        raise NodeProfileError("node_profile_candidate_authorization_invalid")
+    return _build_node_profile_plan(
+        eligibility,
+        candidate,
+        candidate_authorization=validation_source,
     )
 
 
@@ -406,6 +491,15 @@ class NodeProfileService:
         self._provider_factory = provider_factory
         self._deadline_seconds = deadline_seconds
 
+    @property
+    def configured_image(self) -> str | None:
+        """Configured image reference to bind to success and failure evidence."""
+        return self._image
+
+    @property
+    def command_id(self) -> str:
+        return NODE_PROFILE_COMMAND_ID
+
     async def run(
         self,
         principal: Principal,
@@ -413,8 +507,17 @@ class NodeProfileService:
         artifact_id: UUID,
         eligibility: EligibilityReceipt,
         allocation_id: UUID,
+        *,
+        validation_source: ValidationSourceAuthorization | None = None,
     ) -> NodeProfileResult:
         """Verify pins, restore through T15, install and test inside T16 allocation."""
+        if validation_source is not None:
+            from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
+
+            if not isinstance(validation_source, ValidationSourceAuthorization):
+                raise NodeProfileError("node_profile_candidate_authorization_invalid")
+            if artifact_id != validation_source.baseline_artifact_id:
+                raise NodeProfileError("node_profile_candidate_baseline_identity_mismatch")
         if principal.account_id != lease.owner_id:
             raise NodeProfileError("node_profile_owner_mismatch")
 
@@ -433,7 +536,15 @@ class NodeProfileService:
                 if self._provider_period_id is None:
                     raise NodeProfileError("node_profile_period_unconfigured")
                 verified = await self._checkpoints.restore_archive(principal, lease, artifact_id)
-                plan = build_node_profile_plan(eligibility, verified)
+                if validation_source is None:
+                    plan = build_node_profile_plan(eligibility, verified)
+                else:
+                    plan = _build_node_candidate_profile_plan(
+                        eligibility,
+                        verified,
+                        validation_source,
+                        baseline_artifact_id=artifact_id,
+                    )
                 if reservation.provider_session_id is None:
                     raise NodeProfileError("node_profile_session_identity_missing")
 
@@ -632,6 +743,17 @@ class NodeProfileService:
                     tree_sha256=plan.tree_sha256,
                     artifact_id=artifact_id,
                     allocation_id=allocation_id,
+                    validation_phase="candidate" if validation_source is not None else "baseline",
+                    image=image,
+                    command_id=NODE_PROFILE_COMMAND_ID,
+                    baseline_git_tree_sha256=eligibility.tree_sha,
+                    baseline_archive_tree_sha256=verified.manifest.tree_sha256,
+                    candidate_archive_sha256=plan.archive_sha256
+                    if validation_source is not None
+                    else None,
+                    candidate_source_tree_sha256=plan.tree_sha256
+                    if validation_source is not None
+                    else None,
                     package_count=plan.package_count,
                     test_exit_code=test_output.exit_code,
                     test_passed=test_output.exit_code == 0,

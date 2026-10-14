@@ -44,7 +44,20 @@ from continuum_api.sandbox.node_bootstrap_recipe import (
 from continuum_api.sandbox.node_profile import (
     NodeProfileError,
     NodeProfileService,
+    _build_node_candidate_profile_plan,
     build_node_profile_plan,
+)
+from continuum_api.sandbox.validation.preparation import prepare_validation_source
+from continuum_api.tools.contracts import ToolCapability, ToolStage
+from continuum_api.tools.policy import ToolPolicyContext
+from continuum_api.tools.source_tools import (
+    TextEdit as SourceTextEdit,
+)
+from continuum_api.tools.source_tools import (
+    apply_text_edits,
+    discover_baseline_test_paths,
+    snapshot_from_verified_archive,
+    source_paths,
 )
 
 _COMMIT_SHA = "c" * 40
@@ -555,9 +568,16 @@ def _service(
     probe_overrides: dict[str, bool] | None = None,
     lose_lease_at: int | None = None,
     block_phase: str | None = None,
+    eligibility: EligibilityReceipt | None = None,
+    verified: VerifiedArchive | None = None,
+    expected_plan: Any | None = None,
 ) -> tuple[Any, Principal, ExecutionLease, list[tuple[str, Any]], _Cleanup, _Provider]:
-    receipt, verified = _eligibility_and_archive(tmp_path)
-    plan = build_node_profile_plan(receipt, verified)
+    if eligibility is None or verified is None:
+        receipt, baseline = _eligibility_and_archive(tmp_path)
+        eligibility = receipt if eligibility is None else eligibility
+        verified = baseline if verified is None else verified
+    assert eligibility is not None and verified is not None
+    plan = expected_plan or build_node_profile_plan(eligibility, verified)
     reservation = _reservation()
     principal, lease = _principal_lease(reservation)
     events: list[tuple[str, Any]] = []
@@ -579,6 +599,58 @@ def _service(
         provider_factory=lambda _limits: provider,
     )
     return service, principal, lease, events, cleanup, provider
+
+
+def _validation_source(
+    tmp_path: Path,
+) -> tuple[EligibilityReceipt, VerifiedArchive, Any, Any]:
+    files = _source_files(
+        ArchiveFile(
+            "tests/original.test.js",
+            b"import test from 'node:test';\ntest('original behavior', () => {});\n",
+        )
+    )
+    eligibility, baseline_verified = _eligibility_and_archive(tmp_path, files)
+    baseline = snapshot_from_verified_archive(
+        baseline_verified,
+        expected_archive_sha256=baseline_verified.archive_sha256,
+        expected_tree_sha256=baseline_verified.manifest.tree_sha256,
+        expected_manifest=baseline_verified.manifest,
+    )
+    discovered = discover_baseline_test_paths(
+        baseline,
+        NODE_PROFILE_ID,
+        expected_tree_sha256=baseline.tree_sha256,
+    )
+    context = ToolPolicyContext(
+        capabilities=frozenset(ToolCapability),
+        profile_id=NODE_PROFILE_ID,
+        profile_version=NODE_PROFILE_VERSION,
+        actor_can_write_repository=True,
+        app_can_access_repository=True,
+        stage=ToolStage.AGENT_WORK,
+        run_budget_available=True,
+        baseline_tree_sha256=baseline.tree_sha256,
+        baseline_source_paths=frozenset(source_paths(baseline)),
+        baseline_test_paths=discovered,
+        baseline_paths_verified=True,
+        protected_paths=frozenset(),
+    )
+    patch = apply_text_edits(
+        baseline,
+        [SourceTextEdit("src/index.js", "value = 1", "value = 2")],
+        expected_tree_sha256=baseline.tree_sha256,
+        authorized_write_paths={"src/index.js"},
+    )
+    baseline_artifact_id = uuid4()
+    authorization = prepare_validation_source(
+        eligibility,
+        baseline_artifact_id,
+        baseline_verified,
+        patch,
+        context,
+    )
+    return eligibility, baseline_verified, baseline_artifact_id, authorization
 
 
 def test_node_profile_runs_fixed_phases_with_registry_allowlist_then_deny_all(
@@ -618,6 +690,119 @@ def test_node_profile_runs_fixed_phases_with_registry_allowlist_then_deny_all(
     assert result.test_passed is True
     assert result.allocation_status == "stopped"
     assert cleanup.calls == 1
+
+
+def test_node_candidate_profile_sends_immutable_candidate_and_preserves_original_tests(
+    tmp_path: Path,
+) -> None:
+    eligibility, baseline, artifact_id, authorization = _validation_source(tmp_path)
+    candidate_plan = _build_node_candidate_profile_plan(
+        eligibility,
+        baseline,
+        authorization,
+        baseline_artifact_id=artifact_id,
+    )
+    service, principal, lease, events, cleanup, provider = _service(
+        tmp_path,
+        eligibility=eligibility,
+        verified=baseline,
+        expected_plan=candidate_plan,
+    )
+
+    result = asyncio.run(
+        service.run(
+            principal,
+            lease,
+            artifact_id,
+            eligibility,
+            provider.allocation.reservation.allocation_id,
+            validation_source=authorization,
+        )
+    )
+
+    sent = provider.allocation.profile_archive
+    assert sent == authorization.candidate_archive
+    candidate = verify_archive(
+        sent,
+        expected_archive_sha256=authorization.candidate_archive_sha256,
+        expected_tree_sha256=authorization.candidate_source_tree_sha256,
+        expected_manifest=authorization.candidate_manifest,
+    )
+    before_tests = next(
+        file.content for file in baseline.files if file.path == "tests/original.test.js"
+    )
+    after_tests = next(
+        file.content for file in candidate.files if file.path == "tests/original.test.js"
+    )
+    assert before_tests == after_tests
+    assert authorization.changed_paths == ("src/index.js",)
+    assert result.validation_phase == "candidate"
+    assert result.artifact_id == artifact_id
+    assert result.tree_sha256 == authorization.candidate_source_tree_sha256
+    assert result.candidate_archive_sha256 == authorization.candidate_archive_sha256
+    assert [value for kind, value in events if kind == "command"].count("npm_test") == 1
+    assert cleanup.calls == 1
+
+
+def test_node_candidate_profile_rejects_tampered_authorization_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    eligibility, baseline, artifact_id, authorization = _validation_source(tmp_path)
+    service, principal, lease, events, cleanup, provider = _service(
+        tmp_path,
+        eligibility=eligibility,
+        verified=baseline,
+        expected_plan=build_node_profile_plan(eligibility, baseline),
+    )
+    tampered = replace(authorization, candidate_archive=b"tampered archive")
+
+    with pytest.raises(
+        NodeProfileError,
+        match="node_profile_candidate_authorization_invalid",
+    ):
+        asyncio.run(
+            service.run(
+                principal,
+                lease,
+                artifact_id,
+                eligibility,
+                provider.allocation.reservation.allocation_id,
+                validation_source=tampered,
+            )
+        )
+
+    assert not any(kind == "archive_write" for kind, _value in events)
+    assert cleanup.calls == 1
+
+
+def test_node_candidate_profile_requires_authorization_baseline_artifact_id(
+    tmp_path: Path,
+) -> None:
+    eligibility, baseline, artifact_id, authorization = _validation_source(tmp_path)
+    service, principal, lease, events, cleanup, provider = _service(
+        tmp_path,
+        eligibility=eligibility,
+        verified=baseline,
+    )
+
+    with pytest.raises(
+        NodeProfileError,
+        match="node_profile_candidate_baseline_identity_mismatch",
+    ):
+        asyncio.run(
+            service.run(
+                principal,
+                lease,
+                uuid4(),
+                eligibility,
+                provider.allocation.reservation.allocation_id,
+                validation_source=authorization,
+            )
+        )
+
+    assert not any(kind == "get_reservation" for kind, _value in events)
+    assert cleanup.calls == 0
+    assert artifact_id == authorization.baseline_artifact_id
 
 
 def test_node_profile_rejects_failed_registry_probe_before_npm_ci_or_test(tmp_path: Path) -> None:

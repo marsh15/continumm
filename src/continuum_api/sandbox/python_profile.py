@@ -10,7 +10,7 @@ import re
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from continuum_api.artifacts.archives import (
@@ -58,8 +58,12 @@ from continuum_api.sandbox.python_bootstrap_recipe import (
 )
 from continuum_api.sandbox.vercel import VercelSandboxAllocation, VercelSandboxProvider
 
+if TYPE_CHECKING:
+    from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
+
 PYTHON_PROFILE_EGRESS_DOMAINS = ("pypi.org", "files.pythonhosted.org")
 PYTHON_PROFILE_ACTION_DEADLINE_SECONDS = 900.0
+PYTHON_PROFILE_COMMAND_ID = "python-pytest-v1"
 _NATIVE_SUFFIXES = (
     ".c",
     ".h",
@@ -126,6 +130,13 @@ class PythonProfileResult:
     tree_sha256: str
     artifact_id: UUID
     allocation_id: UUID
+    validation_phase: Literal["baseline", "candidate"]
+    image: str
+    command_id: str
+    baseline_git_tree_sha256: str
+    baseline_archive_tree_sha256: str
+    candidate_archive_sha256: str | None
+    candidate_source_tree_sha256: str | None
     package_count: int
     test_exit_code: int
     test_passed: bool
@@ -134,6 +145,11 @@ class PythonProfileResult:
     log_budget_scope: Literal["profile_invocation_pending_run_ledger"] = (
         "profile_invocation_pending_run_ledger"
     )
+
+    @property
+    def python_version(self) -> str:
+        """Explicit runtime field for validation evidence; keep the existing alias."""
+        return self.runtime_version
 
 
 class PythonProfileStore(Protocol):
@@ -185,6 +201,15 @@ class PythonProfileService:
         self._provider_factory = provider_factory
         self._deadline_seconds = deadline_seconds
 
+    @property
+    def configured_image(self) -> str | None:
+        """Configured image reference to bind to both success and failure evidence."""
+        return self._image
+
+    @property
+    def command_id(self) -> str:
+        return PYTHON_PROFILE_COMMAND_ID
+
     async def run(
         self,
         principal: Principal,
@@ -192,8 +217,17 @@ class PythonProfileService:
         artifact_id: UUID,
         eligibility: EligibilityReceipt,
         allocation_id: UUID,
+        *,
+        validation_source: ValidationSourceAuthorization | None = None,
     ) -> PythonProfileResult:
         """Validate pins, restore via T15 authorization, and execute fixed phases."""
+        if validation_source is not None:
+            from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
+
+            if not isinstance(validation_source, ValidationSourceAuthorization):
+                raise PythonProfileError("python_profile_candidate_authorization_invalid")
+            if artifact_id != validation_source.baseline_artifact_id:
+                raise PythonProfileError("python_profile_candidate_baseline_identity_mismatch")
         if principal.account_id != lease.owner_id:
             raise PythonProfileError("python_profile_owner_mismatch")
 
@@ -212,7 +246,15 @@ class PythonProfileService:
                 if self._provider_period_id is None:
                     raise PythonProfileError("python_profile_period_unconfigured")
                 verified = await self._checkpoints.restore_archive(principal, lease, artifact_id)
-                plan = build_python_profile_plan(eligibility, verified)
+                if validation_source is None:
+                    plan = build_python_profile_plan(eligibility, verified)
+                else:
+                    plan = _build_python_candidate_profile_plan(
+                        eligibility,
+                        verified,
+                        validation_source,
+                        baseline_artifact_id=artifact_id,
+                    )
                 assert reservation.provider_session_id is not None
 
                 limits = SandboxAllocationLimits(
@@ -403,6 +445,17 @@ class PythonProfileService:
                     tree_sha256=plan.tree_sha256,
                     artifact_id=artifact_id,
                     allocation_id=allocation_id,
+                    validation_phase="candidate" if validation_source is not None else "baseline",
+                    image=image,
+                    command_id=PYTHON_PROFILE_COMMAND_ID,
+                    baseline_git_tree_sha256=eligibility.tree_sha,
+                    baseline_archive_tree_sha256=verified.manifest.tree_sha256,
+                    candidate_archive_sha256=plan.archive_sha256
+                    if validation_source is not None
+                    else None,
+                    candidate_source_tree_sha256=plan.tree_sha256
+                    if validation_source is not None
+                    else None,
                     package_count=plan.package_count,
                     test_exit_code=pytest_output.exit_code,
                     test_passed=pytest_output.exit_code == 0,
@@ -685,7 +738,27 @@ class PythonProfileService:
 def build_python_profile_plan(
     eligibility: EligibilityReceipt, verified: VerifiedArchive
 ) -> PythonProfilePlan:
-    """Bind the committed archive to T13's full Git tree and manifest pins."""
+    """Bind a committed T14 archive to T13's full Git tree and manifest pins."""
+    return _build_python_profile_plan(eligibility, verified)
+
+
+def _build_python_profile_plan(
+    eligibility: EligibilityReceipt,
+    verified: VerifiedArchive,
+    *,
+    candidate_authorization: ValidationSourceAuthorization | None = None,
+) -> PythonProfilePlan:
+    """Build baseline or already-authorized candidate bytes for the profile runner."""
+    expected_file_count = (
+        eligibility.file_count
+        if candidate_authorization is None
+        else candidate_authorization.candidate_file_count
+    )
+    expected_source_bytes = (
+        eligibility.source_bytes
+        if candidate_authorization is None
+        else candidate_authorization.candidate_source_bytes
+    )
     if (
         eligibility.profile_id != PYTHON_PROFILE_ID
         or eligibility.profile_version != PYTHON_PROFILE_VERSION
@@ -703,8 +776,8 @@ def build_python_profile_plan(
         or re.fullmatch(r"[0-9a-f]{64}", verified.archive_sha256) is None
         or type(eligibility.file_count) is not int
         or type(eligibility.source_bytes) is not int
-        or len(verified.manifest.entries) != eligibility.file_count
-        or sum(entry.size for entry in verified.manifest.entries) != eligibility.source_bytes
+        or len(verified.manifest.entries) != expected_file_count
+        or sum(entry.size for entry in verified.manifest.entries) != expected_source_bytes
     ):
         raise PythonProfileError("python_profile_eligibility_archive_mismatch")
 
@@ -775,7 +848,7 @@ def build_python_profile_plan(
             raise PythonProfileError("python_profile_manifest_pin_mismatch")
 
     actual_tree_sha = _git_tree_sha(verified.files, hash_name)
-    if actual_tree_sha != eligibility.tree_sha:
+    if candidate_authorization is None and actual_tree_sha != eligibility.tree_sha:
         raise PythonProfileError("python_profile_source_tree_mismatch")
 
     try:
@@ -786,6 +859,13 @@ def build_python_profile_plan(
         bundle.manifest != verified.manifest
         or len(bundle.archive) > MAX_COMPRESSED_BYTES
         or len(bundle.archive) > MAX_PROFILE_ARCHIVE_BYTES
+        or (
+            candidate_authorization is not None
+            and (
+                bundle.archive != candidate_authorization.candidate_archive
+                or bundle.archive_sha256 != candidate_authorization.candidate_archive_sha256
+            )
+        )
     ):
         raise PythonProfileError("python_profile_archive_rebuild_mismatch")
     try:
@@ -805,8 +885,49 @@ def build_python_profile_plan(
         tree_sha256=bundle.manifest.tree_sha256,
         lockfile_sha256=hashlib.sha256(lock_file.content).hexdigest(),
         package_count=eligibility.package_count,
-        file_count=eligibility.file_count,
-        source_bytes=eligibility.source_bytes,
+        file_count=expected_file_count,
+        source_bytes=expected_source_bytes,
+    )
+
+
+def _build_python_candidate_profile_plan(
+    eligibility: EligibilityReceipt,
+    restored_baseline: VerifiedArchive,
+    validation_source: ValidationSourceAuthorization,
+    *,
+    baseline_artifact_id: UUID,
+) -> PythonProfilePlan:
+    """Validate the committed baseline, then plan only the reauthorized candidate."""
+    from continuum_api.sandbox.validation.preparation import (
+        verify_validation_source_authorization,
+    )
+
+    try:
+        candidate = verify_validation_source_authorization(
+            validation_source,
+            eligibility=eligibility,
+            baseline_artifact_id=baseline_artifact_id,
+            restored_baseline=restored_baseline,
+        )
+        authorization_matches = (
+            validation_source.profile_id == PYTHON_PROFILE_ID
+            and validation_source.profile_version == PYTHON_PROFILE_VERSION
+            and validation_source.eligibility.to_cache_payload() == eligibility.to_cache_payload()
+            and validation_source.candidate_archive_sha256 == candidate.archive_sha256
+            and validation_source.candidate_source_tree_sha256 == candidate.manifest.tree_sha256
+            and validation_source.candidate_manifest == candidate.manifest
+            and validation_source.candidate_file_count == len(candidate.manifest.entries)
+            and validation_source.candidate_source_bytes
+            == sum(entry.size for entry in candidate.manifest.entries)
+        )
+    except Exception:
+        raise PythonProfileError("python_profile_candidate_authorization_invalid") from None
+    if not authorization_matches:
+        raise PythonProfileError("python_profile_candidate_authorization_invalid")
+    return _build_python_profile_plan(
+        eligibility,
+        candidate,
+        candidate_authorization=validation_source,
     )
 
 

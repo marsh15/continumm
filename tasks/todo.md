@@ -245,8 +245,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T19.
 - **Scope:** Medium; validation activity, evidence records and tests.
-- [ ] Test a separate restored candidate; discard validation writes and preserve original test evidence.
-- [ ] Bind results to the candidate digest and report baseline failure versus final failure accurately.
+- [x] Test a separate restored candidate; discard validation writes and preserve original test evidence.
+- [x] Bind results to the candidate digest and report baseline failure versus final failure accurately.
 - **Verify:** make test-target TARGET=tests/integration/test_candidate_validation.py.
 
 ### T21 — Worker-to-checkpoint recovery

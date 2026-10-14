@@ -365,6 +365,31 @@ def snapshot_from_verified_archive(
     )
 
 
+def verify_patch_candidate(
+    baseline: VerifiedArchive,
+    candidate: PatchCandidate,
+) -> VerifiedArchive:
+    """Revalidate a T19 candidate and its cumulative lineage against a T14 base."""
+    if not isinstance(baseline, VerifiedArchive) or not isinstance(candidate, PatchCandidate):
+        raise SourceToolError("source_tool_candidate_lineage_mismatch")
+    try:
+        baseline_bundle = create_archive(baseline.files)
+        baseline_verified = verify_archive(
+            baseline_bundle.archive,
+            expected_archive_sha256=baseline.archive_sha256,
+            expected_tree_sha256=baseline.manifest.tree_sha256,
+            expected_manifest=baseline.manifest,
+        )
+    except ArchiveError as error:
+        raise SourceToolError(error.code) from None
+    _validate_candidate(
+        baseline_verified,
+        baseline_verified.manifest.tree_sha256,
+        candidate,
+    )
+    return _validate_snapshot(candidate.source)
+
+
 def list_files(
     source: SourceSnapshot,
     *,

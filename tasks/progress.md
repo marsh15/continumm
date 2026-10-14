@@ -217,7 +217,23 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   tests (15 optional integration environment skips), formatting, lint, typing
   and package build. [Contract](../docs/source-file-tools.md).
 
-Implementation proceeds in backlog order. A local test or mocked adapter does not
+## 15 October 2026
+
+- T20: immutable candidate validation complete locally. Preparation preserves the
+  original Git eligibility receipt and rechecks candidate lineage and protected
+  tests. Baseline and candidate execute in sequential fresh allocations, with
+  verified baseline cleanup required before candidate creation. Bounded evidence
+  separates original failures, final failures and inconclusive outcomes; test
+  filesystem writes cannot replace the candidate. Twenty-five validation integration
+  tests, two preparation tests, nineteen Python adapter tests and thirty-four
+  Node adapter tests passed. The full Python suite passed 434 tests (15 optional
+  database environment skips), with formatting, lint, typing and package build.
+  [Contract and code review guide](../docs/candidate-validation.md). Hosted
+  execution remains pending. Evidence acceptance uses the existing fenced T08
+  caller; T21 worker orchestration has not started.
+
+Implementation is stopped after T20 at the user's request for code review.
+T21 and later tasks remain untouched. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

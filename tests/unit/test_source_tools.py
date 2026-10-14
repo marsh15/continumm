@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -13,6 +14,7 @@ from continuum_api.tools.policy import ToolPolicyContext
 from continuum_api.tools.source_tools import (
     MAX_TOOL_OUTPUT_BYTES,
     PatchCandidate,
+    PatchPreimage,
     SourceSnapshot,
     SourceToolError,
     apply_text_edits,
@@ -23,6 +25,7 @@ from continuum_api.tools.source_tools import (
     search_text,
     snapshot_from_verified_archive,
     source_paths,
+    verify_patch_candidate,
     verify_source_archive,
 )
 from continuum_api.tools.source_tools import (
@@ -226,6 +229,40 @@ def test_patch_is_atomic_exact_and_returns_only_a_new_verified_candidate() -> No
             authorized_write_paths={"src/app.py", "src/missing.py"},
         )
     assert snapshot.tree_sha256 != candidate.tree_sha256
+
+
+def test_patch_candidate_is_revalidated_against_baseline_and_recorded_preimages() -> None:
+    snapshot = _python_snapshot()
+    baseline = verify_archive(
+        snapshot.archive,
+        expected_archive_sha256=snapshot.archive_sha256,
+        expected_tree_sha256=snapshot.tree_sha256,
+        expected_manifest=snapshot.manifest,
+    )
+    candidate = apply_text_edits(
+        snapshot,
+        [SourceTextEdit("src/app.py", "return 'hello'", "return 'hi'")],
+        expected_tree_sha256=snapshot.tree_sha256,
+        authorized_write_paths={"src/app.py"},
+    )
+
+    verified = verify_patch_candidate(baseline, candidate)
+
+    assert verified.archive_sha256 == candidate.source.archive_sha256
+    assert candidate.changed_paths == ("src/app.py",)
+    assert (
+        candidate.preimages[0].sha256
+        == hashlib.sha256(
+            next(file.content for file in baseline.files if file.path == "src/app.py")
+        ).hexdigest()
+    )
+
+    bad_preimage = replace(
+        candidate,
+        preimages=(PatchPreimage("src/app.py", "0" * 64),),
+    )
+    with pytest.raises(SourceToolError, match="source_tool_candidate_lineage_mismatch"):
+        verify_patch_candidate(baseline, bad_preimage)
 
 
 def test_dispatcher_derives_policy_filters_sensitive_paths_and_protects_baseline() -> None:
