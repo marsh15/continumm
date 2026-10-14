@@ -236,8 +236,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T15, T17, T18.
 - **Scope:** Medium; tool schemas, policy module and tests.
-- [ ] Implement bounded list/read/search/apply-patch/diff tools with protected paths.
-- [ ] Deny arbitrary shell, credentials, network tools, dependency changes and CI edits.
+- [x] Implement bounded archive-backed list/read/literal-search/apply-patch/diff tools with protected paths.
+- [x] Deny arbitrary shell/network tools, known credential paths, dependency/CI edits and baseline test/harness changes.
+- **Evidence:** [Source tools and policy](../docs/source-file-tools.md); pure synthetic tests. Durable tool orchestration and cumulative budgets remain assigned to later tasks.
 - **Verify:** make test-target TARGET=tests/unit/test_tool_policy.py.
 
 ### T20 — Validation on immutable candidates

@@ -208,6 +208,15 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   blocker. Docker was unavailable; image build/publication and managed fixture
   acceptance remain pending. [Contract](../docs/node-execution-profile.md).
 
+- T19: typed source tools and policy complete locally. Strict requests and trusted
+  permission intersections govern verified in-memory archives; patches create
+  atomic candidates, while baseline tests, harnesses, manifests and CI stay
+  protected. Known credential paths are filtered from inspection. Harness
+  discovery is bounded and fails closed on unsupported forms. Twenty-eight
+  policy tests and nine source tests passed, together with 400 Python regression
+  tests (15 optional integration environment skips), formatting, lint, typing
+  and package build. [Contract](../docs/source-file-tools.md).
+
 Implementation proceeds in backlog order. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
