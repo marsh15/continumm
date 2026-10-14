@@ -253,15 +253,17 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T16, T19, T20.
 - **Scope:** Medium; activity orchestration and process tests.
-- [ ] Resume from the last committed checkpoint after kills before/after upload and commit.
-- [ ] Late sandbox output cannot overwrite a newer authoritative result.
+- [x] Resume from the last committed checkpoint after kills before/after upload and commit.
+- [x] Late sandbox output cannot overwrite a newer authoritative result.
+- **Evidence:** [Local worker checkpoint recovery proof](../docs/workspace-recovery.md); ten PostgreSQL/process cases and three allocation-identity tests. Hosted recovery remains pending.
 - **Verify:** make test-target TARGET=tests/faults/test_workspace_recovery.py.
 
 ### Checkpoint G — Recoverable tools
 
-- [ ] Real process failures do not lose committed source changes.
-- [ ] Candidate validation cannot change publication bytes.
-- [ ] All filesystem/security fixture cases have explicit outcomes.
+- [x] Real process failures do not lose committed source changes.
+- [x] Candidate validation cannot change publication bytes.
+- [x] All filesystem/security fixture cases have explicit outcomes.
+- **Evidence:** [Local recovery and security fixture outcomes](../docs/workspace-recovery.md), including the T20 immutable-candidate proof. Actual managed execution and publication remain pending.
 
 ## Phase 3 — Agent and human review
 

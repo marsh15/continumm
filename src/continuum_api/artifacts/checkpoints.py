@@ -356,9 +356,15 @@ class CheckpointStorageService:
         except TimeoutError:
             raise CheckpointStorageError("artifact_restore_timeout") from None
         except ArtifactPersistenceError as error:
+            if error.code == "artifact_upload_reservation_lost":
+                await self._fail_corrupt_artifact(lease)
             raise CheckpointStorageError(error.code) from None
         except LeaseLost:
             raise CheckpointStorageError("artifact_lease_lost") from None
+
+    async def fail_unrecoverable_restore(self, lease: ExecutionLease) -> None:
+        """Move the current attempt to attention when no authoritative object exists."""
+        await self._fail_corrupt_artifact(lease)
 
     async def _check_private_bucket_before_dispatch(
         self,

@@ -627,6 +627,29 @@ class SandboxAllocationStore:
                 raise SandboxAllocationReservationLost()
             return self._from_row(row, is_new=False)
 
+    def list_recovery_allocations(
+        self, principal: Principal, lease: ExecutionLease
+    ) -> tuple[AllocationReservation, ...]:
+        """Find this run's allocations that are not proven inactive and terminal."""
+        if principal.account_id != lease.owner_id:
+            raise LeaseLost("runtime_lease_owner_mismatch")
+        with self._connection(principal) as connection:
+            lock_current_execution(connection, principal, lease)
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.sandbox_allocations "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id "
+                        "AND status NOT IN ('stopped', 'destroyed', 'not_applied', 'released') "
+                        "ORDER BY allocation_id"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id},
+                )
+                .mappings()
+                .all()
+            )
+            return tuple(self._from_row(dict(row), is_new=False) for row in rows)
+
     def authorize_stop(
         self, principal: Principal, allocation_id: UUID, expected_session_id: str
     ) -> bool:

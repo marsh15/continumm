@@ -192,21 +192,13 @@ class ArtifactPersistence:
                     self._assert_execution_live(connection, locked)
                     return self._reservation_from_row(existing, is_new=False)
 
-                parent_upload_id = connection.execute(
-                    text(
-                        "SELECT artifact.upload_id "
-                        "FROM runtime_private.accepted_results AS accepted "
-                        "JOIN runtime_private.artifact_uploads AS artifact "
-                        "ON artifact.owner_id = accepted.owner_id "
-                        "AND artifact.run_id = accepted.run_id "
-                        "AND artifact.upload_id = accepted.artifact_id "
-                        "WHERE accepted.owner_id = :owner_id AND accepted.run_id = :run_id "
-                        "AND artifact.status = 'committed' "
-                        "AND artifact.content_expires_at > clock_timestamp() "
-                        "ORDER BY accepted.event_sequence DESC LIMIT 1"
-                    ),
-                    {"owner_id": lease.owner_id, "run_id": lease.run_id},
-                ).scalar_one_or_none()
+                parent_upload_id = self._latest_accepted_artifact_id(
+                    connection, lease.owner_id, lease.run_id
+                )
+                if parent_upload_id is not None:
+                    self._require_available_parent(
+                        connection, lease.owner_id, lease.run_id, parent_upload_id
+                    )
 
                 charged_bytes: int = capacity["charged_bytes"]
                 capacity_limit_bytes: int = capacity["capacity_limit_bytes"]
@@ -417,6 +409,15 @@ class ArtifactPersistence:
         row = self._lock_upload(connection, principal, lease, upload_id)
         if row["status"] != "verified":
             raise ArtifactReservationLost()
+        latest_parent_id = self._latest_accepted_artifact_id(
+            connection, lease.owner_id, lease.run_id
+        )
+        if row["parent_upload_id"] != latest_parent_id:
+            raise ArtifactPersistenceError("artifact_parent_lineage_mismatch")
+        if latest_parent_id is not None:
+            self._require_available_parent(
+                connection, lease.owner_id, lease.run_id, latest_parent_id
+            )
         reference = self._reference_from_row(connection, principal, row)
         connection.execute(
             text(
@@ -571,6 +572,43 @@ class ArtifactPersistence:
             .one_or_none()
         )
         return None if row is None else dict(row)
+
+    @staticmethod
+    def _latest_accepted_artifact_id(
+        connection: Connection, owner_id: UUID, run_id: UUID
+    ) -> UUID | None:
+        """Return the newest accepted artifact before checking its availability."""
+        return connection.execute(
+            text(
+                "SELECT artifact_id FROM runtime_private.accepted_results "
+                "WHERE owner_id=:owner_id AND run_id=:run_id AND artifact_id IS NOT NULL "
+                "ORDER BY event_sequence DESC LIMIT 1"
+            ),
+            {"owner_id": owner_id, "run_id": run_id},
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _require_available_parent(
+        connection: Connection, owner_id: UUID, run_id: UUID, artifact_id: UUID
+    ) -> None:
+        parent = (
+            connection.execute(
+                text(
+                    "SELECT status, content_expires_at FROM runtime_private.artifact_uploads "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND upload_id=:artifact_id"
+                ),
+                {"owner_id": owner_id, "run_id": run_id, "artifact_id": artifact_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if (
+            parent is None
+            or parent["status"] != "committed"
+            or parent["content_expires_at"]
+            <= connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+        ):
+            raise ArtifactPersistenceError("artifact_parent_unavailable")
 
     @staticmethod
     def _lock_upload(

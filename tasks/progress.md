@@ -232,8 +232,24 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   execution remains pending. Evidence acceptance uses the existing fenced T08
   caller; T21 worker orchestration has not started.
 
-Implementation is stopped after T20 at the user's request for code review.
-T21 and later tasks remain untouched. A local test or mocked adapter does not
+- T21: worker checkpoint recovery complete locally. The service adopts accepted
+  receipts before restoring, reconciles prior allocations, restores only the
+  exact latest accepted artifact and rechecks candidate bytes against a fresh
+  restore before committing. Ten cases passed on a dedicated PostgreSQL 17
+  instance, including real SIGKILL windows around upload/commit, stale output,
+  forged snapshots, owner isolation, retained unknown-allocation capacity and
+  corrupt/expired latest artifacts. Three allocation-identity unit tests and the
+  existing T15 PostgreSQL checkpoint proof passed. The full Python suite passed
+  438 tests with 24 optional database cases skipped. Formatting, lint, typing and
+  package build passed. The dedicated database instance was stopped and removed.
+  [Recovery contract and evidence](../docs/workspace-recovery.md).
+
+- Checkpoint G: complete locally through T21 process recovery, T20 immutable
+  validation and the existing archive/source-tool security fixtures. Hosted
+  managed execution and publication remain pending.
+
+Implementation resumed after the user's T20 review pause. Work proceeds in
+backlog order, committing each completed task. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

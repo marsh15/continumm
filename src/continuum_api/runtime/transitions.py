@@ -153,6 +153,59 @@ class TransitionService:
                 time.sleep(random.uniform(0, 0.01 * (2**attempt)))
         raise AssertionError("transition_retry_loop_exhausted")
 
+    def get_accepted_result(self, lease: ExecutionLease) -> TransitionReceipt | None:
+        """Read the accepted logical result for this step without requiring a live lease.
+
+        Recovery must inspect durable authority before restoring a checkpoint or
+        dispatching work. This read is deliberately owner-scoped and read-only;
+        the lease is used to select the logical operation, not to authorize a
+        new write.
+        """
+        if self._principal.account_id != lease.owner_id:
+            raise LeaseLost("runtime_lease_owner_mismatch")
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            existing = (
+                connection.execute(
+                    text(
+                        """
+                        SELECT accepted.result_id, accepted.result_sha256,
+                               accepted.intent_sha256, accepted.payload,
+                               accepted.run_status, accepted.event_sequence,
+                               accepted.next_job_id, accepted.artifact_id,
+                               next_step.step_id AS next_step_id
+                        FROM runtime_private.accepted_results AS accepted
+                        LEFT JOIN runtime_private.jobs AS next_step
+                          ON next_step.owner_id=accepted.owner_id
+                         AND next_step.run_id=accepted.run_id
+                         AND next_step.job_id=accepted.next_job_id
+                        WHERE accepted.owner_id=:owner_id
+                          AND accepted.run_id=:run_id
+                          AND accepted.step_id=:step_id
+                          AND accepted.job_id=:job_id
+                        """
+                    ),
+                    {
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "step_id": lease.step_id,
+                        "job_id": lease.job_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if existing is None:
+            return None
+        return _receipt_from_row(
+            existing,
+            run_id=lease.run_id,
+            step_id=lease.step_id,
+            job_id=lease.job_id,
+            adopted=True,
+            artifact_id=existing["artifact_id"],
+        )
+
     def _commit_once(
         self,
         *,
