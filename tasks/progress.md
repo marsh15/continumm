@@ -248,6 +248,19 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   validation and the existing archive/source-tool security fixtures. Hosted
   managed execution and publication remain pending.
 
+- T22: scripted durable agent loop complete locally. Migration 11 stores fenced
+  intent, complete responses and immutable stable call identities with owner
+  RLS. Per-call activities execute persisted arguments through T19 and accept
+  results/checkpoints through T08/T21/T15. Process loss reuses complete responses;
+  incomplete or malformed responses never dispatch, and unknown dispatched
+  requests stop in attention. Ten dedicated PostgreSQL cases passed, including
+  SIGKILL recovery, cross-account denial, sequential multi-turn source edits,
+  protected-test denial, retained reservations and downgrade compatibility.
+  The full Python suite passed 439 tests with 33 optional database cases skipped;
+  formatting, lint, typing and package build passed. Live adapters and full
+  cumulative model token limits remain later tasks.
+  [Contract and evidence](../docs/scripted-agent-loop.md).
+
 Implementation resumed after the user's T20 review pause. Work proceeds in
 backlog order, committing each completed task. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

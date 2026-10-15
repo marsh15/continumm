@@ -45,7 +45,8 @@ Harness configuration is capped at 256 KiB before parsing.
 The result is an ephemeral candidate and policy receipt, not committed progress.
 A trusted caller must restore content through T15 authorization and accept a new
 checkpoint under the runtime's current-generation fence. Durable tool identity,
-execution orchestration and cumulative run budgets belong to T21/T27/T30.
+execution orchestration belongs to T21/T22, cumulative model request/token/context
+limits to T26, approval to T27 and external-effect accounting to T30.
 The tools are not yet wired to a live model or public route.
 
 ## Local verification

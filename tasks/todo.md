@@ -271,8 +271,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T19, T21.
 - **Scope:** Medium; turn/invocation persistence, scripted adapter and tests.
-- [ ] Persist intent, complete response, stable call IDs, sequential tools and accepted results.
-- [ ] Recovery reuses committed responses; partial responses never dispatch tools.
+- [x] Persist intent, complete response, stable call IDs, sequential tools and accepted results.
+- [x] Recovery reuses committed responses; partial responses never dispatch tools.
+- **Evidence:** [Scripted durable agent loop](../docs/scripted-agent-loop.md); ten dedicated PostgreSQL/scripted cases, including process death, multi-turn patch lineage, malformed responses, unknown outcomes, quotas and RLS. No live inference is used.
 - **Verify:** make test-target TARGET=tests/integration/test_agent_loop.py.
 
 ### T23 — Credential encryption and BYOK lifecycle
@@ -293,7 +294,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 ### Checkpoint H — Durable model boundary
 
-- [ ] A scripted response can survive process loss without another inference.
+- [x] A scripted response can survive process loss without another inference.
 - [ ] One real OpenAI task completes through controlled tools.
 - [ ] No credential appears in stored or displayed artifacts.
 

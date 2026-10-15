@@ -365,6 +365,13 @@ def snapshot_from_verified_archive(
     )
 
 
+def candidate_from_baseline(baseline: SourceSnapshot, current: SourceSnapshot) -> PatchCandidate:
+    """Build a T19 cumulative candidate from the immutable baseline and current source."""
+    baseline_verified = _validate_snapshot(baseline)
+    _validate_snapshot(current)
+    return _candidate_from_baseline(baseline_verified, baseline, current)
+
+
 def verify_patch_candidate(
     baseline: VerifiedArchive,
     candidate: PatchCandidate,
@@ -388,6 +395,61 @@ def verify_patch_candidate(
         candidate,
     )
     return _validate_snapshot(candidate.source)
+
+
+def rebase_patch_candidate(
+    baseline: VerifiedArchive,
+    latest_base: VerifiedArchive,
+    candidate: PatchCandidate,
+) -> PatchCandidate:
+    """Revalidate T19 cumulative provenance, then derive its delta from latest T21 bytes."""
+    verified_candidate = verify_patch_candidate(baseline, candidate)
+    if not isinstance(latest_base, VerifiedArchive):
+        raise SourceToolError("source_tool_candidate_lineage_mismatch")
+    try:
+        latest_bundle = create_archive(latest_base.files)
+        verified_latest = verify_archive(
+            latest_bundle.archive,
+            expected_archive_sha256=latest_base.archive_sha256,
+            expected_tree_sha256=latest_base.manifest.tree_sha256,
+            expected_manifest=latest_base.manifest,
+        )
+    except ArchiveError as error:
+        raise SourceToolError(error.code) from None
+
+    before = {file.path: file for file in verified_latest.files}
+    after = {file.path: file for file in verified_candidate.files}
+    if set(before) - set(after):
+        raise SourceToolError("source_tool_candidate_lineage_mismatch")
+    changed_paths = tuple(
+        sorted(
+            (
+                path
+                for path in after
+                if path not in before
+                or after[path].content != before[path].content
+                or after[path].mode != before[path].mode
+            ),
+            key=lambda item: item.encode("utf-8"),
+        )
+    )
+    if not changed_paths or len(changed_paths) > MAX_PATCH_FILES:
+        raise SourceToolError("source_tool_candidate_lineage_mismatch")
+    preimages = tuple(
+        PatchPreimage(
+            path,
+            None if path not in before else hashlib.sha256(before[path].content).hexdigest(),
+        )
+        for path in changed_paths
+    )
+    rebased = PatchCandidate(
+        source=candidate.source,
+        base_tree_sha256=verified_latest.manifest.tree_sha256,
+        changed_paths=changed_paths,
+        preimages=preimages,
+    )
+    _validate_candidate(verified_latest, verified_latest.manifest.tree_sha256, rebased)
+    return rebased
 
 
 def list_files(

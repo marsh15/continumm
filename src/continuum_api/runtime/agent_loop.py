@@ -1,0 +1,1599 @@
+"""Durable scripted model turns and sequential T19 tool activities."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any, Protocol
+from uuid import UUID, uuid4, uuid5
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from sqlalchemy import Engine, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+
+from continuum_api.artifacts.checkpoints import CheckpointStorageError, CheckpointStorageService
+from continuum_api.runtime.leases import (
+    ExecutionLease,
+    LeaseLost,
+    LockedExecution,
+    lock_current_execution,
+)
+from continuum_api.runtime.persistence import Principal, ReplayPolicy, RunStatus, RuntimeRepository
+from continuum_api.runtime.scheduler import FailureClass, RuntimeRecoveryService
+from continuum_api.runtime.transitions import (
+    InvalidTransition,
+    NextWork,
+    TransitionReceipt,
+    TransitionService,
+)
+from continuum_api.runtime.workspace_recovery import (
+    WorkspaceRecoveryError,
+    WorkspaceRecoveryService,
+    WorkspaceSnapshot,
+)
+from continuum_api.tools.contracts import (
+    MAX_TOOL_ARGUMENT_BYTES,
+    MAX_TOOL_RESULT_BYTES,
+    ApplyPatchResult,
+    ToolContractError,
+    parse_tool_call,
+    parse_tool_result,
+)
+from continuum_api.tools.policy import ToolPolicyContext
+from continuum_api.tools.source_tools import (
+    PatchCandidate,
+    SourceToolError,
+    candidate_from_baseline,
+    execute_tool_call,
+    rebase_patch_candidate,
+    snapshot_from_verified_archive,
+)
+
+MAX_AGENT_TURNS_PER_RUN = 30
+MAX_AGENT_CONTEXT_BYTES = 65_536
+MAX_AGENT_RESPONSE_BYTES = 65_536
+MAX_AGENT_TOOL_SCHEMAS = 16
+MAX_AGENT_TOOL_CALLS = 10
+MAX_AGENT_OUTPUT_TOKENS = 4096
+_SAFE_PROVIDER_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+_SCRIPTED_MODEL_ID = "scripted-v1"
+_TOOL_NAMES = frozenset({"list_files", "read_file", "search_text", "apply_patch", "diff"})
+
+
+class AgentLoopError(RuntimeError):
+    """Sanitized scripted agent loop failure."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid", strict=True, frozen=True, revalidate_instances="always"
+    )
+
+
+class ScriptedToolCall(_StrictModel):
+    provider_call_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=32)
+    arguments_json: str = Field(max_length=MAX_TOOL_ARGUMENT_BYTES)
+
+    @model_validator(mode="after")
+    def validate_call_identity(self) -> ScriptedToolCall:
+        if _SAFE_PROVIDER_ID.fullmatch(self.provider_call_id) is None:
+            raise ValueError("agent_provider_call_id_invalid")
+        if self.name not in _TOOL_NAMES:
+            raise ValueError("agent_tool_name_invalid")
+        return self
+
+
+class ScriptedModelResponse(_StrictModel):
+    complete: bool
+    stop_reason: str = Field(min_length=1, max_length=32)
+    model_id: str = Field(min_length=1, max_length=64)
+    response_id: str | None = Field(default=None, max_length=128)
+    output_text: str = Field(max_length=MAX_AGENT_RESPONSE_BYTES)
+    calls: tuple[ScriptedToolCall, ...] = Field(max_length=MAX_AGENT_TOOL_CALLS)
+    input_tokens: int = Field(ge=0, le=120_000)
+    output_tokens: int = Field(ge=0, le=MAX_AGENT_OUTPUT_TOKENS)
+
+    @model_validator(mode="after")
+    def validate_response_metadata(self) -> ScriptedModelResponse:
+        if self.response_id is not None and _SAFE_PROVIDER_ID.fullmatch(self.response_id) is None:
+            raise ValueError("agent_response_id_invalid")
+        if len({call.provider_call_id for call in self.calls}) != len(self.calls):
+            raise ValueError("agent_provider_call_id_duplicate")
+        return self
+
+
+class ScriptedModelRequest(_StrictModel):
+    turn_id: UUID
+    model_id: str = Field(min_length=1, max_length=64)
+    context: dict[str, Any]
+    tool_schemas: tuple[dict[str, Any], ...] = Field(max_length=MAX_AGENT_TOOL_SCHEMAS)
+    request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    max_output_tokens: int = Field(
+        default=MAX_AGENT_OUTPUT_TOKENS, ge=1, le=MAX_AGENT_OUTPUT_TOKENS
+    )
+
+
+class ScriptedModelAdapter(Protocol):
+    async def complete(self, request: ScriptedModelRequest) -> ScriptedModelResponse: ...
+
+
+class ScriptedResponseQueue:
+    """A deterministic in-process adapter used by local protocol tests."""
+
+    def __init__(self, responses: Iterable[ScriptedModelResponse]) -> None:
+        self._responses = tuple(responses)
+        self.requests: list[ScriptedModelRequest] = []
+
+    @property
+    def call_count(self) -> int:
+        return len(self.requests)
+
+    async def complete(self, request: ScriptedModelRequest) -> ScriptedModelResponse:
+        index = len(self.requests)
+        self.requests.append(request)
+        if index >= len(self._responses):
+            raise AgentLoopError("agent_script_exhausted")
+        return self._responses[index]
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTurnIntent:
+    turn_id: UUID
+    owner_id: UUID
+    run_id: UUID
+    job_id: UUID
+    logical_key: str
+    model_id: str
+    request_sha256: str
+    baseline_artifact_id: UUID
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentInvocation:
+    invocation_id: UUID
+    turn_id: UUID
+    ordinal: int
+    provider_call_id: str
+    name: str
+    logical_key: str
+    arguments: dict[str, Any]
+    accepted: bool
+    result: dict[str, Any] | None
+    artifact_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTurnReceipt:
+    turn_id: UUID
+    request_sha256: str
+    response_sha256: str
+    response: ScriptedModelResponse
+    invocations: tuple[AgentInvocation, ...]
+    adopted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolReceipt:
+    invocation_id: UUID
+    turn_id: UUID
+    ordinal: int
+    transition: TransitionReceipt
+    artifact_id: UUID | None
+    adopted: bool
+
+
+class DurableAgentLoopService:
+    """Persist intent before inference; advance one accepted tool call per job."""
+
+    def __init__(
+        self,
+        engine: Engine,
+        principal: Principal,
+        transitions: TransitionService,
+        *,
+        workspace_recovery: WorkspaceRecoveryService | None = None,
+        checkpoints: CheckpointStorageService | None = None,
+    ) -> None:
+        self._engine = engine
+        self._principal = principal
+        self._transitions = transitions
+        self._workspace_recovery = workspace_recovery
+        self._checkpoints = checkpoints
+        self._recovery = RuntimeRecoveryService(engine, principal)
+
+    async def prepare_turn(
+        self,
+        lease: ExecutionLease,
+        logical_key: str,
+        *,
+        context: dict[str, Any],
+        tool_schemas: Iterable[dict[str, Any]],
+        baseline_artifact_id: UUID,
+        model_id: str = _SCRIPTED_MODEL_ID,
+        output_tokens_reserved: int = MAX_AGENT_OUTPUT_TOKENS,
+    ) -> AgentTurnIntent:
+        self._check_owner(lease)
+        schemas = tuple(tool_schemas)
+        if model_id != _SCRIPTED_MODEL_ID:
+            raise AgentLoopError("agent_model_unsupported")
+        if (
+            not logical_key
+            or len(logical_key.encode("utf-8")) > 128
+            or logical_key.strip() != logical_key
+        ):
+            raise AgentLoopError("agent_turn_key_invalid")
+        if len(schemas) > MAX_AGENT_TOOL_SCHEMAS:
+            raise AgentLoopError("agent_tool_schema_limit")
+        if self._checkpoints is None:
+            raise AgentLoopError("agent_checkpoint_storage_unavailable")
+        root_artifact_id = await self._root_artifact_id(lease)
+        if root_artifact_id is None:
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError("agent_baseline_artifact_missing")
+        if root_artifact_id != baseline_artifact_id:
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError("agent_baseline_artifact_mismatch")
+        try:
+            await self._checkpoints.restore_archive(self._principal, lease, root_artifact_id)
+        except CheckpointStorageError as error:
+            raise AgentLoopError(error.code) from None
+        request_payload = {
+            "baseline_artifact_id": str(baseline_artifact_id),
+            "context": context,
+            "logical_key": logical_key,
+            "model_id": model_id,
+            "output_tokens_reserved": output_tokens_reserved,
+            "tool_schemas": list(schemas),
+        }
+        serialized = _canonical_json(request_payload, "agent_request_invalid")
+        request_bytes = serialized.encode("utf-8")
+        if len(request_bytes) > MAX_AGENT_CONTEXT_BYTES:
+            raise AgentLoopError("agent_context_size_limit")
+        if not isinstance(context, dict) or any(not isinstance(schema, dict) for schema in schemas):
+            raise AgentLoopError("agent_context_invalid")
+        if (
+            type(output_tokens_reserved) is not int
+            or not 1 <= output_tokens_reserved <= MAX_AGENT_OUTPUT_TOKENS
+        ):
+            raise AgentLoopError("agent_output_reservation_invalid")
+        digest = hashlib.sha256(request_bytes).digest()
+        try:
+            row = await asyncio.to_thread(
+                self._prepare_turn_once,
+                lease,
+                logical_key,
+                baseline_artifact_id,
+                model_id,
+                digest,
+                context,
+                list(schemas),
+                len(request_bytes),
+                output_tokens_reserved,
+            )
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except IntegrityError:
+            raise AgentLoopError("agent_turn_identity_conflict") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+        return _intent_from_row(row)
+
+    def _prepare_turn_once(
+        self,
+        lease: ExecutionLease,
+        logical_key: str,
+        baseline_artifact_id: UUID,
+        model_id: str,
+        request_digest: bytes,
+        context: dict[str, Any],
+        tool_schemas: list[dict[str, Any]],
+        input_bytes_reserved: int,
+        output_tokens_reserved: int,
+    ) -> dict[str, Any]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            locked = lock_current_execution(connection, self._principal, lease)
+            replay_policy: str = connection.execute(
+                text(
+                    "SELECT replay_policy FROM runtime_private.jobs "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id, "job_id": lease.job_id},
+            ).scalar_one()
+            if replay_policy != ReplayPolicy.REPLAY_SAFE.value:
+                raise AgentLoopError("agent_turn_replay_policy_required")
+            activity: str = connection.execute(
+                text(
+                    "SELECT activity FROM runtime_private.steps "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id, "step_id": lease.step_id},
+            ).scalar_one()
+            if activity != "agent_turn":
+                raise AgentLoopError("agent_turn_activity_required")
+            root_artifact_id = connection.execute(
+                text(
+                    "SELECT artifact_id FROM runtime_private.accepted_results "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND artifact_id IS NOT NULL "
+                    "ORDER BY event_sequence ASC LIMIT 1"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id},
+            ).scalar_one_or_none()
+            if root_artifact_id is None or root_artifact_id != baseline_artifact_id:
+                raise AgentLoopError("agent_baseline_artifact_mismatch")
+            existing = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id "
+                        "AND logical_key=:logical_key FOR UPDATE"
+                    ),
+                    {
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "job_id": lease.job_id,
+                        "logical_key": logical_key,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if existing is not None:
+                row = dict(existing)
+                if (
+                    row["request_sha256"] != request_digest
+                    or row["baseline_artifact_id"] != baseline_artifact_id
+                    or row["model_id"] != model_id
+                ):
+                    raise AgentLoopError("agent_turn_identity_conflict")
+                return row
+
+            run_baseline = connection.execute(
+                text(
+                    "SELECT baseline_artifact_id FROM runtime_private.agent_turns "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id "
+                    "ORDER BY created_at LIMIT 1"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id},
+            ).scalar_one_or_none()
+            if run_baseline is not None and run_baseline != baseline_artifact_id:
+                raise AgentLoopError("agent_baseline_artifact_mismatch")
+
+            reserved_count: int = connection.execute(
+                text(
+                    "SELECT count(*) FROM runtime_private.agent_turns "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id},
+            ).scalar_one()
+            if reserved_count >= MAX_AGENT_TURNS_PER_RUN:
+                raise AgentLoopError("agent_request_limit")
+            turn_id = uuid4()
+            inserted = (
+                connection.execute(
+                    text(
+                        "INSERT INTO runtime_private.agent_turns ("
+                        "turn_id, owner_id, run_id, step_id, job_id, logical_key, generation, "
+                        "attempt_id, lease_owner, baseline_artifact_id, model_id, request_sha256, "
+                        "context, tool_schemas, input_bytes_reserved, output_tokens_reserved) "
+                        "VALUES (:turn_id, :owner_id, :run_id, :step_id, :job_id, :logical_key, "
+                        ":generation, :attempt_id, :lease_owner, :baseline_artifact_id, :model_id, "
+                        ":request_sha256, CAST(:context AS jsonb), CAST(:tool_schemas AS jsonb), "
+                        ":input_bytes_reserved, :output_tokens_reserved) RETURNING *"
+                    ),
+                    {
+                        "turn_id": turn_id,
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "step_id": lease.step_id,
+                        "job_id": lease.job_id,
+                        "logical_key": logical_key,
+                        "generation": lease.generation,
+                        "attempt_id": lease.attempt_id,
+                        "lease_owner": lease.lease_owner,
+                        "baseline_artifact_id": baseline_artifact_id,
+                        "model_id": model_id,
+                        "request_sha256": request_digest,
+                        "context": _canonical_json(context, "agent_context_invalid"),
+                        "tool_schemas": _canonical_json(tool_schemas, "agent_tool_schema_invalid"),
+                        "input_bytes_reserved": input_bytes_reserved,
+                        "output_tokens_reserved": output_tokens_reserved,
+                    },
+                )
+                .mappings()
+                .one()
+            )
+            _assert_execution_live(connection, locked)
+            return dict(inserted)
+
+    async def infer_or_reuse(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        adapter: ScriptedModelAdapter,
+    ) -> AgentTurnReceipt:
+        self._check_owner(lease)
+        row = await self._get_turn(lease, turn_id, require_turn_job=True)
+        if row["status"] == "response_accepted":
+            return await self._turn_receipt(lease, row, adopted=True)
+        if row["status"] == "invalid_response":
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError(row["response_error_code"] or "agent_response_invalid")
+        if row["status"] == "unknown":
+            await self._record_unknown_failure(lease)
+            raise AgentLoopError("agent_response_outcome_unknown")
+        if row["status"] == "dispatching":
+            await self._mark_response_unknown(lease, turn_id)
+            raise AgentLoopError("agent_response_outcome_unknown")
+        if row["status"] != "prepared":
+            raise AgentLoopError("agent_turn_state_invalid")
+        if self._checkpoints is None:
+            raise AgentLoopError("agent_checkpoint_storage_unavailable")
+        try:
+            await self._checkpoints.restore_archive(
+                self._principal, lease, row["baseline_artifact_id"]
+            )
+        except CheckpointStorageError as error:
+            if error.code in {"repository_access_denied", "repository_metadata_unavailable"}:
+                await self._fail_invalid_attempt(lease)
+            raise AgentLoopError(error.code) from None
+
+        row = await self._authorize_model_dispatch(lease, turn_id)
+        request = ScriptedModelRequest(
+            turn_id=turn_id,
+            model_id=row["model_id"],
+            context=row["context"],
+            tool_schemas=tuple(row["tool_schemas"]),
+            request_sha256=row["request_sha256"].hex(),
+            max_output_tokens=row["output_tokens_reserved"],
+        )
+        try:
+            response_value = await adapter.complete(request)
+        except asyncio.CancelledError:
+            await self._mark_response_unknown(lease, turn_id)
+            raise
+        except Exception:
+            await self._mark_response_unknown(lease, turn_id)
+            raise AgentLoopError("agent_response_outcome_unknown") from None
+
+        try:
+            response = ScriptedModelResponse.model_validate(response_value, strict=True)
+            invocation_values = _validate_complete_response(
+                response,
+                row["model_id"],
+                turn_id,
+                row["output_tokens_reserved"],
+            )
+            serialized_response = _canonical_json(
+                response.model_dump(mode="json", warnings=False), "agent_response_invalid"
+            )
+            if len(serialized_response.encode("utf-8")) > MAX_AGENT_RESPONSE_BYTES:
+                raise AgentLoopError("agent_response_size_limit")
+        except (ValidationError, AgentLoopError) as error:
+            error_code = (
+                error.code if isinstance(error, AgentLoopError) else "agent_response_invalid"
+            )
+            safe_response = {"protocol_error": error_code}
+            await self._persist_invalid_response(lease, turn_id, safe_response, error_code)
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError(error_code) from None
+        receipt_row = await self._accept_response(lease, turn_id, response, invocation_values)
+        return await self._turn_receipt(lease, receipt_row, adopted=False)
+
+    async def pending_invocations(
+        self, lease: ExecutionLease, turn_id: UUID
+    ) -> tuple[AgentInvocation, ...]:
+        self._check_owner(lease)
+        _turn, rows = await self._verified_invocation_rows(lease, turn_id)
+        return tuple(_invocation_from_row(row) for row in rows)
+
+    async def complete_turn(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        *,
+        next_work: NextWork | None = None,
+        target_run_status: RunStatus = RunStatus.RUNNING,
+    ) -> TransitionReceipt:
+        """Accept the persisted response and enqueue its first sequential tool job."""
+        self._check_owner(lease)
+        existing = await self._accepted_transition(lease)
+        if existing is not None:
+            row = await self._read_turn(lease, turn_id)
+            invocation_records = await self._read_invocations(lease, turn_id)
+            await self._verify_turn_invocation_rows(lease, row, invocation_records)
+            expected_result = {
+                "agent_turn_id": str(turn_id),
+                "response_sha256": row["response_sha256"].hex(),
+                "invocation_ids": [str(item["invocation_id"]) for item in invocation_records],
+            }
+            expected_next = next_work
+            current_revision = await self._read_step_revision(lease, row["step_id"])
+            if invocation_records:
+                generated_next = NextWork(
+                    logical_key=invocation_records[0]["logical_key"],
+                    activity="agent_tool",
+                    revision=current_revision,
+                    replay_policy=ReplayPolicy.REPLAY_SAFE,
+                )
+                if next_work is not None and next_work != generated_next:
+                    raise AgentLoopError("agent_turn_next_work_mismatch")
+                expected_next = generated_next
+            if (
+                existing.result != expected_result
+                or existing.run_status is not target_run_status
+                or not await self._accepted_next_work_matches(lease, existing, expected_next)
+            ):
+                raise AgentLoopError("agent_turn_transition_conflict")
+            return existing
+        row = await self._get_turn(lease, turn_id, require_turn_job=True)
+        if row["status"] != "response_accepted":
+            raise AgentLoopError("agent_turn_response_not_accepted")
+        invocation_receipts = await self.pending_invocations(lease, turn_id)
+        current_revision = await self._read_step_revision(lease, lease.step_id)
+        if invocation_receipts:
+            first = invocation_receipts[0]
+            generated_next = NextWork(
+                logical_key=first.logical_key,
+                activity="agent_tool",
+                revision=current_revision,
+                replay_policy=ReplayPolicy.REPLAY_SAFE,
+            )
+            if next_work is not None and next_work != generated_next:
+                raise AgentLoopError("agent_turn_next_work_mismatch")
+            next_work = generated_next
+            if target_run_status is not RunStatus.RUNNING:
+                raise AgentLoopError("agent_turn_next_work_status_invalid")
+        elif next_work is None:
+            raise AgentLoopError("agent_turn_next_work_required")
+        result = {
+            "agent_turn_id": str(turn_id),
+            "response_sha256": row["response_sha256"].hex(),
+            "invocation_ids": [str(item.invocation_id) for item in invocation_receipts],
+        }
+        try:
+            return await asyncio.to_thread(
+                self._transitions.commit_result,
+                lease=lease,
+                result=result,
+                target_run_status=target_run_status,
+                next_work=next_work,
+            )
+        except (LeaseLost, InvalidTransition):
+            raise AgentLoopError("agent_turn_transition_rejected") from None
+
+    async def execute_tool_invocation(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        invocation_id: UUID,
+        *,
+        policy_context: ToolPolicyContext,
+    ) -> AgentToolReceipt:
+        """Execute stored arguments through T19, then accept through T08/T21."""
+        self._check_owner(lease)
+        if not isinstance(policy_context, ToolPolicyContext):
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError("agent_tool_policy_context_invalid")
+        existing = await self._accepted_transition(lease)
+        if existing is not None:
+            return await self._adopt_tool_receipt(lease, turn_id, invocation_id, existing)
+
+        _turn, invocation_rows = await self._verified_invocation_rows(lease, turn_id)
+        selected = next(
+            (row for row in invocation_rows if row["invocation_id"] == invocation_id), None
+        )
+        if selected is None:
+            raise AgentLoopError("agent_invocation_not_found")
+        current_key, current_activity = await self._current_step_info(lease)
+        if current_activity != "agent_tool" or current_key != selected["logical_key"]:
+            raise AgentLoopError("agent_invocation_not_current")
+        for earlier in invocation_rows:
+            if earlier["ordinal"] >= selected["ordinal"]:
+                break
+            if earlier["accepted_payload"] is None:
+                raise AgentLoopError("agent_invocation_out_of_order")
+        if self._workspace_recovery is None or self._checkpoints is None:
+            raise AgentLoopError("agent_workspace_recovery_unavailable")
+
+        turn = await self._get_turn(lease, turn_id, require_turn_job=False)
+        try:
+            verified_baseline = await self._checkpoints.restore_archive(
+                self._principal, lease, turn["baseline_artifact_id"]
+            )
+            baseline_source = await asyncio.to_thread(
+                snapshot_from_verified_archive,
+                verified_baseline,
+                expected_archive_sha256=verified_baseline.archive_sha256,
+                expected_tree_sha256=verified_baseline.manifest.tree_sha256,
+            )
+            workspace = await self._workspace_recovery.restore_latest(self._principal, lease)
+            current_candidate = None
+            if workspace.source.tree_sha256 != baseline_source.tree_sha256:
+                current_candidate = await asyncio.to_thread(
+                    candidate_from_baseline, baseline_source, workspace.source
+                )
+            execution = await asyncio.to_thread(
+                execute_tool_call,
+                selected["arguments"],
+                policy_context,
+                baseline_source,
+                current_candidate=current_candidate,
+            )
+        except WorkspaceRecoveryError as error:
+            raise AgentLoopError(error.code) from None
+        except CheckpointStorageError as error:
+            raise AgentLoopError(error.code) from None
+        except SourceToolError as error:
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError(error.code) from None
+        except AgentLoopError:
+            raise
+        except Exception:
+            await self._fail_invalid_attempt(lease)
+            raise AgentLoopError("agent_tool_execution_failed") from None
+
+        candidate = execution.candidate if selected["tool_name"] == "apply_patch" else None
+        return await self._accept_tool_result(
+            lease,
+            turn_id,
+            invocation_id,
+            execution.result,
+            workspace=workspace,
+            candidate=candidate,
+            checkpoint_key=f"agent-tool-{invocation_id.hex}" if candidate is not None else None,
+        )
+
+    async def _accept_tool_result(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        invocation_id: UUID,
+        result: object,
+        *,
+        workspace: WorkspaceSnapshot | None = None,
+        candidate: PatchCandidate | None = None,
+        checkpoint_key: str | None = None,
+        next_work: NextWork | None = None,
+    ) -> AgentToolReceipt:
+        """Accept one ordered tool result; candidates also commit their T15 artifact."""
+        self._check_owner(lease)
+        existing = await self._accepted_transition(lease)
+        if existing is not None:
+            return await self._adopt_tool_receipt(lease, turn_id, invocation_id, existing)
+
+        turn, invocation_rows = await self._verified_invocation_rows(lease, turn_id)
+        selected = next(
+            (row for row in invocation_rows if row["invocation_id"] == invocation_id), None
+        )
+        if selected is None:
+            raise AgentLoopError("agent_invocation_not_found")
+        current_key, current_activity = await self._current_step_info(lease)
+        if current_activity != "agent_tool" or current_key != selected["logical_key"]:
+            raise AgentLoopError("agent_invocation_not_current")
+        for earlier in invocation_rows:
+            if earlier["ordinal"] >= selected["ordinal"]:
+                break
+            if earlier["accepted_payload"] is None:
+                raise AgentLoopError("agent_invocation_out_of_order")
+
+        try:
+            parsed_result = parse_tool_result(result)
+        except ToolContractError as error:
+            raise AgentLoopError(error.code) from None
+        if parsed_result.name != selected["tool_name"]:
+            raise AgentLoopError("agent_tool_result_name_mismatch")
+        serialized_result = parsed_result.model_dump(mode="json", warnings=False)
+        if selected["tool_name"] == "apply_patch" and candidate is None:
+            raise AgentLoopError("agent_candidate_checkpoint_required")
+        if candidate is not None and selected["tool_name"] != "apply_patch":
+            raise AgentLoopError("agent_candidate_tool_mismatch")
+        accepted_payload = {
+            "agent_turn_id": str(turn_id),
+            "agent_invocation_id": str(invocation_id),
+            "provider_call_id": selected["provider_call_id"],
+            "ordinal": selected["ordinal"],
+            "tool_name": selected["tool_name"],
+            "tool_result": serialized_result,
+        }
+        if len(_canonical_json(accepted_payload, "agent_tool_result_invalid").encode("utf-8")) > (
+            MAX_TOOL_RESULT_BYTES
+        ):
+            raise AgentLoopError("agent_tool_result_size_limit")
+        current_revision = await self._read_step_revision(lease, lease.step_id)
+        generated_next = self._next_tool_work(
+            turn_id, invocation_rows, selected["ordinal"], current_revision
+        )
+        if next_work is not None and next_work != generated_next:
+            raise AgentLoopError("agent_invocation_next_work_mismatch")
+        next_work = generated_next
+
+        transition: TransitionReceipt
+        if candidate is not None:
+            if (
+                workspace is None
+                or checkpoint_key is None
+                or self._workspace_recovery is None
+                or self._checkpoints is None
+            ):
+                raise AgentLoopError("agent_candidate_checkpoint_context_required")
+            if selected["tool_name"] != "apply_patch":
+                raise AgentLoopError("agent_candidate_tool_mismatch")
+            if not isinstance(parsed_result, ApplyPatchResult):
+                raise AgentLoopError("agent_candidate_result_invalid")
+            if (
+                candidate.source.archive_sha256 != parsed_result.candidate_archive_sha256
+                or candidate.source.tree_sha256 != parsed_result.candidate_tree_sha256
+                or list(candidate.changed_paths) != parsed_result.changed_paths
+            ):
+                raise AgentLoopError("agent_candidate_result_mismatch")
+            try:
+                verified_baseline = await self._checkpoints.restore_archive(
+                    self._principal, lease, turn["baseline_artifact_id"]
+                )
+                incremental = await asyncio.to_thread(
+                    rebase_patch_candidate, verified_baseline, workspace.verified, candidate
+                )
+            except (SourceToolError, WorkspaceRecoveryError, CheckpointStorageError) as error:
+                raise AgentLoopError(
+                    getattr(error, "code", "agent_candidate_lineage_invalid")
+                ) from None
+            except Exception:
+                raise AgentLoopError("agent_baseline_restore_failed") from None
+            try:
+                checkpoint = await self._workspace_recovery.accept_candidate(
+                    self._principal,
+                    lease,
+                    checkpoint_key,
+                    workspace,
+                    incremental,
+                    result=accepted_payload,
+                    target_run_status=RunStatus.RUNNING,
+                    next_work=next_work,
+                )
+            except WorkspaceRecoveryError as error:
+                raise AgentLoopError(error.code) from None
+            return AgentToolReceipt(
+                invocation_id=invocation_id,
+                turn_id=turn_id,
+                ordinal=selected["ordinal"],
+                transition=checkpoint.transition,
+                artifact_id=checkpoint.artifact_id,
+                adopted=checkpoint.adopted,
+            )
+
+        try:
+            transition = await asyncio.to_thread(
+                self._transitions.commit_result,
+                lease=lease,
+                result=accepted_payload,
+                target_run_status=RunStatus.RUNNING,
+                next_work=next_work,
+            )
+        except (LeaseLost, InvalidTransition):
+            raise AgentLoopError("agent_tool_transition_rejected") from None
+        return AgentToolReceipt(
+            invocation_id=invocation_id,
+            turn_id=turn_id,
+            ordinal=selected["ordinal"],
+            transition=transition,
+            artifact_id=transition.artifact_id,
+            adopted=transition.adopted,
+        )
+
+    def _next_tool_work(
+        self,
+        turn_id: UUID,
+        invocations: list[dict[str, Any]],
+        current_ordinal: int,
+        revision: int,
+    ) -> NextWork:
+        following = next(
+            (row for row in invocations if row["ordinal"] == current_ordinal + 1), None
+        )
+        if following is not None:
+            return NextWork(
+                logical_key=following["logical_key"],
+                activity="agent_tool",
+                revision=revision,
+                replay_policy=ReplayPolicy.REPLAY_SAFE,
+            )
+        return NextWork(
+            logical_key=f"agent-turn:{turn_id.hex}:next",
+            activity="agent_turn",
+            revision=revision,
+            replay_policy=ReplayPolicy.REPLAY_SAFE,
+        )
+
+    async def _adopt_tool_receipt(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        invocation_id: UUID,
+        receipt: TransitionReceipt,
+    ) -> AgentToolReceipt:
+        turn = await self._read_turn(lease, turn_id)
+        invocations = await self._read_invocations(lease, turn_id)
+        await self._verify_turn_invocation_rows(lease, turn, invocations)
+        selected = next((row for row in invocations if row["invocation_id"] == invocation_id), None)
+        if (
+            selected is None
+            or receipt.result.get("agent_turn_id") != str(turn_id)
+            or receipt.result.get("agent_invocation_id") != str(invocation_id)
+            or receipt.result.get("ordinal") != selected["ordinal"]
+            or receipt.result.get("provider_call_id") != selected["provider_call_id"]
+            or receipt.result.get("tool_name") != selected["tool_name"]
+            or receipt.run_status is not RunStatus.RUNNING
+        ):
+            raise AgentLoopError("agent_tool_transition_conflict")
+        revision = await self._read_step_revision(lease, turn["step_id"])
+        expected_next = self._next_tool_work(turn_id, invocations, selected["ordinal"], revision)
+        if not await self._accepted_next_work_matches(lease, receipt, expected_next) or (
+            selected["tool_name"] == "apply_patch"
+        ) != (receipt.artifact_id is not None):
+            raise AgentLoopError("agent_tool_transition_conflict")
+        return AgentToolReceipt(
+            invocation_id=invocation_id,
+            turn_id=turn_id,
+            ordinal=selected["ordinal"],
+            transition=receipt,
+            artifact_id=receipt.artifact_id,
+            adopted=True,
+        )
+
+    async def _get_turn(
+        self, lease: ExecutionLease, turn_id: UUID, *, require_turn_job: bool
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                self._get_turn_once, lease, turn_id, require_turn_job=require_turn_job
+            )
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    async def _root_artifact_id(self, lease: ExecutionLease) -> UUID | None:
+        try:
+            return await asyncio.to_thread(self._root_artifact_id_once, lease)
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _root_artifact_id_once(self, lease: ExecutionLease) -> UUID | None:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            lock_current_execution(connection, self._principal, lease)
+            return connection.execute(
+                text(
+                    "SELECT artifact_id FROM runtime_private.accepted_results "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND artifact_id IS NOT NULL "
+                    "ORDER BY event_sequence ASC LIMIT 1"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id},
+            ).scalar_one_or_none()
+
+    async def _read_turn(self, lease: ExecutionLease, turn_id: UUID) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(self._read_turn_once, lease, turn_id)
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _read_turn_once(self, lease: ExecutionLease, turn_id: UUID) -> dict[str, Any]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND turn_id=:turn_id"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id, "turn_id": turn_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            raise AgentLoopError("agent_turn_not_found")
+        return dict(row)
+
+    async def _read_invocations(self, lease: ExecutionLease, turn_id: UUID) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(self._read_invocations_once, lease, turn_id)
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _read_invocations_once(self, lease: ExecutionLease, turn_id: UUID) -> list[dict[str, Any]]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_invocations "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND turn_id=:turn_id "
+                        "ORDER BY ordinal"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id, "turn_id": turn_id},
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    async def _read_step_revision(self, lease: ExecutionLease, step_id: UUID) -> int:
+        try:
+            return await asyncio.to_thread(self._read_step_revision_once, lease, step_id)
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _read_step_revision_once(self, lease: ExecutionLease, step_id: UUID) -> int:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            revision = connection.execute(
+                text(
+                    "SELECT revision FROM runtime_private.steps "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id, "step_id": step_id},
+            ).scalar_one_or_none()
+        if revision is None:
+            raise AgentLoopError("agent_step_not_found")
+        return revision
+
+    async def _accepted_next_work_matches(
+        self,
+        lease: ExecutionLease,
+        receipt: TransitionReceipt,
+        expected: NextWork | None,
+    ) -> bool:
+        if receipt.next_job_id is None:
+            return expected is None
+        if expected is None:
+            return False
+        try:
+            actual = await asyncio.to_thread(self._read_next_work_once, lease, receipt.next_job_id)
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+        return actual == (
+            expected.logical_key,
+            expected.activity,
+            expected.revision,
+            expected.replay_policy.value,
+        )
+
+    def _read_next_work_once(
+        self, lease: ExecutionLease, job_id: UUID
+    ) -> tuple[str, str, int, str] | None:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            row = connection.execute(
+                text(
+                    "SELECT step.logical_key, step.activity, step.revision, job.replay_policy "
+                    "FROM runtime_private.jobs AS job JOIN runtime_private.steps AS step "
+                    "ON step.owner_id=job.owner_id AND step.run_id=job.run_id "
+                    "AND step.step_id=job.step_id WHERE job.owner_id=:owner_id "
+                    "AND job.run_id=:run_id AND job.job_id=:job_id"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id, "job_id": job_id},
+            ).one_or_none()
+        return (
+            None
+            if row is None
+            else (row.logical_key, row.activity, row.revision, row.replay_policy)
+        )
+
+    def _get_turn_once(
+        self, lease: ExecutionLease, turn_id: UUID, *, require_turn_job: bool
+    ) -> dict[str, Any]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            lock_current_execution(connection, self._principal, lease)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND turn_id=:turn_id "
+                        "FOR UPDATE"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id, "turn_id": turn_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or (require_turn_job and row["job_id"] != lease.job_id):
+                raise AgentLoopError("agent_turn_not_found")
+            return dict(row)
+
+    async def _authorize_model_dispatch(
+        self, lease: ExecutionLease, turn_id: UUID
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(self._authorize_model_dispatch_once, lease, turn_id)
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _authorize_model_dispatch_once(
+        self, lease: ExecutionLease, turn_id: UUID
+    ) -> dict[str, Any]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            locked = lock_current_execution(connection, self._principal, lease)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id "
+                        "AND turn_id=:turn_id FOR UPDATE"
+                    ),
+                    {
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "job_id": lease.job_id,
+                        "turn_id": turn_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                row is None
+                or row["status"] != "prepared"
+                or row["dispatch_authorized_at"] is not None
+            ):
+                raise AgentLoopError("agent_model_dispatch_not_authorized")
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.agent_turns SET status='dispatching', "
+                    "dispatch_authorized_at=clock_timestamp(), dispatch_generation=:generation, "
+                    "dispatch_attempt_id=:attempt_id, dispatch_lease_owner=:lease_owner, "
+                    "updated_at=clock_timestamp() WHERE owner_id=:owner_id AND run_id=:run_id "
+                    "AND turn_id=:turn_id AND status='prepared'"
+                ),
+                {
+                    "generation": lease.generation,
+                    "attempt_id": lease.attempt_id,
+                    "lease_owner": lease.lease_owner,
+                    "owner_id": lease.owner_id,
+                    "run_id": lease.run_id,
+                    "turn_id": turn_id,
+                },
+            )
+            _assert_execution_live(connection, locked)
+            return dict(row)
+
+    async def _accept_response(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        response: ScriptedModelResponse,
+        invocations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                self._accept_response_once, lease, turn_id, response, invocations
+            )
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except IntegrityError:
+            raise AgentLoopError("agent_response_identity_conflict") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _accept_response_once(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        response: ScriptedModelResponse,
+        invocations: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        serialized = _canonical_json(
+            response.model_dump(mode="json", warnings=False), "agent_response_invalid"
+        )
+        response_bytes = serialized.encode("utf-8")
+        if len(response_bytes) > MAX_AGENT_RESPONSE_BYTES:
+            raise AgentLoopError("agent_response_size_limit")
+        response_digest = hashlib.sha256(response_bytes).digest()
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            locked = lock_current_execution(connection, self._principal, lease)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id "
+                        "AND turn_id=:turn_id FOR UPDATE"
+                    ),
+                    {
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "job_id": lease.job_id,
+                        "turn_id": turn_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                row is None
+                or row["status"] != "dispatching"
+                or row["dispatch_generation"] != lease.generation
+                or row["dispatch_attempt_id"] != lease.attempt_id
+                or row["dispatch_lease_owner"] != lease.lease_owner
+            ):
+                raise LeaseLost("agent_response_lease_lost")
+            for invocation in invocations:
+                connection.execute(
+                    text(
+                        "INSERT INTO runtime_private.agent_invocations ("
+                        "invocation_id, owner_id, run_id, turn_id, ordinal, provider_call_id, "
+                        "tool_name, logical_key, arguments, arguments_sha256) VALUES ("
+                        ":invocation_id, :owner_id, :run_id, :turn_id, :ordinal, "
+                        ":provider_call_id, :tool_name, :logical_key, CAST(:arguments AS jsonb), "
+                        ":arguments_sha256)"
+                    ),
+                    {
+                        **invocation,
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "turn_id": turn_id,
+                        "arguments": _canonical_json(
+                            invocation["arguments"], "agent_tool_arguments_invalid"
+                        ),
+                    },
+                )
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.agent_turns SET status='response_accepted', "
+                    "response=CAST(:response AS jsonb), response_sha256=:response_sha256, "
+                    "response_received_at=clock_timestamp(), input_tokens=:input_tokens, "
+                    "output_tokens=:output_tokens, updated_at=clock_timestamp() "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND turn_id=:turn_id"
+                ),
+                {
+                    "response": serialized,
+                    "response_sha256": response_digest,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "owner_id": lease.owner_id,
+                    "run_id": lease.run_id,
+                    "turn_id": turn_id,
+                },
+            )
+            _assert_execution_live(connection, locked)
+            result = dict(row)
+            result.update(
+                {
+                    "status": "response_accepted",
+                    "response": response.model_dump(mode="json", warnings=False),
+                    "response_sha256": response_digest,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                }
+            )
+            return result
+
+    async def _persist_invalid_response(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        safe_response: dict[str, Any],
+        code: str,
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                self._persist_invalid_response_once, lease, turn_id, safe_response, code
+            )
+        except Exception:
+            # The original invalid-response error remains primary; an uncommitted
+            # dispatch authorization still prevents a second inference.
+            return
+
+    def _persist_invalid_response_once(
+        self,
+        lease: ExecutionLease,
+        turn_id: UUID,
+        safe_response: dict[str, Any],
+        code: str,
+    ) -> None:
+        serialized = _canonical_json(safe_response, "agent_response_invalid")
+        if len(serialized.encode("utf-8")) > MAX_AGENT_RESPONSE_BYTES:
+            serialized = _canonical_json({"protocol_error": code}, "agent_response_invalid")
+        digest = hashlib.sha256(serialized.encode("utf-8")).digest()
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            locked = lock_current_execution(connection, self._principal, lease)
+            updated = connection.execute(
+                text(
+                    "UPDATE runtime_private.agent_turns SET status='invalid_response', "
+                    "response=CAST(:response AS jsonb), response_sha256=:response_sha256, "
+                    "response_received_at=clock_timestamp(), response_error_code=:code, "
+                    "updated_at=clock_timestamp() WHERE owner_id=:owner_id AND run_id=:run_id "
+                    "AND job_id=:job_id AND turn_id=:turn_id AND status='dispatching' "
+                    "AND dispatch_generation=:generation AND dispatch_attempt_id=:attempt_id "
+                    "AND dispatch_lease_owner=:lease_owner"
+                ),
+                {
+                    "response": serialized,
+                    "response_sha256": digest,
+                    "code": code,
+                    "owner_id": lease.owner_id,
+                    "run_id": lease.run_id,
+                    "job_id": lease.job_id,
+                    "turn_id": turn_id,
+                    "generation": lease.generation,
+                    "attempt_id": lease.attempt_id,
+                    "lease_owner": lease.lease_owner,
+                },
+            )
+            if updated.rowcount != 1:
+                raise LeaseLost("agent_response_attempt_not_current")
+            _assert_execution_live(connection, locked)
+
+    async def _mark_response_unknown(self, lease: ExecutionLease, turn_id: UUID) -> None:
+        try:
+            should_fail = await asyncio.to_thread(self._mark_response_unknown_once, lease, turn_id)
+        except Exception:
+            return
+        if should_fail:
+            await self._record_unknown_failure(lease)
+
+    def _mark_response_unknown_once(self, lease: ExecutionLease, turn_id: UUID) -> bool:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            locked = lock_current_execution(connection, self._principal, lease)
+            row = connection.execute(
+                text(
+                    "SELECT status FROM runtime_private.agent_turns "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND job_id=:job_id "
+                    "AND turn_id=:turn_id FOR UPDATE"
+                ),
+                {
+                    "owner_id": lease.owner_id,
+                    "run_id": lease.run_id,
+                    "job_id": lease.job_id,
+                    "turn_id": turn_id,
+                },
+            ).one_or_none()
+            if row is None or row.status not in {"dispatching", "unknown"}:
+                return False
+            if row.status == "dispatching":
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.agent_turns SET status='unknown', "
+                        "updated_at=clock_timestamp() WHERE owner_id=:owner_id AND run_id=:run_id "
+                        "AND job_id=:job_id AND turn_id=:turn_id AND status='dispatching'"
+                    ),
+                    {
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "job_id": lease.job_id,
+                        "turn_id": turn_id,
+                    },
+                )
+                _assert_execution_live(connection, locked)
+            return True
+
+    async def _record_unknown_failure(self, lease: ExecutionLease) -> None:
+        try:
+            await asyncio.to_thread(
+                self._recovery.fail_attempt,
+                lease=lease,
+                failure_class=FailureClass.MODEL_RESPONSE_LOST,
+            )
+        except Exception:
+            return
+
+    async def _fail_invalid_attempt(self, lease: ExecutionLease) -> None:
+        try:
+            await asyncio.to_thread(
+                self._recovery.fail_attempt,
+                lease=lease,
+                failure_class=FailureClass.INVALID_INPUT,
+            )
+        except Exception:
+            return
+
+    async def _fail_corrupt_attempt(self, lease: ExecutionLease) -> None:
+        try:
+            await asyncio.to_thread(
+                self._recovery.fail_attempt,
+                lease=lease,
+                failure_class=FailureClass.CORRUPT_ARTIFACT,
+            )
+        except Exception:
+            return
+
+    async def _turn_receipt(
+        self, lease: ExecutionLease, row: dict[str, Any], *, adopted: bool
+    ) -> AgentTurnReceipt:
+        invocations = await self.pending_invocations(lease, row["turn_id"])
+        raw_response = row["response"]
+        try:
+            response = ScriptedModelResponse.model_validate_json(
+                _canonical_json(raw_response, "agent_persisted_response_corrupt"), strict=True
+            )
+        except ValidationError:
+            raise AgentLoopError("agent_persisted_response_corrupt") from None
+        return AgentTurnReceipt(
+            turn_id=row["turn_id"],
+            request_sha256=row["request_sha256"].hex(),
+            response_sha256=row["response_sha256"].hex(),
+            response=response,
+            invocations=invocations,
+            adopted=adopted,
+        )
+
+    async def _load_invocations(self, lease: ExecutionLease, turn_id: UUID) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(self._load_invocations_once, lease, turn_id)
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    async def _verified_invocation_rows(
+        self, lease: ExecutionLease, turn_id: UUID
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        turn = await self._get_turn(lease, turn_id, require_turn_job=False)
+        if turn["status"] != "response_accepted":
+            raise AgentLoopError("agent_turn_response_not_accepted")
+        rows = await self._load_invocations(lease, turn_id)
+        await self._verify_turn_invocation_rows(lease, turn, rows)
+        return turn, rows
+
+    async def _verify_turn_invocation_rows(
+        self,
+        lease: ExecutionLease,
+        turn: dict[str, Any],
+        rows: list[dict[str, Any]],
+    ) -> None:
+        try:
+            _verify_persisted_response_and_calls(turn, rows)
+        except AgentLoopError as error:
+            if error.code in {
+                "agent_persisted_response_corrupt",
+                "agent_invocation_materialization_corrupt",
+                "agent_invocation_result_corrupt",
+            }:
+                await self._fail_corrupt_attempt(lease)
+            raise
+
+    def _load_invocations_once(self, lease: ExecutionLease, turn_id: UUID) -> list[dict[str, Any]]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            lock_current_execution(connection, self._principal, lease)
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT invocation.*, accepted.payload AS accepted_payload, "
+                        "accepted.artifact_id AS accepted_artifact_id "
+                        "FROM runtime_private.agent_invocations AS invocation "
+                        "LEFT JOIN LATERAL ("
+                        "SELECT payload, artifact_id FROM runtime_private.accepted_results "
+                        "WHERE owner_id=invocation.owner_id AND run_id=invocation.run_id "
+                        "AND payload->>'agent_invocation_id'=CAST(invocation.invocation_id AS text)"
+                        " LIMIT 1) AS accepted ON true "
+                        "WHERE invocation.owner_id=:owner_id AND invocation.run_id=:run_id "
+                        "AND invocation.turn_id=:turn_id ORDER BY invocation.ordinal"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id, "turn_id": turn_id},
+                )
+                .mappings()
+                .all()
+            )
+        return [dict(row) for row in rows]
+
+    async def _current_step_info(self, lease: ExecutionLease) -> tuple[str, str]:
+        try:
+            return await asyncio.to_thread(self._current_step_info_once, lease)
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _current_step_info_once(self, lease: ExecutionLease) -> tuple[str, str]:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            lock_current_execution(connection, self._principal, lease)
+            row = connection.execute(
+                text(
+                    "SELECT logical_key, activity FROM runtime_private.steps "
+                    "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
+                ),
+                {"owner_id": lease.owner_id, "run_id": lease.run_id, "step_id": lease.step_id},
+            ).one_or_none()
+            if row is None:
+                raise AgentLoopError("agent_step_not_found")
+            return row.logical_key, row.activity
+
+    async def _accepted_transition(self, lease: ExecutionLease) -> TransitionReceipt | None:
+        try:
+            return await asyncio.to_thread(self._transitions.get_accepted_result, lease)
+        except LeaseLost:
+            raise AgentLoopError("agent_owner_mismatch") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _check_owner(self, lease: ExecutionLease) -> None:
+        if lease.owner_id != self._principal.account_id:
+            raise AgentLoopError("agent_owner_mismatch")
+
+
+def _validate_complete_response(
+    response: ScriptedModelResponse,
+    requested_model_id: str,
+    turn_id: UUID,
+    output_tokens_reserved: int,
+) -> list[dict[str, Any]]:
+    if response.model_id != requested_model_id:
+        raise AgentLoopError("agent_model_identity_mismatch")
+    if not response.complete or response.stop_reason not in {"stop", "tool_calls"}:
+        raise AgentLoopError("agent_response_incomplete")
+    if (response.stop_reason == "tool_calls") != bool(response.calls):
+        raise AgentLoopError("agent_response_stop_reason_mismatch")
+    if response.output_tokens > output_tokens_reserved:
+        raise AgentLoopError("agent_output_reservation_exceeded")
+    if len(response.calls) > MAX_AGENT_TOOL_CALLS:
+        raise AgentLoopError("agent_tool_call_limit")
+    materialized: list[dict[str, Any]] = []
+    for ordinal, call in enumerate(response.calls):
+        try:
+            raw_arguments = json.loads(
+                call.arguments_json,
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            )
+        except (TypeError, ValueError, RecursionError):
+            raise AgentLoopError("agent_tool_arguments_invalid") from None
+        if not isinstance(raw_arguments, dict) or "name" in raw_arguments:
+            raise AgentLoopError("agent_tool_arguments_invalid")
+        try:
+            parsed_call = parse_tool_call({"name": call.name, **raw_arguments})
+        except ToolContractError as error:
+            raise AgentLoopError(error.code) from None
+        arguments = parsed_call.model_dump(mode="json", warnings=False)
+        argument_bytes = _canonical_json(arguments, "agent_tool_arguments_invalid").encode("utf-8")
+        if len(argument_bytes) > MAX_TOOL_ARGUMENT_BYTES:
+            raise AgentLoopError("agent_tool_arguments_size_limit")
+        materialized.append(
+            {
+                "invocation_id": uuid5(turn_id, f"{ordinal}:{call.provider_call_id}"),
+                "ordinal": ordinal,
+                "provider_call_id": call.provider_call_id,
+                "tool_name": call.name,
+                "logical_key": f"agent-tool:{turn_id.hex}:{ordinal}",
+                "arguments": arguments,
+                "arguments_sha256": hashlib.sha256(argument_bytes).digest(),
+            }
+        )
+    return materialized
+
+
+def _verify_persisted_response_and_calls(
+    turn: dict[str, Any], invocations: list[dict[str, Any]]
+) -> None:
+    try:
+        response = ScriptedModelResponse.model_validate_json(
+            _canonical_json(turn["response"], "agent_persisted_response_corrupt"), strict=True
+        )
+    except ValidationError:
+        raise AgentLoopError("agent_persisted_response_corrupt") from None
+    response_json = _canonical_json(
+        response.model_dump(mode="json", warnings=False), "agent_persisted_response_corrupt"
+    )
+    if hashlib.sha256(response_json.encode("utf-8")).digest() != turn["response_sha256"]:
+        raise AgentLoopError("agent_persisted_response_corrupt")
+    if (
+        response.input_tokens != turn["input_tokens"]
+        or response.output_tokens != turn["output_tokens"]
+    ):
+        raise AgentLoopError("agent_persisted_response_corrupt")
+    expected = _validate_complete_response(
+        response,
+        turn["model_id"],
+        turn["turn_id"],
+        turn["output_tokens_reserved"],
+    )
+    if len(expected) != len(invocations):
+        raise AgentLoopError("agent_invocation_materialization_corrupt")
+    for expected_call, actual in zip(expected, invocations, strict=True):
+        arguments = actual["arguments"]
+        arguments_json = _canonical_json(arguments, "agent_tool_arguments_corrupt")
+        if (
+            actual["invocation_id"] != expected_call["invocation_id"]
+            or actual["ordinal"] != expected_call["ordinal"]
+            or actual["provider_call_id"] != expected_call["provider_call_id"]
+            or actual["tool_name"] != expected_call["tool_name"]
+            or actual["logical_key"] != expected_call["logical_key"]
+            or arguments != expected_call["arguments"]
+            or hashlib.sha256(arguments_json.encode("utf-8")).digest() != actual["arguments_sha256"]
+        ):
+            raise AgentLoopError("agent_invocation_materialization_corrupt")
+        accepted = actual.get("accepted_payload")
+        if accepted is not None and (
+            accepted.get("agent_turn_id") != str(turn["turn_id"])
+            or accepted.get("agent_invocation_id") != str(actual["invocation_id"])
+            or accepted.get("ordinal") != actual["ordinal"]
+            or accepted.get("tool_name") != actual["tool_name"]
+        ):
+            raise AgentLoopError("agent_invocation_result_corrupt")
+
+
+def _canonical_json(value: Any, error_code: str) -> str:
+    try:
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        serialized.encode("utf-8", errors="strict")
+        return serialized
+    except (TypeError, ValueError, RecursionError, UnicodeEncodeError):
+        raise AgentLoopError(error_code) from None
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("agent_tool_arguments_duplicate_key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"agent_json_constant_invalid:{value}")
+
+
+def _assert_execution_live(connection: Any, locked: LockedExecution) -> None:
+    database_now = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+    if (
+        locked.lease_expires_at is None
+        or locked.lease_expires_at <= database_now
+        or (locked.run_deadline_at is not None and locked.run_deadline_at <= database_now)
+    ):
+        raise LeaseLost("agent_lease_expired_before_commit")
+
+
+def _intent_from_row(row: dict[str, Any]) -> AgentTurnIntent:
+    return AgentTurnIntent(
+        turn_id=row["turn_id"],
+        owner_id=row["owner_id"],
+        run_id=row["run_id"],
+        job_id=row["job_id"],
+        logical_key=row["logical_key"],
+        model_id=row["model_id"],
+        request_sha256=row["request_sha256"].hex(),
+        baseline_artifact_id=row["baseline_artifact_id"],
+        status=row["status"],
+    )
+
+
+def _invocation_from_row(row: dict[str, Any]) -> AgentInvocation:
+    return AgentInvocation(
+        invocation_id=row["invocation_id"],
+        turn_id=row["turn_id"],
+        ordinal=row["ordinal"],
+        provider_call_id=row["provider_call_id"],
+        name=row["tool_name"],
+        logical_key=row["logical_key"],
+        arguments=row["arguments"],
+        accepted=row["accepted_payload"] is not None,
+        result=row["accepted_payload"],
+        artifact_id=row["accepted_artifact_id"],
+    )
