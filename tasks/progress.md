@@ -274,12 +274,22 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   mitigation are recorded in the [credential contract](../docs/credential-lifecycle.md).
   No live keys, provider calls or public credential routes were used.
 
-Implementation is stopped after T23 at the user's request. T24 and later work
-has not started. A local test or mocked adapter does not
+- T24: OpenAI adapter complete locally. The pinned official Responses SDK uses
+  disabled retries, strict sequential function calling, store=false and bounded
+  request deadlines. Durable turns preserve continuation, provider IDs, latency
+  and nullable usage; encrypted one-use credential grants precede dispatch.
+  Nine offline protocol tests and thirteen dedicated PostgreSQL agent-loop tests
+  passed, including missing-key resume, known/unknown usage and response reuse.
+  The full Python suite passed 457 tests (37 optional database cases skipped),
+  with formatting, lint, typing and package build passing. The live task gate
+  remains pending: eval-live fails closed until the controlled admitted-run
+  harness exists. [Contract](../docs/openai-adapter.md).
+
+Implementation resumed from T24 on 15 October 2026. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 
-The requested implementation workers use `gpt-6-luna` with `xhigh` reasoning.
+The requested implementation workers use `gpt-6-luna` with `high` reasoning.
 
 The foundation was additionally built from a fresh clone of committed revision
 `0134299` using `make bootstrap build-package build-frontend`.

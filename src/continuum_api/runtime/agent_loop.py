@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import re
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -16,6 +17,7 @@ from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from continuum_api.artifacts.checkpoints import CheckpointStorageError, CheckpointStorageService
+from continuum_api.credentials import CredentialError, CredentialProvider
 from continuum_api.runtime.leases import (
     ExecutionLease,
     LeaseLost,
@@ -23,6 +25,7 @@ from continuum_api.runtime.leases import (
     lock_current_execution,
 )
 from continuum_api.runtime.persistence import Principal, ReplayPolicy, RunStatus, RuntimeRepository
+from continuum_api.runtime.provider_credentials import CredentialDispatchGrant, CredentialService
 from continuum_api.runtime.scheduler import FailureClass, RuntimeRecoveryService
 from continuum_api.runtime.transitions import (
     InvalidTransition,
@@ -61,6 +64,7 @@ MAX_AGENT_TOOL_CALLS = 10
 MAX_AGENT_OUTPUT_TOKENS = 4096
 _SAFE_PROVIDER_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SCRIPTED_MODEL_ID = "scripted-v1"
+OPENAI_MODEL_ID = "gpt-5.4-mini-2026-03-17"
 _TOOL_NAMES = frozenset({"list_files", "read_file", "search_text", "apply_patch", "diff"})
 
 
@@ -92,23 +96,51 @@ class ScriptedToolCall(_StrictModel):
         return self
 
 
-class ScriptedModelResponse(_StrictModel):
+class NormalizedModelResponse(_StrictModel):
     complete: bool
     stop_reason: str = Field(min_length=1, max_length=32)
     model_id: str = Field(min_length=1, max_length=64)
     response_id: str | None = Field(default=None, max_length=128)
+    provider_request_id: str | None = Field(default=None, max_length=128)
     output_text: str = Field(max_length=MAX_AGENT_RESPONSE_BYTES)
     calls: tuple[ScriptedToolCall, ...] = Field(max_length=MAX_AGENT_TOOL_CALLS)
-    input_tokens: int = Field(ge=0, le=120_000)
-    output_tokens: int = Field(ge=0, le=MAX_AGENT_OUTPUT_TOKENS)
+    input_tokens: int | None = Field(default=None, ge=0, le=120_000)
+    output_tokens: int | None = Field(default=None, ge=0, le=MAX_AGENT_OUTPUT_TOKENS)
+    cached_input_tokens: int | None = Field(default=None, ge=0, le=120_000)
+    reasoning_output_tokens: int | None = Field(default=None, ge=0, le=MAX_AGENT_OUTPUT_TOKENS)
+    latency_ms: int | None = Field(default=None, ge=0, le=600_000)
+    continuation: dict[str, Any] | None = None
 
     @model_validator(mode="after")
-    def validate_response_metadata(self) -> ScriptedModelResponse:
+    def validate_response_metadata(self) -> NormalizedModelResponse:
         if self.response_id is not None and _SAFE_PROVIDER_ID.fullmatch(self.response_id) is None:
             raise ValueError("agent_response_id_invalid")
+        if (
+            self.provider_request_id is not None
+            and _SAFE_PROVIDER_ID.fullmatch(self.provider_request_id) is None
+        ):
+            raise ValueError("agent_provider_request_id_invalid")
+        if (self.input_tokens is None) != (self.output_tokens is None):
+            raise ValueError("agent_usage_incomplete")
+        if (
+            self.cached_input_tokens is not None
+            and self.input_tokens is not None
+            and self.cached_input_tokens > self.input_tokens
+        ):
+            raise ValueError("agent_cached_usage_invalid")
+        if (
+            self.reasoning_output_tokens is not None
+            and self.output_tokens is not None
+            and self.reasoning_output_tokens > self.output_tokens
+        ):
+            raise ValueError("agent_reasoning_usage_invalid")
         if len({call.provider_call_id for call in self.calls}) != len(self.calls):
             raise ValueError("agent_provider_call_id_duplicate")
         return self
+
+
+# Kept as a compatibility name for the deterministic T22 adapter and fixtures.
+ScriptedModelResponse = NormalizedModelResponse
 
 
 class ScriptedModelRequest(_StrictModel):
@@ -124,6 +156,12 @@ class ScriptedModelRequest(_StrictModel):
 
 class ScriptedModelAdapter(Protocol):
     async def complete(self, request: ScriptedModelRequest) -> ScriptedModelResponse: ...
+
+
+class CredentialedModelAdapter(Protocol):
+    async def complete_with_grant(
+        self, request: ScriptedModelRequest, grant: CredentialDispatchGrant
+    ) -> ScriptedModelResponse: ...
 
 
 class ScriptedResponseQueue:
@@ -203,12 +241,14 @@ class DurableAgentLoopService:
         *,
         workspace_recovery: WorkspaceRecoveryService | None = None,
         checkpoints: CheckpointStorageService | None = None,
+        credential_service: CredentialService | None = None,
     ) -> None:
         self._engine = engine
         self._principal = principal
         self._transitions = transitions
         self._workspace_recovery = workspace_recovery
         self._checkpoints = checkpoints
+        self._credential_service = credential_service
         self._recovery = RuntimeRecoveryService(engine, principal)
 
     async def prepare_turn(
@@ -224,7 +264,7 @@ class DurableAgentLoopService:
     ) -> AgentTurnIntent:
         self._check_owner(lease)
         schemas = tuple(tool_schemas)
-        if model_id != _SCRIPTED_MODEL_ID:
+        if model_id not in {_SCRIPTED_MODEL_ID, OPENAI_MODEL_ID}:
             raise AgentLoopError("agent_model_unsupported")
         if (
             not logical_key
@@ -448,7 +488,6 @@ class DurableAgentLoopService:
                 await self._fail_invalid_attempt(lease)
             raise AgentLoopError(error.code) from None
 
-        row = await self._authorize_model_dispatch(lease, turn_id)
         request = ScriptedModelRequest(
             turn_id=turn_id,
             model_id=row["model_id"],
@@ -457,17 +496,68 @@ class DurableAgentLoopService:
             request_sha256=row["request_sha256"].hex(),
             max_output_tokens=row["output_tokens_reserved"],
         )
+        started_at = time.monotonic()
+        credential_grant: CredentialDispatchGrant | None = None
+        complete_with_grant = None
         try:
-            response_value = await adapter.complete(request)
+            if row["model_id"] != _SCRIPTED_MODEL_ID:
+                if self._credential_service is None:
+                    raise AgentLoopError("credential_service_unavailable")
+                complete_with_grant = getattr(adapter, "complete_with_grant", None)
+                if not callable(complete_with_grant):
+                    raise AgentLoopError("agent_credentialed_adapter_required")
+                validate_request = getattr(adapter, "validate_request", None)
+                if callable(validate_request):
+                    validate_request(request)
+                credential_grant = await asyncio.to_thread(
+                    self._credential_service.authorize_dispatch,
+                    lease,
+                    CredentialProvider.OPENAI,
+                    turn_id,
+                )
+            row = await self._authorize_model_dispatch(lease, turn_id)
+            if row["model_id"] == _SCRIPTED_MODEL_ID:
+                response_value = await adapter.complete(request)
+            else:
+                assert complete_with_grant is not None and credential_grant is not None
+                response_value = await complete_with_grant(request, credential_grant)
         except asyncio.CancelledError:
             await self._mark_response_unknown(lease, turn_id)
             raise
-        except Exception:
+        except CredentialError as error:
+            if error.code == "credential_dispatch_already_authorized":
+                await self._authorize_model_dispatch(lease, turn_id)
+                await self._mark_response_unknown(lease, turn_id)
+            raise AgentLoopError(error.code) from None
+        except AgentLoopError:
             await self._mark_response_unknown(lease, turn_id)
-            raise AgentLoopError("agent_response_outcome_unknown") from None
+            raise
+        except Exception as error:
+            safe_code = getattr(error, "code", "agent_response_outcome_unknown")
+            if (
+                not isinstance(safe_code, str)
+                or re.fullmatch(r"[a-z0-9_]{1,96}", safe_code) is None
+            ):
+                safe_code = "agent_response_outcome_unknown"
+            if getattr(error, "outcome_unknown", True) is False:
+                await self._persist_invalid_response(
+                    lease, turn_id, {"protocol_error": safe_code}, safe_code
+                )
+                await self._fail_invalid_attempt(lease)
+                raise AgentLoopError(safe_code) from None
+            await self._mark_response_unknown(lease, turn_id)
+            raise AgentLoopError(safe_code) from None
 
         try:
             response = ScriptedModelResponse.model_validate(response_value, strict=True)
+            if response.latency_ms is None:
+                response = response.model_copy(
+                    update={
+                        "latency_ms": min(
+                            600_000, max(0, round((time.monotonic() - started_at) * 1000))
+                        )
+                    }
+                )
             invocation_values = _validate_complete_response(
                 response,
                 row["model_id"],
@@ -484,6 +574,8 @@ class DurableAgentLoopService:
                 error.code if isinstance(error, AgentLoopError) else "agent_response_invalid"
             )
             safe_response = {"protocol_error": error_code}
+            if response.stop_reason == "refusal":
+                safe_response["output_text"] = response.output_text[:4096]
             await self._persist_invalid_response(lease, turn_id, safe_response, error_code)
             await self._fail_invalid_attempt(lease)
             raise AgentLoopError(error_code) from None
@@ -1159,7 +1251,10 @@ class DurableAgentLoopService:
                     "UPDATE runtime_private.agent_turns SET status='response_accepted', "
                     "response=CAST(:response AS jsonb), response_sha256=:response_sha256, "
                     "response_received_at=clock_timestamp(), input_tokens=:input_tokens, "
-                    "output_tokens=:output_tokens, updated_at=clock_timestamp() "
+                    "output_tokens=:output_tokens, cached_input_tokens=:cached_input_tokens, "
+                    "reasoning_output_tokens=:reasoning_output_tokens, "
+                    "provider_request_id=:provider_request_id, latency_ms=:latency_ms, "
+                    "updated_at=clock_timestamp() "
                     "WHERE owner_id=:owner_id AND run_id=:run_id AND turn_id=:turn_id"
                 ),
                 {
@@ -1167,6 +1262,10 @@ class DurableAgentLoopService:
                     "response_sha256": response_digest,
                     "input_tokens": response.input_tokens,
                     "output_tokens": response.output_tokens,
+                    "cached_input_tokens": response.cached_input_tokens,
+                    "reasoning_output_tokens": response.reasoning_output_tokens,
+                    "provider_request_id": response.provider_request_id,
+                    "latency_ms": response.latency_ms,
                     "owner_id": lease.owner_id,
                     "run_id": lease.run_id,
                     "turn_id": turn_id,
@@ -1181,6 +1280,10 @@ class DurableAgentLoopService:
                     "response_sha256": response_digest,
                     "input_tokens": response.input_tokens,
                     "output_tokens": response.output_tokens,
+                    "cached_input_tokens": response.cached_input_tokens,
+                    "reasoning_output_tokens": response.reasoning_output_tokens,
+                    "provider_request_id": response.provider_request_id,
+                    "latency_ms": response.latency_ms,
                 }
             )
             return result
@@ -1440,11 +1543,13 @@ def _validate_complete_response(
 ) -> list[dict[str, Any]]:
     if response.model_id != requested_model_id:
         raise AgentLoopError("agent_model_identity_mismatch")
+    if response.stop_reason == "refusal":
+        raise AgentLoopError("agent_response_refusal")
     if not response.complete or response.stop_reason not in {"stop", "tool_calls"}:
         raise AgentLoopError("agent_response_incomplete")
     if (response.stop_reason == "tool_calls") != bool(response.calls):
         raise AgentLoopError("agent_response_stop_reason_mismatch")
-    if response.output_tokens > output_tokens_reserved:
+    if response.output_tokens is not None and response.output_tokens > output_tokens_reserved:
         raise AgentLoopError("agent_output_reservation_exceeded")
     if len(response.calls) > MAX_AGENT_TOOL_CALLS:
         raise AgentLoopError("agent_tool_call_limit")
@@ -1491,14 +1596,17 @@ def _verify_persisted_response_and_calls(
         )
     except ValidationError:
         raise AgentLoopError("agent_persisted_response_corrupt") from None
-    response_json = _canonical_json(
-        response.model_dump(mode="json", warnings=False), "agent_persisted_response_corrupt"
-    )
+    # Hash the stored representation so additive defaults preserve prior scripted responses.
+    response_json = _canonical_json(turn["response"], "agent_persisted_response_corrupt")
     if hashlib.sha256(response_json.encode("utf-8")).digest() != turn["response_sha256"]:
         raise AgentLoopError("agent_persisted_response_corrupt")
     if (
         response.input_tokens != turn["input_tokens"]
         or response.output_tokens != turn["output_tokens"]
+        or response.cached_input_tokens != turn.get("cached_input_tokens")
+        or response.reasoning_output_tokens != turn.get("reasoning_output_tokens")
+        or response.provider_request_id != turn.get("provider_request_id")
+        or response.latency_ms != turn.get("latency_ms")
     ):
         raise AgentLoopError("agent_persisted_response_corrupt")
     expected = _validate_complete_response(

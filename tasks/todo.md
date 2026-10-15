@@ -289,8 +289,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T22, T23.
 - **Scope:** Medium; one adapter and protocol fixtures.
-- [ ] Normalize function calls, IDs, usage, continuation and errors using the chosen model configuration.
-- [ ] Disable hidden retries; record unknown usage; honor limits and store=false.
+- [x] Normalize function calls, IDs, usage, continuation and errors using the chosen model configuration.
+- [x] Disable hidden retries; record unknown usage; honor limits and store=false.
 - **Verify:** make test-target TARGET=tests/adapters/test_openai.py; explicit make eval-live PROVIDER=openai.
 
 ### Checkpoint H — Durable model boundary

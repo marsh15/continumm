@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
@@ -30,6 +30,10 @@ test:
 test-target:
 	@test -n "$(TARGET)" || (echo "Usage: make test-target TARGET=tests/path.py" >&2; exit 2)
 	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q "$(TARGET)"
+
+eval-live:
+	@test "$(PROVIDER)" = "openai" || (echo "Usage: make eval-live PROVIDER=openai" >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python scripts/eval_live.py --provider "$(PROVIDER)"
 
 test-integration:
 	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q tests/integration
