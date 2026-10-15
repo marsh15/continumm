@@ -118,19 +118,21 @@ class OpenAIModelAdapter:
             raise OpenAIAdapterError("openai_connection_outcome_unknown") from None
         except APIStatusError as error:
             status = error.status_code
+            outcome_unknown = True
             if status in {401, 403}:
                 code = "openai_authentication_failed"
+                outcome_unknown = False
             elif status == 429:
                 code = "openai_rate_limited_outcome_unknown"
             elif status >= 500:
                 code = "openai_server_error_outcome_unknown"
             elif status in {400, 404, 422}:
                 code = "openai_request_rejected"
+                outcome_unknown = False
             else:
                 code = "openai_provider_error_outcome_unknown"
-            raise OpenAIAdapterError(
-                code, outcome_unknown=code != "openai_authentication_failed"
-            ) from None
+                outcome_unknown = True
+            raise OpenAIAdapterError(code, outcome_unknown=outcome_unknown) from None
         except Exception:
             raise OpenAIAdapterError("openai_provider_error_outcome_unknown") from None
         finally:

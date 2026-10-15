@@ -296,7 +296,26 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   Live Anthropic execution remains pending; eval-live fails closed without the
   controlled admitted-run harness. [Contract](../docs/anthropic-adapter.md).
 
-Implementation resumed from T24 on 15 October 2026. A local test or mocked adapter does not
+- T26: cumulative model limits and durable context complete locally. A run pins
+  task inputs, tool schemas and exact model at its first turn preparation.
+  Row-locked reservations enforce 30 requests, 120,000 input and 30,000 output
+  tokens, with 4,096 output per request. Known usage settles reservations;
+  unknown outcomes retain them, and reported overruns stop before tools.
+  Context comes from verified accepted responses/results with exact provider
+  continuation and bounded visible summaries; caller history, corrupt evidence
+  and legacy prepared turns without provenance fail closed. Migration backfills
+  existing usage rather than resetting allowance. The final `make check` passed
+  498 Python tests (55 optional database cases skipped), 16 frontend tests and
+  21 edge tests, plus formatting, lint, Python/TypeScript typing and API checks.
+  Dedicated PostgreSQL 17 verification passed 31 cases, including concurrent
+  reservations, migration backfill, process loss, corruption rejection and both
+  providers' two-turn tool/result flows. Package and frontend production builds
+  passed. Docker verification remains pending because its daemon is unavailable.
+  No live or paid provider call was made. The disposable database was removed.
+  [Limits and context contract](../docs/model-limits.md).
+
+Implementation resumed from T24 on 15 October 2026 and is stopped after T26 at
+the user's request. T27 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

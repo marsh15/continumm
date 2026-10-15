@@ -29,8 +29,9 @@ The normalized input total sums uncached `input_tokens`, cache-read tokens and
 cache-creation tokens. It records cache-read tokens in `cached_input_tokens`,
 cache creation in `cache_creation_input_tokens`, and reported thinking output
 in `reasoning_output_tokens`. If either cache category or either token total is
-missing, both normalized totals remain unknown (`null`), not zero. T26 owns
-cumulative and conservative unknown-usage accounting.
+missing, both normalized totals remain unknown (`null`), not zero. Run-wide
+request and token caps, conservative reservations, context provenance, and
+budget snapshots are described in [run-scoped model limits](model-limits.md).
 
 The worker authorizes a one-use T23 credential grant using the stable turn
 UUID. The grant must match the provider and request ID; the adapter closes the

@@ -27,8 +27,9 @@ private run content and apply the normal run retention and deletion rules.
 When OpenAI omits usage or omits either token total, both totals remain `null`
 in the accepted response and database columns. The durable output reservation
 still bounds the request, and a missing usage total is not represented as
-zero. Cumulative accounting and conservative unknown-usage charging belong to
-T26.
+zero. Run-wide request and token caps, conservative reservations, context
+provenance, and budget snapshots are described in [run-scoped model
+limits](model-limits.md).
 
 The worker authorizes one credential dispatch using the stable turn UUID
 before calling the adapter. The grant must match that request ID and provider;

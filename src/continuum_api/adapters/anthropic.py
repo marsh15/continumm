@@ -129,7 +129,7 @@ class AnthropicModelAdapter:
                 outcome_unknown = True
             elif status in {400, 404, 422}:
                 code = "anthropic_request_rejected"
-                outcome_unknown = True
+                outcome_unknown = False
             else:
                 code = "anthropic_provider_error_outcome_unknown"
                 outcome_unknown = True

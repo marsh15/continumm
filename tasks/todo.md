@@ -311,8 +311,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T24, T25.
 - **Scope:** Medium; context builder, reservations and tests.
-- [ ] Enforce cumulative request/token/context limits with no reset during retry or rework.
-- [ ] Expose uncertainty and stop rather than silently switching provider/model or exceeding limits.
+- [x] Enforce cumulative request/token/context limits with no reset during retry or rework.
+- [x] Expose uncertainty and stop rather than silently switching provider/model or exceeding limits.
 - **Verify:** make test-target TARGET=tests/integration/test_model_limits.py.
 
 ### T27 — Approval manifest and decisions

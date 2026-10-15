@@ -346,6 +346,45 @@ def test_refusal_text_is_preserved_and_refusal_cannot_dispatch_tools() -> None:
         _validate_complete_response(normalized, OPENAI_MODEL_ID, request.turn_id, 128)
 
 
+@pytest.mark.parametrize(
+    ("status", "code", "outcome_unknown"),
+    [
+        (400, "openai_request_rejected", False),
+        (401, "openai_authentication_failed", False),
+        (403, "openai_authentication_failed", False),
+        (404, "openai_request_rejected", False),
+        (422, "openai_request_rejected", False),
+        (429, "openai_rate_limited_outcome_unknown", True),
+        (500, "openai_server_error_outcome_unknown", True),
+    ],
+)
+def test_status_errors_are_safely_classified_once(
+    status: int, code: str, outcome_unknown: bool
+) -> None:
+    import httpx
+    from openai import APIStatusError
+
+    request = _request()
+    response = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.openai.com/v1/responses"),
+        text="sk-test-never-log private prompt",
+    )
+    error = APIStatusError("remote error", response=response, body=response.text)
+    client = _FakeClient(error)
+    adapter = OpenAIModelAdapter(client_factory=_factory_for(client, []))
+
+    with pytest.raises(OpenAIAdapterError) as raised:
+        _run(adapter.complete_with_grant(request, _grant(request)))
+
+    assert raised.value.code == code
+    assert raised.value.outcome_unknown is outcome_unknown
+    assert "sk-test-never-log" not in str(raised.value)
+    assert "private prompt" not in str(raised.value)
+    assert len(client.responses.calls) == 1
+    assert client.closed is True
+
+
 def _run(awaitable: Any) -> Any:
     import asyncio
 

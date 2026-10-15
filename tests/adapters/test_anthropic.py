@@ -375,6 +375,45 @@ def test_provider_error_does_not_echo_remote_body() -> None:
     assert client.closed is True
 
 
+@pytest.mark.parametrize(
+    ("status", "code", "outcome_unknown"),
+    [
+        (400, "anthropic_request_rejected", False),
+        (401, "anthropic_authentication_failed", False),
+        (403, "anthropic_authentication_failed", False),
+        (404, "anthropic_request_rejected", False),
+        (422, "anthropic_request_rejected", False),
+        (429, "anthropic_rate_limited_outcome_unknown", True),
+        (500, "anthropic_server_error_outcome_unknown", True),
+    ],
+)
+def test_status_errors_are_safely_classified_once(
+    status: int, code: str, outcome_unknown: bool
+) -> None:
+    import httpx
+    from anthropic import APIStatusError
+
+    request = _request()
+    response = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        text="sk-ant-test-never-log private prompt",
+    )
+    error = APIStatusError("remote error", response=response, body=response.text)
+    client = _FakeClient(error)
+    adapter = AnthropicModelAdapter(client_factory=_factory_for(client, []))
+
+    with pytest.raises(AnthropicAdapterError) as raised:
+        _run(adapter.complete_with_grant(request, _grant(request)))
+
+    assert raised.value.code == code
+    assert raised.value.outcome_unknown is outcome_unknown
+    assert "sk-ant-test-never-log" not in str(raised.value)
+    assert "private prompt" not in str(raised.value)
+    assert len(client.messages.calls) == 1
+    assert client.closed is True
+
+
 def _run(awaitable: Any) -> Any:
     import asyncio
 

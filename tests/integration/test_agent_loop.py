@@ -1187,6 +1187,7 @@ def test_request_reservations_survive_reclaim_without_reset(
                 context={"task": "bounded scripted reservation"},
                 tool_schemas=(),
                 baseline_artifact_id=run.base_artifact_id,
+                output_tokens_reserved=1,
             )
             first_id = first_id or intent.turn_id
         assert first_id is not None
@@ -1207,6 +1208,7 @@ def test_request_reservations_survive_reclaim_without_reset(
                 context={"task": "bounded scripted reservation"},
                 tool_schemas=(),
                 baseline_artifact_id=run.base_artifact_id,
+                output_tokens_reserved=1,
             )
         )
         assert adopted.turn_id == first_id
@@ -1218,6 +1220,7 @@ def test_request_reservations_survive_reclaim_without_reset(
                     context={"task": "bounded scripted reservation"},
                     tool_schemas=(),
                     baseline_artifact_id=run.base_artifact_id,
+                    output_tokens_reserved=1,
                 )
             )
         with store.runtime_engine.begin() as connection:

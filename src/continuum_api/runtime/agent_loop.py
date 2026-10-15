@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID, uuid4, uuid5
@@ -18,6 +18,12 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from continuum_api.artifacts.checkpoints import CheckpointStorageError, CheckpointStorageService
 from continuum_api.credentials import CredentialError, CredentialProvider
+from continuum_api.runtime.agent_context import (
+    AgentContextError,
+    build_agent_context,
+    canonicalize_initial_context,
+    context_source_sha256,
+)
 from continuum_api.runtime.leases import (
     ExecutionLease,
     LeaseLost,
@@ -62,6 +68,9 @@ MAX_AGENT_RESPONSE_BYTES = 65_536
 MAX_AGENT_TOOL_SCHEMAS = 16
 MAX_AGENT_TOOL_CALLS = 10
 MAX_AGENT_OUTPUT_TOKENS = 4096
+MAX_AGENT_INPUT_TOKENS_PER_RUN = 120_000
+MAX_AGENT_OUTPUT_TOKENS_PER_RUN = 30_000
+MODEL_INPUT_ENVELOPE_RESERVATION = 1024
 _SAFE_PROVIDER_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SCRIPTED_MODEL_ID = "scripted-v1"
 OPENAI_MODEL_ID = "gpt-5.4-mini-2026-03-17"
@@ -173,6 +182,30 @@ class CredentialedModelAdapter(Protocol):
     ) -> ScriptedModelResponse: ...
 
 
+@dataclass(frozen=True, slots=True)
+class ModelBudgetSnapshot:
+    run_id: UUID
+    model_id: str | None
+    requests_reserved: int
+    requests_authorized: int
+    requests_received: int
+    requests_ambiguous: int
+    requests_in_flight: int
+    requests_remaining: int
+    input_tokens_used: int
+    input_tokens_reserved: int
+    input_tokens_remaining: int
+    output_tokens_used: int
+    output_tokens_reserved: int
+    output_tokens_remaining: int
+    usage_unknown_requests: int
+    exceeded: bool
+
+    @property
+    def usage_uncertain(self) -> bool:
+        return self.usage_unknown_requests > 0
+
+
 class ScriptedResponseQueue:
     """A deterministic in-process adapter used by local protocol tests."""
 
@@ -260,6 +293,35 @@ class DurableAgentLoopService:
         self._credential_service = credential_service
         self._recovery = RuntimeRecoveryService(engine, principal)
 
+    def read_model_budget(self, run_id: UUID) -> ModelBudgetSnapshot:
+        """Read the owner's current model reservation, usage and uncertainty."""
+        if not isinstance(run_id, UUID):
+            raise AgentLoopError("agent_run_id_invalid")
+        try:
+            with self._engine.begin() as connection:
+                RuntimeRepository(connection, self._principal)
+                row = (
+                    connection.execute(
+                        text(
+                            "SELECT model_id, model_requests_reserved, model_requests_authorized, "
+                            "model_requests_received, model_requests_ambiguous, "
+                            "model_input_tokens_used, "
+                            "model_input_tokens_reserved, model_output_tokens_used, "
+                            "model_output_tokens_reserved, model_usage_unknown_requests, "
+                            "model_budget_exceeded FROM runtime_private.runs "
+                            "WHERE owner_id=:owner AND run_id=:run"
+                        ),
+                        {"owner": self._principal.account_id, "run": run_id},
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if row is None:
+                    raise AgentLoopError("agent_run_not_found")
+                return _model_budget_snapshot(run_id, dict(row))
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
     async def prepare_turn(
         self,
         lease: ExecutionLease,
@@ -296,18 +358,6 @@ class DurableAgentLoopService:
             await self._checkpoints.restore_archive(self._principal, lease, root_artifact_id)
         except CheckpointStorageError as error:
             raise AgentLoopError(error.code) from None
-        request_payload = {
-            "baseline_artifact_id": str(baseline_artifact_id),
-            "context": context,
-            "logical_key": logical_key,
-            "model_id": model_id,
-            "output_tokens_reserved": output_tokens_reserved,
-            "tool_schemas": list(schemas),
-        }
-        serialized = _canonical_json(request_payload, "agent_request_invalid")
-        request_bytes = serialized.encode("utf-8")
-        if len(request_bytes) > MAX_AGENT_CONTEXT_BYTES:
-            raise AgentLoopError("agent_context_size_limit")
         if not isinstance(context, dict) or any(not isinstance(schema, dict) for schema in schemas):
             raise AgentLoopError("agent_context_invalid")
         if (
@@ -315,7 +365,24 @@ class DurableAgentLoopService:
             or not 1 <= output_tokens_reserved <= MAX_AGENT_OUTPUT_TOKENS
         ):
             raise AgentLoopError("agent_output_reservation_invalid")
-        digest = hashlib.sha256(request_bytes).digest()
+        try:
+            initial_context = canonicalize_initial_context(context)
+        except AgentContextError as error:
+            raise AgentLoopError(error.code) from None
+        tool_schemas = list(schemas)
+        schema_serialized = _canonical_json(tool_schemas, "agent_tool_schema_invalid")
+        tool_schema_sha256 = hashlib.sha256(schema_serialized.encode("utf-8")).digest()
+        source_request_payload = {
+            "baseline_artifact_id": str(baseline_artifact_id),
+            "initial_context": initial_context,
+            "logical_key": logical_key,
+            "model_id": model_id,
+            "output_tokens_reserved": output_tokens_reserved,
+            "tool_schema_sha256": tool_schema_sha256.hex(),
+        }
+        source_request_digest = hashlib.sha256(
+            _canonical_json(source_request_payload, "agent_request_invalid").encode("utf-8")
+        ).digest()
         try:
             row = await asyncio.to_thread(
                 self._prepare_turn_once,
@@ -323,10 +390,10 @@ class DurableAgentLoopService:
                 logical_key,
                 baseline_artifact_id,
                 model_id,
-                digest,
-                context,
-                list(schemas),
-                len(request_bytes),
+                source_request_digest,
+                initial_context,
+                tool_schemas,
+                tool_schema_sha256,
                 output_tokens_reserved,
             )
         except LeaseLost:
@@ -343,10 +410,10 @@ class DurableAgentLoopService:
         logical_key: str,
         baseline_artifact_id: UUID,
         model_id: str,
-        request_digest: bytes,
-        context: dict[str, Any],
+        source_request_digest: bytes,
+        initial_context: dict[str, Any],
         tool_schemas: list[dict[str, Any]],
-        input_bytes_reserved: int,
+        tool_schema_sha256: bytes,
         output_tokens_reserved: int,
     ) -> dict[str, Any]:
         with self._engine.begin() as connection:
@@ -380,6 +447,24 @@ class DurableAgentLoopService:
             ).scalar_one_or_none()
             if root_artifact_id is None or root_artifact_id != baseline_artifact_id:
                 raise AgentLoopError("agent_baseline_artifact_mismatch")
+            run_row = (
+                connection.execute(
+                    text(
+                        "SELECT model_id, model_task_context, model_tool_schema_sha256, "
+                        "model_requests_reserved, model_input_tokens_used, "
+                        "model_input_tokens_reserved, model_output_tokens_used, "
+                        "model_output_tokens_reserved, model_requests_ambiguous, "
+                        "model_usage_unknown_requests, model_budget_exceeded "
+                        "FROM runtime_private.runs "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id FOR UPDATE"
+                    ),
+                    {"owner_id": lease.owner_id, "run_id": lease.run_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if run_row is None:
+                raise AgentLoopError("agent_run_not_found")
             existing = (
                 connection.execute(
                     text(
@@ -399,13 +484,93 @@ class DurableAgentLoopService:
             )
             if existing is not None:
                 row = dict(existing)
+                if row["source_sha256"] is None or row["source_request_sha256"] is None:
+                    raise AgentLoopError("agent_context_provenance_missing")
+                if row["source_request_sha256"] != source_request_digest:
+                    raise AgentLoopError("agent_turn_identity_conflict")
+                stored_initial = _initial_context_from_persisted(row["context"])
+                stored_schema_digest = hashlib.sha256(
+                    _canonical_json(row["tool_schemas"], "agent_tool_schema_invalid").encode(
+                        "utf-8"
+                    )
+                ).digest()
                 if (
-                    row["request_sha256"] != request_digest
+                    stored_initial != initial_context
+                    or stored_schema_digest != tool_schema_sha256
                     or row["baseline_artifact_id"] != baseline_artifact_id
                     or row["model_id"] != model_id
+                    or row["output_tokens_reserved"] != output_tokens_reserved
                 ):
                     raise AgentLoopError("agent_turn_identity_conflict")
+                pinned_model = run_row["model_id"]
+                if pinned_model is not None and pinned_model != row["model_id"]:
+                    raise AgentLoopError("agent_model_switch_forbidden")
+                if run_row["model_task_context"] is not None and (
+                    canonicalize_initial_context(run_row["model_task_context"]) != initial_context
+                ):
+                    raise AgentLoopError("agent_task_context_pinned")
+                if run_row["model_tool_schema_sha256"] is not None and (
+                    run_row["model_tool_schema_sha256"] != tool_schema_sha256
+                ):
+                    raise AgentLoopError("agent_tool_schema_pinned")
+                prior_turns, prior_turn_ids, prior_invocation_ids = _load_accepted_context_history(
+                    connection,
+                    owner_id=lease.owner_id,
+                    run_id=lease.run_id,
+                    model_id=row["model_id"],
+                    initial_context=initial_context,
+                    before=row["created_at"],
+                )
+                expected_source = context_source_sha256(
+                    initial_context=initial_context,
+                    accepted_turn_ids=prior_turn_ids,
+                    accepted_invocation_ids=prior_invocation_ids,
+                )
+                if row["source_sha256"].hex() != expected_source:
+                    raise AgentLoopError("agent_context_provenance_missing")
+                if _persisted_request_digest(row) != row["request_sha256"]:
+                    raise AgentLoopError("agent_persisted_request_corrupt")
+                if row["status"] == "prepared":
+                    try:
+                        expected_context = build_agent_context(
+                            initial_context=initial_context,
+                            accepted_turns=prior_turns,
+                            model_id=row["model_id"],
+                            budget=row["context"]["budget"],
+                        )
+                    except (AgentContextError, KeyError, TypeError):
+                        raise AgentLoopError("agent_context_provenance_missing") from None
+                    if expected_context != row["context"]:
+                        raise AgentLoopError("agent_context_provenance_missing")
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.runs SET model_id=COALESCE(model_id,:model), "
+                        "model_task_context=COALESCE(model_task_context,CAST(:context AS jsonb)), "
+                        "model_tool_schema_sha256=COALESCE(model_tool_schema_sha256,:schema_hash) "
+                        "WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {
+                        "model": row["model_id"],
+                        "context": _canonical_json(initial_context, "agent_context_invalid"),
+                        "schema_hash": tool_schema_sha256,
+                        "owner": lease.owner_id,
+                        "run": lease.run_id,
+                    },
+                )
                 return row
+
+            if bool(run_row.get("model_budget_exceeded", False)):
+                raise AgentLoopError("agent_model_budget_exceeded")
+            if run_row["model_task_context"] is not None and (
+                canonicalize_initial_context(run_row["model_task_context"]) != initial_context
+            ):
+                raise AgentLoopError("agent_task_context_pinned")
+            if run_row["model_tool_schema_sha256"] is not None and (
+                run_row["model_tool_schema_sha256"] != tool_schema_sha256
+            ):
+                raise AgentLoopError("agent_tool_schema_pinned")
+            if run_row["model_id"] is not None and run_row["model_id"] != model_id:
+                raise AgentLoopError("agent_model_switch_forbidden")
 
             run_baseline = connection.execute(
                 text(
@@ -427,6 +592,144 @@ class DurableAgentLoopService:
             ).scalar_one()
             if reserved_count >= MAX_AGENT_TURNS_PER_RUN:
                 raise AgentLoopError("agent_request_limit")
+            pinned_context = run_row["model_task_context"]
+            pinned_schema_sha = run_row["model_tool_schema_sha256"]
+            if pinned_context is None or pinned_schema_sha is None:
+                first_turn = (
+                    connection.execute(
+                        text(
+                            "SELECT context, tool_schemas FROM runtime_private.agent_turns "
+                            "WHERE owner_id=:owner AND run_id=:run "
+                            "ORDER BY created_at, turn_id LIMIT 1"
+                        ),
+                        {"owner": lease.owner_id, "run": lease.run_id},
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if first_turn is None:
+                    pinned_context = initial_context
+                    pinned_schema_sha = tool_schema_sha256
+                else:
+                    try:
+                        legacy_context = _initial_context_from_persisted(first_turn["context"])
+                    except AgentLoopError:
+                        raise AgentLoopError("agent_context_provenance_missing") from None
+                    legacy_schema_sha = hashlib.sha256(
+                        _canonical_json(
+                            first_turn["tool_schemas"], "agent_tool_schema_invalid"
+                        ).encode("utf-8")
+                    ).digest()
+                    if legacy_context != initial_context:
+                        raise AgentLoopError("agent_task_context_pinned")
+                    if legacy_schema_sha != tool_schema_sha256:
+                        raise AgentLoopError("agent_tool_schema_pinned")
+                    pinned_context = legacy_context
+                    pinned_schema_sha = legacy_schema_sha
+            if canonicalize_initial_context(pinned_context) != initial_context:
+                raise AgentLoopError("agent_task_context_pinned")
+            if pinned_schema_sha != tool_schema_sha256:
+                raise AgentLoopError("agent_tool_schema_pinned")
+
+            accepted_turns, accepted_turn_ids, accepted_invocation_ids = (
+                _load_accepted_context_history(
+                    connection,
+                    owner_id=lease.owner_id,
+                    run_id=lease.run_id,
+                    model_id=model_id,
+                    initial_context=initial_context,
+                )
+            )
+
+            usage_uncertain = (
+                run_row["model_usage_unknown_requests"] > 0
+                or run_row["model_requests_ambiguous"] > 0
+            )
+            budget_context = {
+                "requests_remaining": max(
+                    0, MAX_AGENT_TURNS_PER_RUN - run_row["model_requests_reserved"]
+                ),
+                "input_tokens_remaining": max(
+                    0,
+                    MAX_AGENT_INPUT_TOKENS_PER_RUN
+                    - run_row["model_input_tokens_used"]
+                    - run_row["model_input_tokens_reserved"],
+                ),
+                "output_tokens_remaining": max(
+                    0,
+                    MAX_AGENT_OUTPUT_TOKENS_PER_RUN
+                    - run_row["model_output_tokens_used"]
+                    - run_row["model_output_tokens_reserved"],
+                ),
+                "usage_uncertain": usage_uncertain,
+            }
+            try:
+                context = build_agent_context(
+                    initial_context=initial_context,
+                    accepted_turns=accepted_turns,
+                    model_id=model_id,
+                    budget=budget_context,
+                )
+            except AgentContextError as error:
+                raise AgentLoopError(error.code) from None
+            source_digest = bytes.fromhex(
+                context_source_sha256(
+                    initial_context=initial_context,
+                    accepted_turn_ids=accepted_turn_ids,
+                    accepted_invocation_ids=accepted_invocation_ids,
+                )
+            )
+            request_payload = {
+                "baseline_artifact_id": str(baseline_artifact_id),
+                "context": context,
+                "logical_key": logical_key,
+                "model_id": model_id,
+                "output_tokens_reserved": output_tokens_reserved,
+                "tool_schemas": tool_schemas,
+            }
+            serialized = _canonical_json(request_payload, "agent_request_invalid")
+            request_bytes = serialized.encode("utf-8")
+            if len(request_bytes) > MAX_AGENT_CONTEXT_BYTES:
+                raise AgentLoopError("agent_context_size_limit")
+            input_bytes_reserved = len(request_bytes)
+            input_tokens_reserved = _estimate_input_tokens(request_bytes)
+            request_digest = hashlib.sha256(request_bytes).digest()
+            requests_reserved: int = run_row["model_requests_reserved"]
+            input_used: int = run_row["model_input_tokens_used"]
+            input_reserved: int = run_row["model_input_tokens_reserved"]
+            output_used: int = run_row["model_output_tokens_used"]
+            output_reserved: int = run_row["model_output_tokens_reserved"]
+            if requests_reserved >= MAX_AGENT_TURNS_PER_RUN:
+                raise AgentLoopError("agent_request_limit")
+            if input_used + input_reserved + input_tokens_reserved > MAX_AGENT_INPUT_TOKENS_PER_RUN:
+                raise AgentLoopError("agent_input_budget_exceeded")
+            if (
+                output_used + output_reserved + output_tokens_reserved
+                > MAX_AGENT_OUTPUT_TOKENS_PER_RUN
+            ):
+                raise AgentLoopError("agent_output_budget_exceeded")
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.runs SET model_id=COALESCE(model_id,:model), "
+                    "model_task_context=COALESCE(model_task_context,CAST(:task_context AS jsonb)), "
+                    "model_tool_schema_sha256=COALESCE(model_tool_schema_sha256,:schema_hash), "
+                    "model_requests_reserved=model_requests_reserved+1, "
+                    "model_input_tokens_reserved=model_input_tokens_reserved+:input_tokens, "
+                    "model_output_tokens_reserved=model_output_tokens_reserved+:output_tokens "
+                    "WHERE owner_id=:owner AND run_id=:run"
+                ),
+                {
+                    "model": model_id,
+                    "task_context": _canonical_json(
+                        pinned_context, "agent_context_initial_invalid"
+                    ),
+                    "schema_hash": pinned_schema_sha,
+                    "input_tokens": input_tokens_reserved,
+                    "output_tokens": output_tokens_reserved,
+                    "owner": lease.owner_id,
+                    "run": lease.run_id,
+                },
+            )
             turn_id = uuid4()
             inserted = (
                 connection.execute(
@@ -434,11 +737,15 @@ class DurableAgentLoopService:
                         "INSERT INTO runtime_private.agent_turns ("
                         "turn_id, owner_id, run_id, step_id, job_id, logical_key, generation, "
                         "attempt_id, lease_owner, baseline_artifact_id, model_id, request_sha256, "
-                        "context, tool_schemas, input_bytes_reserved, output_tokens_reserved) "
+                        "source_sha256, source_request_sha256, context, tool_schemas, "
+                        "input_bytes_reserved, "
+                        "input_tokens_reserved, output_tokens_reserved) "
                         "VALUES (:turn_id, :owner_id, :run_id, :step_id, :job_id, :logical_key, "
                         ":generation, :attempt_id, :lease_owner, :baseline_artifact_id, :model_id, "
-                        ":request_sha256, CAST(:context AS jsonb), CAST(:tool_schemas AS jsonb), "
-                        ":input_bytes_reserved, :output_tokens_reserved) RETURNING *"
+                        ":request_sha256, :source_sha256, :source_request_sha256, "
+                        "CAST(:context AS jsonb), "
+                        "CAST(:tool_schemas AS jsonb), :input_bytes_reserved, "
+                        ":input_tokens_reserved, :output_tokens_reserved) RETURNING *"
                     ),
                     {
                         "turn_id": turn_id,
@@ -453,9 +760,12 @@ class DurableAgentLoopService:
                         "baseline_artifact_id": baseline_artifact_id,
                         "model_id": model_id,
                         "request_sha256": request_digest,
+                        "source_sha256": source_digest,
+                        "source_request_sha256": source_request_digest,
                         "context": _canonical_json(context, "agent_context_invalid"),
                         "tool_schemas": _canonical_json(tool_schemas, "agent_tool_schema_invalid"),
                         "input_bytes_reserved": input_bytes_reserved,
+                        "input_tokens_reserved": input_tokens_reserved,
                         "output_tokens_reserved": output_tokens_reserved,
                     },
                 )
@@ -488,6 +798,10 @@ class DurableAgentLoopService:
             raise AgentLoopError("agent_turn_state_invalid")
         if self._checkpoints is None:
             raise AgentLoopError("agent_checkpoint_storage_unavailable")
+        try:
+            await asyncio.to_thread(self._verify_prepared_context_once, lease, row)
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
         try:
             await self._checkpoints.restore_archive(
                 self._principal, lease, row["baseline_artifact_id"]
@@ -562,6 +876,7 @@ class DurableAgentLoopService:
             await self._mark_response_unknown(lease, turn_id)
             raise AgentLoopError(safe_code) from None
 
+        response: ScriptedModelResponse | None = None
         try:
             response = ScriptedModelResponse.model_validate(response_value, strict=True)
             if response.latency_ms is None:
@@ -572,6 +887,11 @@ class DurableAgentLoopService:
                         )
                     }
                 )
+            if (
+                response.input_tokens is not None
+                and response.input_tokens > row["input_tokens_reserved"]
+            ):
+                raise AgentLoopError("agent_input_reservation_exceeded")
             invocation_values = _validate_complete_response(
                 response,
                 row["model_id"],
@@ -588,13 +908,114 @@ class DurableAgentLoopService:
                 error.code if isinstance(error, AgentLoopError) else "agent_response_invalid"
             )
             safe_response = {"protocol_error": error_code}
-            if response.stop_reason == "refusal":
+            if response is not None and response.stop_reason == "refusal":
                 safe_response["output_text"] = response.output_text[:4096]
-            await self._persist_invalid_response(lease, turn_id, safe_response, error_code)
+            await self._persist_invalid_response(
+                lease, turn_id, safe_response, error_code, response=response
+            )
             await self._fail_invalid_attempt(lease)
             raise AgentLoopError(error_code) from None
         receipt_row = await self._accept_response(lease, turn_id, response, invocation_values)
         return await self._turn_receipt(lease, receipt_row, adopted=False)
+
+    def _verify_prepared_context_once(self, lease: ExecutionLease, turn: dict[str, Any]) -> None:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            lock_current_execution(connection, self._principal, lease)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner AND run_id=:run AND turn_id=:turn FOR UPDATE"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id, "turn": turn["turn_id"]},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or row["status"] != "prepared":
+                raise AgentLoopError("agent_turn_state_invalid")
+            persisted = dict(row)
+            if persisted["source_sha256"] is None or persisted["source_request_sha256"] is None:
+                raise AgentLoopError("agent_context_provenance_missing")
+            initial_context = _initial_context_from_persisted(persisted["context"])
+            schemas = persisted["tool_schemas"]
+            schema_digest = hashlib.sha256(
+                _canonical_json(schemas, "agent_tool_schema_invalid").encode("utf-8")
+            ).digest()
+            run = (
+                connection.execute(
+                    text(
+                        "SELECT model_id, model_task_context, model_tool_schema_sha256 "
+                        "FROM runtime_private.runs WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if run is None:
+                raise AgentLoopError("agent_run_not_found")
+            if (
+                run["model_id"] != persisted["model_id"]
+                or canonicalize_initial_context(run["model_task_context"]) != initial_context
+                or run["model_tool_schema_sha256"] != schema_digest
+            ):
+                raise AgentLoopError("agent_context_provenance_missing")
+            expected_source_request = _source_request_digest(
+                baseline_artifact_id=persisted["baseline_artifact_id"],
+                logical_key=persisted["logical_key"],
+                model_id=persisted["model_id"],
+                initial_context=initial_context,
+                tool_schema_sha256=schema_digest,
+                output_tokens_reserved=persisted["output_tokens_reserved"],
+            )
+            if persisted["source_request_sha256"] != expected_source_request:
+                raise AgentLoopError("agent_persisted_request_corrupt")
+            if _persisted_request_digest(persisted) != persisted["request_sha256"]:
+                raise AgentLoopError("agent_persisted_request_corrupt")
+            prior_turns, prior_turn_ids, prior_invocation_ids = _load_accepted_context_history(
+                connection,
+                owner_id=lease.owner_id,
+                run_id=lease.run_id,
+                model_id=persisted["model_id"],
+                initial_context=initial_context,
+                before=persisted["created_at"],
+            )
+            expected_source = context_source_sha256(
+                initial_context=initial_context,
+                accepted_turn_ids=prior_turn_ids,
+                accepted_invocation_ids=prior_invocation_ids,
+            )
+            if persisted["source_sha256"].hex() != expected_source:
+                raise AgentLoopError("agent_context_provenance_missing")
+            budget = persisted["context"].get("budget")
+            try:
+                rebuilt = build_agent_context(
+                    initial_context=initial_context,
+                    accepted_turns=prior_turns,
+                    model_id=persisted["model_id"],
+                    budget=budget,
+                )
+            except (AgentContextError, KeyError, TypeError):
+                raise AgentLoopError("agent_context_provenance_missing") from None
+            if rebuilt != persisted["context"]:
+                raise AgentLoopError("agent_context_provenance_missing")
+            serialized = _canonical_json(
+                {
+                    "baseline_artifact_id": str(persisted["baseline_artifact_id"]),
+                    "context": persisted["context"],
+                    "logical_key": persisted["logical_key"],
+                    "model_id": persisted["model_id"],
+                    "output_tokens_reserved": persisted["output_tokens_reserved"],
+                    "tool_schemas": schemas,
+                },
+                "agent_persisted_request_corrupt",
+            ).encode("utf-8")
+            if persisted["input_bytes_reserved"] != len(serialized) or persisted[
+                "input_tokens_reserved"
+            ] != _estimate_input_tokens(serialized):
+                raise AgentLoopError("agent_persisted_request_corrupt")
 
     async def pending_invocations(
         self, lease: ExecutionLease, turn_id: UUID
@@ -1137,6 +1558,17 @@ class DurableAgentLoopService:
         with self._engine.begin() as connection:
             RuntimeRepository(connection, self._principal)
             locked = lock_current_execution(connection, self._principal, lease)
+            run_row = connection.execute(
+                text(
+                    "SELECT model_budget_exceeded FROM runtime_private.runs "
+                    "WHERE owner_id=:owner AND run_id=:run FOR UPDATE"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id},
+            ).one_or_none()
+            if run_row is None:
+                raise AgentLoopError("agent_run_not_found")
+            if run_row.model_budget_exceeded:
+                raise AgentLoopError("agent_model_budget_exceeded")
             row = (
                 connection.execute(
                     text(
@@ -1160,7 +1592,7 @@ class DurableAgentLoopService:
                 or row["dispatch_authorized_at"] is not None
             ):
                 raise AgentLoopError("agent_model_dispatch_not_authorized")
-            connection.execute(
+            updated = connection.execute(
                 text(
                     "UPDATE runtime_private.agent_turns SET status='dispatching', "
                     "dispatch_authorized_at=clock_timestamp(), dispatch_generation=:generation, "
@@ -1176,6 +1608,15 @@ class DurableAgentLoopService:
                     "run_id": lease.run_id,
                     "turn_id": turn_id,
                 },
+            )
+            if updated.rowcount != 1:
+                raise LeaseLost("agent_model_dispatch_not_authorized")
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.runs SET model_requests_authorized="
+                    "model_requests_authorized+1 WHERE owner_id=:owner AND run_id=:run"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id},
             )
             _assert_execution_live(connection, locked)
             return dict(row)
@@ -1240,6 +1681,38 @@ class DurableAgentLoopService:
                 or row["dispatch_lease_owner"] != lease.lease_owner
             ):
                 raise LeaseLost("agent_response_lease_lost")
+            budget_row = (
+                connection.execute(
+                    text(
+                        "SELECT model_input_tokens_used, model_input_tokens_reserved, "
+                        "model_output_tokens_used, model_output_tokens_reserved, "
+                        "model_usage_unknown_requests FROM runtime_private.runs "
+                        "WHERE owner_id=:owner AND run_id=:run FOR UPDATE"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if budget_row is None:
+                raise AgentLoopError("agent_run_not_found")
+            input_used = int(budget_row["model_input_tokens_used"])
+            input_reserved = int(budget_row["model_input_tokens_reserved"])
+            output_used = int(budget_row["model_output_tokens_used"])
+            output_reserved = int(budget_row["model_output_tokens_reserved"])
+            usage_unknown_requests = int(budget_row["model_usage_unknown_requests"])
+            if response.input_tokens is not None and response.output_tokens is not None:
+                if (
+                    input_reserved < row["input_tokens_reserved"]
+                    or output_reserved < row["output_tokens_reserved"]
+                ):
+                    raise AgentLoopError("agent_model_budget_corrupt")
+                input_reserved -= row["input_tokens_reserved"]
+                output_reserved -= row["output_tokens_reserved"]
+                input_used += response.input_tokens
+                output_used += response.output_tokens
+            else:
+                usage_unknown_requests += 1
             for invocation in invocations:
                 connection.execute(
                     text(
@@ -1287,6 +1760,31 @@ class DurableAgentLoopService:
                     "turn_id": turn_id,
                 },
             )
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.runs SET model_input_tokens_used=:input_used, "
+                    "model_input_tokens_reserved=:input_reserved, "
+                    "model_output_tokens_used=:output_used, "
+                    "model_output_tokens_reserved=:output_reserved, "
+                    "model_requests_received=model_requests_received+1, "
+                    "model_usage_unknown_requests=:usage_unknown_requests, "
+                    "model_budget_exceeded=(model_budget_exceeded OR "
+                    ":input_used+:input_reserved>:input_limit OR "
+                    ":output_used+:output_reserved>:output_limit) "
+                    "WHERE owner_id=:owner AND run_id=:run"
+                ),
+                {
+                    "input_used": input_used,
+                    "input_reserved": input_reserved,
+                    "output_used": output_used,
+                    "output_reserved": output_reserved,
+                    "usage_unknown_requests": usage_unknown_requests,
+                    "input_limit": MAX_AGENT_INPUT_TOKENS_PER_RUN,
+                    "output_limit": MAX_AGENT_OUTPUT_TOKENS_PER_RUN,
+                    "owner": lease.owner_id,
+                    "run": lease.run_id,
+                },
+            )
             _assert_execution_live(connection, locked)
             result = dict(row)
             result.update(
@@ -1311,10 +1809,17 @@ class DurableAgentLoopService:
         turn_id: UUID,
         safe_response: dict[str, Any],
         code: str,
+        *,
+        response: ScriptedModelResponse | None = None,
     ) -> None:
         try:
             await asyncio.to_thread(
-                self._persist_invalid_response_once, lease, turn_id, safe_response, code
+                self._persist_invalid_response_once,
+                lease,
+                turn_id,
+                safe_response,
+                code,
+                response,
             )
         except Exception:
             # The original invalid-response error remains primary; an uncommitted
@@ -1327,6 +1832,7 @@ class DurableAgentLoopService:
         turn_id: UUID,
         safe_response: dict[str, Any],
         code: str,
+        response: ScriptedModelResponse | None,
     ) -> None:
         serialized = _canonical_json(safe_response, "agent_response_invalid")
         if len(serialized.encode("utf-8")) > MAX_AGENT_RESPONSE_BYTES:
@@ -1335,11 +1841,91 @@ class DurableAgentLoopService:
         with self._engine.begin() as connection:
             RuntimeRepository(connection, self._principal)
             locked = lock_current_execution(connection, self._principal, lease)
+            budget_row = (
+                connection.execute(
+                    text(
+                        "SELECT model_input_tokens_used, model_input_tokens_reserved, "
+                        "model_output_tokens_used, model_output_tokens_reserved, "
+                        "model_usage_unknown_requests FROM runtime_private.runs "
+                        "WHERE owner_id=:owner AND run_id=:run FOR UPDATE"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            turn_row = (
+                connection.execute(
+                    text(
+                        "SELECT input_tokens_reserved, output_tokens_reserved, "
+                        "dispatch_generation, dispatch_attempt_id, dispatch_lease_owner "
+                        "FROM runtime_private.agent_turns WHERE owner_id=:owner AND run_id=:run "
+                        "AND job_id=:job AND turn_id=:turn AND status='dispatching' FOR UPDATE"
+                    ),
+                    {
+                        "owner": lease.owner_id,
+                        "run": lease.run_id,
+                        "job": lease.job_id,
+                        "turn": turn_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                budget_row is None
+                or turn_row is None
+                or (
+                    turn_row["dispatch_generation"] != lease.generation
+                    or turn_row["dispatch_attempt_id"] != lease.attempt_id
+                    or turn_row["dispatch_lease_owner"] != lease.lease_owner
+                )
+            ):
+                raise LeaseLost("agent_response_attempt_not_current")
+            input_used = int(budget_row["model_input_tokens_used"])
+            input_reserved = int(budget_row["model_input_tokens_reserved"])
+            output_used = int(budget_row["model_output_tokens_used"])
+            output_reserved = int(budget_row["model_output_tokens_reserved"])
+            usage_unknown = int(budget_row["model_usage_unknown_requests"])
+            definitive_auth_rejection = response is None and code.endswith(
+                ("_authentication_failed", "_request_rejected")
+            )
+            known_usage = (
+                response is not None
+                and response.input_tokens is not None
+                and response.output_tokens is not None
+            )
+            if known_usage or definitive_auth_rejection:
+                if (
+                    input_reserved < turn_row["input_tokens_reserved"]
+                    or output_reserved < turn_row["output_tokens_reserved"]
+                ):
+                    raise AgentLoopError("agent_model_budget_corrupt")
+                input_reserved -= turn_row["input_tokens_reserved"]
+                output_reserved -= turn_row["output_tokens_reserved"]
+            if known_usage and response is not None:
+                input_used += response.input_tokens or 0
+                output_used += response.output_tokens or 0
+            elif not definitive_auth_rejection:
+                usage_unknown += 1
+            reservation_overrun = bool(
+                known_usage
+                and response is not None
+                and (
+                    response.input_tokens > turn_row["input_tokens_reserved"]
+                    or response.output_tokens > turn_row["output_tokens_reserved"]
+                )
+            )
             updated = connection.execute(
                 text(
                     "UPDATE runtime_private.agent_turns SET status='invalid_response', "
                     "response=CAST(:response AS jsonb), response_sha256=:response_sha256, "
                     "response_received_at=clock_timestamp(), response_error_code=:code, "
+                    "input_tokens=:input_tokens, output_tokens=:output_tokens, "
+                    "cached_input_tokens=:cached_input_tokens, "
+                    "cache_creation_input_tokens=:cache_creation_input_tokens, "
+                    "reasoning_output_tokens=:reasoning_output_tokens, "
+                    "provider_request_id=:provider_request_id, latency_ms=:latency_ms, "
                     "updated_at=clock_timestamp() WHERE owner_id=:owner_id AND run_id=:run_id "
                     "AND job_id=:job_id AND turn_id=:turn_id AND status='dispatching' "
                     "AND dispatch_generation=:generation AND dispatch_attempt_id=:attempt_id "
@@ -1349,6 +1935,21 @@ class DurableAgentLoopService:
                     "response": serialized,
                     "response_sha256": digest,
                     "code": code,
+                    "input_tokens": None if response is None else response.input_tokens,
+                    "output_tokens": None if response is None else response.output_tokens,
+                    "cached_input_tokens": None
+                    if response is None
+                    else response.cached_input_tokens,
+                    "cache_creation_input_tokens": (
+                        None if response is None else response.cache_creation_input_tokens
+                    ),
+                    "reasoning_output_tokens": (
+                        None if response is None else response.reasoning_output_tokens
+                    ),
+                    "provider_request_id": (
+                        None if response is None else response.provider_request_id
+                    ),
+                    "latency_ms": None if response is None else response.latency_ms,
                     "owner_id": lease.owner_id,
                     "run_id": lease.run_id,
                     "job_id": lease.job_id,
@@ -1360,6 +1961,32 @@ class DurableAgentLoopService:
             )
             if updated.rowcount != 1:
                 raise LeaseLost("agent_response_attempt_not_current")
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.runs SET model_input_tokens_used=:input_used, "
+                    "model_input_tokens_reserved=:input_reserved, "
+                    "model_output_tokens_used=:output_used, "
+                    "model_output_tokens_reserved=:output_reserved, "
+                    "model_requests_received=model_requests_received+1, "
+                    "model_usage_unknown_requests=:usage_unknown, "
+                    "model_budget_exceeded=(model_budget_exceeded OR :overrun OR "
+                    ":input_used+:input_reserved>:input_limit OR "
+                    ":output_used+:output_reserved>:output_limit) "
+                    "WHERE owner_id=:owner AND run_id=:run"
+                ),
+                {
+                    "input_used": input_used,
+                    "input_reserved": input_reserved,
+                    "output_used": output_used,
+                    "output_reserved": output_reserved,
+                    "usage_unknown": usage_unknown,
+                    "overrun": reservation_overrun,
+                    "input_limit": MAX_AGENT_INPUT_TOKENS_PER_RUN,
+                    "output_limit": MAX_AGENT_OUTPUT_TOKENS_PER_RUN,
+                    "owner": lease.owner_id,
+                    "run": lease.run_id,
+                },
+            )
             _assert_execution_live(connection, locked)
 
     async def _mark_response_unknown(self, lease: ExecutionLease, turn_id: UUID) -> None:
@@ -1374,6 +2001,13 @@ class DurableAgentLoopService:
         with self._engine.begin() as connection:
             RuntimeRepository(connection, self._principal)
             locked = lock_current_execution(connection, self._principal, lease)
+            connection.execute(
+                text(
+                    "SELECT run_id FROM runtime_private.runs "
+                    "WHERE owner_id=:owner AND run_id=:run FOR UPDATE"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id},
+            ).one_or_none()
             row = connection.execute(
                 text(
                     "SELECT status FROM runtime_private.agent_turns "
@@ -1402,6 +2036,14 @@ class DurableAgentLoopService:
                         "job_id": lease.job_id,
                         "turn_id": turn_id,
                     },
+                )
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.runs SET model_requests_ambiguous="
+                        "model_requests_ambiguous+1, model_usage_unknown_requests="
+                        "model_usage_unknown_requests+1 WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id},
                 )
                 _assert_execution_live(connection, locked)
             return True
@@ -1499,13 +2141,23 @@ class DurableAgentLoopService:
                 connection.execute(
                     text(
                         "SELECT invocation.*, accepted.payload AS accepted_payload, "
-                        "accepted.artifact_id AS accepted_artifact_id "
+                        "accepted.artifact_id AS accepted_artifact_id, "
+                        "accepted.result_sha256 AS accepted_result_sha256, "
+                        "accepted.step_id AS accepted_step_id, "
+                        "accepted.job_id AS accepted_job_id, "
+                        "accepted_step.logical_key AS accepted_logical_key, "
+                        "accepted_step.activity AS accepted_activity "
                         "FROM runtime_private.agent_invocations AS invocation "
                         "LEFT JOIN LATERAL ("
-                        "SELECT payload, artifact_id FROM runtime_private.accepted_results "
+                        "SELECT payload, artifact_id, result_sha256, step_id, job_id "
+                        "FROM runtime_private.accepted_results "
                         "WHERE owner_id=invocation.owner_id AND run_id=invocation.run_id "
                         "AND payload->>'agent_invocation_id'=CAST(invocation.invocation_id AS text)"
                         " LIMIT 1) AS accepted ON true "
+                        "LEFT JOIN runtime_private.steps AS accepted_step ON "
+                        "accepted_step.owner_id=invocation.owner_id "
+                        "AND accepted_step.run_id=invocation.run_id "
+                        "AND accepted_step.step_id=accepted.step_id "
                         "WHERE invocation.owner_id=:owner_id AND invocation.run_id=:run_id "
                         "AND invocation.turn_id=:turn_id ORDER BY invocation.ordinal"
                     ),
@@ -1604,6 +2256,198 @@ def _validate_complete_response(
     return materialized
 
 
+def _estimate_input_tokens(serialized_request: bytes) -> int:
+    """Conservative local fallback: one token per UTF-8 byte plus provider envelope."""
+    if not isinstance(serialized_request, bytes) or not serialized_request:
+        raise AgentLoopError("agent_input_estimate_invalid")
+    return len(serialized_request) + MODEL_INPUT_ENVELOPE_RESERVATION
+
+
+def _source_request_digest(
+    *,
+    baseline_artifact_id: UUID,
+    logical_key: str,
+    model_id: str,
+    initial_context: dict[str, Any],
+    tool_schema_sha256: bytes,
+    output_tokens_reserved: int,
+) -> bytes:
+    payload = {
+        "baseline_artifact_id": str(baseline_artifact_id),
+        "initial_context": initial_context,
+        "logical_key": logical_key,
+        "model_id": model_id,
+        "output_tokens_reserved": output_tokens_reserved,
+        "tool_schema_sha256": tool_schema_sha256.hex(),
+    }
+    serialized = _canonical_json(payload, "agent_request_invalid")
+    return hashlib.sha256(serialized.encode("utf-8")).digest()
+
+
+def _load_accepted_context_history(
+    connection: Any,
+    *,
+    owner_id: UUID,
+    run_id: UUID,
+    model_id: str,
+    initial_context: dict[str, Any],
+    before: Any | None = None,
+) -> tuple[list[dict[str, Any]], list[UUID], list[UUID]]:
+    turns = (
+        connection.execute(
+            text(
+                "SELECT * FROM runtime_private.agent_turns "
+                "WHERE owner_id=:owner AND run_id=:run AND status='response_accepted' "
+                "ORDER BY created_at, turn_id"
+            ),
+            {"owner": owner_id, "run": run_id},
+        )
+        .mappings()
+        .all()
+    )
+    accepted_turns: list[dict[str, Any]] = []
+    turn_ids: list[UUID] = []
+    invocation_ids: list[UUID] = []
+    for raw_turn in turns:
+        turn = dict(raw_turn)
+        if before is not None and (
+            turn["response_received_at"] is None or turn["response_received_at"] >= before
+        ):
+            continue
+        if turn["model_id"] != model_id:
+            raise AgentLoopError("agent_model_switch_forbidden")
+        if turn["source_sha256"] is None or turn["source_request_sha256"] is None:
+            raise AgentLoopError("agent_context_provenance_missing")
+        if _initial_context_from_persisted(turn["context"]) != initial_context:
+            raise AgentLoopError("agent_task_context_pinned")
+
+        schemas = turn["tool_schemas"]
+        schema_sha = hashlib.sha256(
+            _canonical_json(schemas, "agent_tool_schema_corrupt").encode("utf-8")
+        ).digest()
+        expected_source_request = _source_request_digest(
+            baseline_artifact_id=turn["baseline_artifact_id"],
+            logical_key=turn["logical_key"],
+            model_id=turn["model_id"],
+            initial_context=initial_context,
+            tool_schema_sha256=schema_sha,
+            output_tokens_reserved=turn["output_tokens_reserved"],
+        )
+        if turn["source_request_sha256"] != expected_source_request:
+            raise AgentLoopError("agent_persisted_request_corrupt")
+        if _persisted_request_digest(turn) != turn["request_sha256"]:
+            raise AgentLoopError("agent_persisted_request_corrupt")
+        expected_source = context_source_sha256(
+            initial_context=initial_context,
+            accepted_turn_ids=turn_ids,
+            accepted_invocation_ids=invocation_ids,
+        )
+        if turn["source_sha256"].hex() != expected_source:
+            raise AgentLoopError("agent_context_provenance_missing")
+
+        invocations = (
+            connection.execute(
+                text(
+                    "SELECT invocation.*, accepted.payload AS accepted_payload, "
+                    "accepted.accepted_at AS accepted_at, "
+                    "accepted.result_sha256 AS accepted_result_sha256, "
+                    "accepted.step_id AS accepted_step_id, "
+                    "accepted.job_id AS accepted_job_id, "
+                    "accepted_step.logical_key AS accepted_logical_key, "
+                    "accepted_step.activity AS accepted_activity "
+                    "FROM runtime_private.agent_invocations AS invocation "
+                    "LEFT JOIN LATERAL (SELECT payload, accepted_at, result_sha256, "
+                    "step_id, job_id FROM "
+                    "runtime_private.accepted_results WHERE owner_id=invocation.owner_id "
+                    "AND run_id=invocation.run_id AND "
+                    "payload->>'agent_invocation_id'="
+                    "CAST(invocation.invocation_id AS text) LIMIT 1) AS accepted ON true "
+                    "LEFT JOIN runtime_private.steps AS accepted_step ON "
+                    "accepted_step.owner_id=invocation.owner_id "
+                    "AND accepted_step.run_id=invocation.run_id "
+                    "AND accepted_step.step_id=accepted.step_id "
+                    "WHERE invocation.owner_id=:owner AND invocation.run_id=:run "
+                    "AND invocation.turn_id=:turn ORDER BY invocation.ordinal"
+                ),
+                {"owner": owner_id, "run": run_id, "turn": turn["turn_id"]},
+            )
+            .mappings()
+            .all()
+        )
+        invocation_rows = [dict(item) for item in invocations]
+        if any(
+            item["accepted_payload"] is None
+            or item["accepted_at"] is None
+            or (before is not None and item["accepted_at"] >= before)
+            for item in invocation_rows
+        ):
+            raise AgentLoopError("agent_context_tool_result_missing")
+        _verify_persisted_response_and_calls(turn, invocation_rows)
+        invocation_context = [
+            {
+                "provider_call_id": item["provider_call_id"],
+                "tool_name": item["tool_name"],
+                "arguments": item["arguments"],
+                "accepted_payload": item["accepted_payload"],
+            }
+            for item in invocation_rows
+        ]
+        accepted_turns.append(
+            {
+                "model_id": turn["model_id"],
+                "context": turn["context"],
+                "response": turn["response"],
+                "invocations": invocation_context,
+            }
+        )
+        turn_ids.append(turn["turn_id"])
+        invocation_ids.extend(item["invocation_id"] for item in invocation_rows)
+    return accepted_turns, turn_ids, invocation_ids
+
+
+def _initial_context_from_persisted(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise AgentLoopError("agent_context_provenance_missing")
+    initial = {
+        key: value[key] for key in ("task", "objective", "constraints", "policy") if key in value
+    }
+    try:
+        return canonicalize_initial_context(initial)
+    except AgentContextError:
+        raise AgentLoopError("agent_context_provenance_missing") from None
+
+
+def _model_budget_snapshot(run_id: UUID, row: dict[str, Any]) -> ModelBudgetSnapshot:
+    requests_reserved = int(row["model_requests_reserved"])
+    requests_authorized = int(row["model_requests_authorized"])
+    requests_received = int(row["model_requests_received"])
+    requests_ambiguous = int(row["model_requests_ambiguous"])
+    input_used = int(row["model_input_tokens_used"])
+    input_reserved = int(row["model_input_tokens_reserved"])
+    output_used = int(row["model_output_tokens_used"])
+    output_reserved = int(row["model_output_tokens_reserved"])
+    return ModelBudgetSnapshot(
+        run_id=run_id,
+        model_id=row["model_id"],
+        requests_reserved=requests_reserved,
+        requests_authorized=requests_authorized,
+        requests_received=requests_received,
+        requests_ambiguous=requests_ambiguous,
+        requests_in_flight=max(0, requests_authorized - requests_received - requests_ambiguous),
+        requests_remaining=max(0, MAX_AGENT_TURNS_PER_RUN - requests_reserved),
+        input_tokens_used=input_used,
+        input_tokens_reserved=input_reserved,
+        input_tokens_remaining=max(0, MAX_AGENT_INPUT_TOKENS_PER_RUN - input_used - input_reserved),
+        output_tokens_used=output_used,
+        output_tokens_reserved=output_reserved,
+        output_tokens_remaining=max(
+            0, MAX_AGENT_OUTPUT_TOKENS_PER_RUN - output_used - output_reserved
+        ),
+        usage_unknown_requests=int(row["model_usage_unknown_requests"]),
+        exceeded=bool(row["model_budget_exceeded"]),
+    )
+
+
 def _verify_persisted_response_and_calls(
     turn: dict[str, Any], invocations: list[dict[str, Any]]
 ) -> None:
@@ -1649,13 +2493,40 @@ def _verify_persisted_response_and_calls(
         ):
             raise AgentLoopError("agent_invocation_materialization_corrupt")
         accepted = actual.get("accepted_payload")
-        if accepted is not None and (
-            accepted.get("agent_turn_id") != str(turn["turn_id"])
-            or accepted.get("agent_invocation_id") != str(actual["invocation_id"])
-            or accepted.get("ordinal") != actual["ordinal"]
-            or accepted.get("tool_name") != actual["tool_name"]
-        ):
-            raise AgentLoopError("agent_invocation_result_corrupt")
+        if accepted is not None:
+            if (
+                accepted.get("agent_turn_id") != str(turn["turn_id"])
+                or accepted.get("agent_invocation_id") != str(actual["invocation_id"])
+                or accepted.get("ordinal") != actual["ordinal"]
+                or accepted.get("tool_name") != actual["tool_name"]
+            ):
+                raise AgentLoopError("agent_invocation_result_corrupt")
+            if "accepted_result_sha256" in actual:
+                payload_digest = hashlib.sha256(
+                    _canonical_json(accepted, "agent_invocation_result_corrupt").encode("utf-8")
+                ).digest()
+                if payload_digest != actual["accepted_result_sha256"]:
+                    raise AgentLoopError("agent_invocation_result_corrupt")
+                if (
+                    actual.get("accepted_step_id") is None
+                    or actual.get("accepted_job_id") is None
+                    or actual.get("accepted_logical_key") != actual["logical_key"]
+                    or actual.get("accepted_activity") != "agent_tool"
+                ):
+                    raise AgentLoopError("agent_invocation_result_corrupt")
+
+
+def _persisted_request_digest(turn: dict[str, Any]) -> bytes:
+    payload = {
+        "baseline_artifact_id": str(turn["baseline_artifact_id"]),
+        "context": turn["context"],
+        "logical_key": turn["logical_key"],
+        "model_id": turn["model_id"],
+        "output_tokens_reserved": turn["output_tokens_reserved"],
+        "tool_schemas": turn["tool_schemas"],
+    }
+    serialized = _canonical_json(payload, "agent_persisted_request_corrupt")
+    return hashlib.sha256(serialized.encode("utf-8")).digest()
 
 
 def _canonical_json(value: Any, error_code: str) -> str:
