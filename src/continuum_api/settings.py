@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     runtime_database_url: SecretStr | None = None
     encryption_key: SecretStr | None = None
+    encryption_key_version: str = Field(default="v1", pattern=r"^[A-Za-z0-9_-]{1,32}$")
+    encryption_previous_keys: SecretStr | None = None
 
     @model_validator(mode="before")
     @classmethod

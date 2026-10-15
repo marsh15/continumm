@@ -280,8 +280,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T07.
 - **Scope:** Medium; credential service, settings and security tests.
-- [ ] Authenticated encryption binds owner/provider/scope and supports key-version rotation.
-- [ ] Saved and per-run keys are redacted, revocable, and unavailable to tools or traces.
+- [x] Authenticated encryption binds owner/provider/scope and supports key-version rotation.
+- [x] Saved and per-run keys are redacted, revocable, and unavailable to tools or traces.
+- **Evidence:** [Credential lifecycle contract and local proof](../docs/credential-lifecycle.md); synthetic cryptographic tests and a dedicated PostgreSQL 17 lifecycle/RLS/lease-expiry proof. Public credential routes and live provider wiring remain later tasks.
 - **Verify:** make test-target TARGET=tests/security/test_credentials.py.
 
 ### T24 — OpenAI adapter

@@ -261,8 +261,21 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   cumulative model token limits remain later tasks.
   [Contract and evidence](../docs/scripted-agent-loop.md).
 
-Implementation resumed after the user's T20 review pause. Work proceeds in
-backlog order, committing each completed task. A local test or mocked adapter does not
+- T23: credential encryption and BYOK lifecycle complete locally. AES-256-GCM
+  binds owner/provider/scope/run/credential/version; saved keys require explicit
+  opt-in, and per-run material is erased transactionally at terminal transitions.
+  The owner-RLS store supports provider-pinned bindings, one-use dispatch
+  authorizations, revocation, replacement, rotation and bounded repair. The
+  focused target passed ten tests with the dedicated PostgreSQL 17 proof enabled,
+  including expiry during a row-lock wait and all four terminal states. The full
+  Python suite passed 448 tests with 34 optional database cases skipped;
+  formatting, lint, typing and package build passed. Runtime dependency audit
+  found no advisories. A dev-only pytest advisory and its private-directory
+  mitigation are recorded in the [credential contract](../docs/credential-lifecycle.md).
+  No live keys, provider calls or public credential routes were used.
+
+Implementation is stopped after T23 at the user's request. T24 and later work
+has not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

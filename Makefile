@@ -25,14 +25,14 @@ typecheck:
 	uv run --locked --python $(PYTHON_VERSION) mypy
 
 test:
-	uv run --locked --python $(PYTHON_VERSION) pytest -q
+	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q
 
 test-target:
 	@test -n "$(TARGET)" || (echo "Usage: make test-target TARGET=tests/path.py" >&2; exit 2)
-	uv run --locked --python $(PYTHON_VERSION) pytest -q "$(TARGET)"
+	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q "$(TARGET)"
 
 test-integration:
-	uv run --locked --python $(PYTHON_VERSION) pytest -q tests/integration
+	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q tests/integration
 
 test-edge:
 	npm --prefix tools/edge test
