@@ -65,6 +65,7 @@ MAX_AGENT_OUTPUT_TOKENS = 4096
 _SAFE_PROVIDER_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 _SCRIPTED_MODEL_ID = "scripted-v1"
 OPENAI_MODEL_ID = "gpt-5.4-mini-2026-03-17"
+ANTHROPIC_MODEL_ID = "claude-sonnet-5-5"
 _TOOL_NAMES = frozenset({"list_files", "read_file", "search_text", "apply_patch", "diff"})
 
 
@@ -107,6 +108,7 @@ class NormalizedModelResponse(_StrictModel):
     input_tokens: int | None = Field(default=None, ge=0, le=120_000)
     output_tokens: int | None = Field(default=None, ge=0, le=MAX_AGENT_OUTPUT_TOKENS)
     cached_input_tokens: int | None = Field(default=None, ge=0, le=120_000)
+    cache_creation_input_tokens: int | None = Field(default=None, ge=0, le=120_000)
     reasoning_output_tokens: int | None = Field(default=None, ge=0, le=MAX_AGENT_OUTPUT_TOKENS)
     latency_ms: int | None = Field(default=None, ge=0, le=600_000)
     continuation: dict[str, Any] | None = None
@@ -128,6 +130,13 @@ class NormalizedModelResponse(_StrictModel):
             and self.cached_input_tokens > self.input_tokens
         ):
             raise ValueError("agent_cached_usage_invalid")
+        if (
+            self.cache_creation_input_tokens is not None
+            and self.input_tokens is not None
+            and self.cached_input_tokens is not None
+            and self.cached_input_tokens + self.cache_creation_input_tokens > self.input_tokens
+        ):
+            raise ValueError("agent_cache_creation_usage_invalid")
         if (
             self.reasoning_output_tokens is not None
             and self.output_tokens is not None
@@ -264,7 +273,7 @@ class DurableAgentLoopService:
     ) -> AgentTurnIntent:
         self._check_owner(lease)
         schemas = tuple(tool_schemas)
-        if model_id not in {_SCRIPTED_MODEL_ID, OPENAI_MODEL_ID}:
+        if model_id not in {_SCRIPTED_MODEL_ID, OPENAI_MODEL_ID, ANTHROPIC_MODEL_ID}:
             raise AgentLoopError("agent_model_unsupported")
         if (
             not logical_key
@@ -509,10 +518,15 @@ class DurableAgentLoopService:
                 validate_request = getattr(adapter, "validate_request", None)
                 if callable(validate_request):
                     validate_request(request)
+                provider = (
+                    CredentialProvider.OPENAI
+                    if row["model_id"] == OPENAI_MODEL_ID
+                    else CredentialProvider.ANTHROPIC
+                )
                 credential_grant = await asyncio.to_thread(
                     self._credential_service.authorize_dispatch,
                     lease,
-                    CredentialProvider.OPENAI,
+                    provider,
                     turn_id,
                 )
             row = await self._authorize_model_dispatch(lease, turn_id)
@@ -1252,6 +1266,7 @@ class DurableAgentLoopService:
                     "response=CAST(:response AS jsonb), response_sha256=:response_sha256, "
                     "response_received_at=clock_timestamp(), input_tokens=:input_tokens, "
                     "output_tokens=:output_tokens, cached_input_tokens=:cached_input_tokens, "
+                    "cache_creation_input_tokens=:cache_creation_input_tokens, "
                     "reasoning_output_tokens=:reasoning_output_tokens, "
                     "provider_request_id=:provider_request_id, latency_ms=:latency_ms, "
                     "updated_at=clock_timestamp() "
@@ -1263,6 +1278,7 @@ class DurableAgentLoopService:
                     "input_tokens": response.input_tokens,
                     "output_tokens": response.output_tokens,
                     "cached_input_tokens": response.cached_input_tokens,
+                    "cache_creation_input_tokens": response.cache_creation_input_tokens,
                     "reasoning_output_tokens": response.reasoning_output_tokens,
                     "provider_request_id": response.provider_request_id,
                     "latency_ms": response.latency_ms,
@@ -1281,6 +1297,7 @@ class DurableAgentLoopService:
                     "input_tokens": response.input_tokens,
                     "output_tokens": response.output_tokens,
                     "cached_input_tokens": response.cached_input_tokens,
+                    "cache_creation_input_tokens": response.cache_creation_input_tokens,
                     "reasoning_output_tokens": response.reasoning_output_tokens,
                     "provider_request_id": response.provider_request_id,
                     "latency_ms": response.latency_ms,
@@ -1604,6 +1621,7 @@ def _verify_persisted_response_and_calls(
         response.input_tokens != turn["input_tokens"]
         or response.output_tokens != turn["output_tokens"]
         or response.cached_input_tokens != turn.get("cached_input_tokens")
+        or response.cache_creation_input_tokens != turn.get("cache_creation_input_tokens")
         or response.reasoning_output_tokens != turn.get("reasoning_output_tokens")
         or response.provider_request_id != turn.get("provider_request_id")
         or response.latency_ms != turn.get("latency_ms")

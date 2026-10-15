@@ -17,6 +17,8 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [Work-triggered wake setup](wake-setup.md)
 - [T06 hosted evidence (not run)](evidence/t06-hosted.md)
 - [Runtime persistence and database role](runtime-persistence.md)
+- [OpenAI adapter and local evidence](openai-adapter.md)
+- [Anthropic adapter and local evidence](anthropic-adapter.md)
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the historical Continuum specification from September. Its claims of prior approval do not override the new interview decisions or the current proposed plan. It is preserved unchanged as reference material.
 

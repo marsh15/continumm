@@ -285,6 +285,17 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   remains pending: eval-live fails closed until the controlled admitted-run
   harness exists. [Contract](../docs/openai-adapter.md).
 
+- T25: Anthropic adapter complete locally. The official Messages SDK uses the
+  pinned Sonnet model, disabled retries, strict sequential tools and one-use
+  encrypted credential dispatch. Full ordered content (including thinking
+  signatures) survives persistence; tool IDs, stop reasons, cached input,
+  cache-creation input, latency and unknown usage follow the shared contract.
+  Sixteen Anthropic protocol tests passed, as did all six shared provider
+  PostgreSQL cases. The full Python suite passed 473 tests (40 optional database
+  cases skipped), with formatting, lint, typing and package build passing.
+  Live Anthropic execution remains pending; eval-live fails closed without the
+  controlled admitted-run harness. [Contract](../docs/anthropic-adapter.md).
+
 Implementation resumed from T24 on 15 October 2026. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.

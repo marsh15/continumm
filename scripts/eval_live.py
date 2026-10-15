@@ -8,7 +8,7 @@ import sys
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("openai",), required=True)
+    parser.add_argument("--provider", choices=("openai", "anthropic"), required=True)
     parser.parse_args()
     print(
         "live_evaluation_harness_unavailable: live calls require a controlled admitted-run "

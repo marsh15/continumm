@@ -32,7 +32,7 @@ test-target:
 	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q "$(TARGET)"
 
 eval-live:
-	@test "$(PROVIDER)" = "openai" || (echo "Usage: make eval-live PROVIDER=openai" >&2; exit 2)
+	@test "$(PROVIDER)" = "openai" -o "$(PROVIDER)" = "anthropic" || (echo "Usage: make eval-live PROVIDER=openai|anthropic" >&2; exit 2)
 	uv run --locked --python $(PYTHON_VERSION) python scripts/eval_live.py --provider "$(PROVIDER)"
 
 test-integration:

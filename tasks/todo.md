@@ -303,8 +303,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T22, T23.
 - **Scope:** Medium; one adapter and protocol fixtures.
-- [ ] Preserve tool_use/tool_result correlation, continuation material, stop reasons and usage.
-- [ ] Pass the same application contract and unknown-response accounting as OpenAI.
+- [x] Preserve tool_use/tool_result correlation, continuation material, stop reasons and usage.
+- [x] Pass the same application contract and unknown-response accounting as OpenAI.
 - **Verify:** make test-target TARGET=tests/adapters/test_anthropic.py; explicit make eval-live PROVIDER=anthropic.
 
 ### T26 — Model/run limits and context
