@@ -340,8 +340,35 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   approval flows and hosted release evidence remain pending. No paid provider
   call was made. [Approval contract](../docs/approvals.md).
 
-Implementation resumed through T27 following the user's continuation request.
-T28 and later tasks have not started. A local test or mocked adapter does not
+- T28: candidate review interface and bounded rework complete locally. The
+  authenticated review query verifies manifest/evidence hashes and pinned source
+  archives, checks current repository access and rechecks state/deadlines before
+  returning. The responsive diff screen shows file navigation, both validation
+  phases, exact manifest/digest, expiry and cumulative allowance. Approve/reject
+  and required-feedback changes use durable owner-scoped 24-hour idempotency;
+  actual streamed bodies are capped before JSON parsing. Shared approval logic
+  supports only revision 0→1→2, creates a new fenced agent turn for each rework,
+  binds database feedback into context provenance, and preserves the pinned
+  task/model/tool schemas, resource usage and original deadline. Original
+  revision-0 context hashes stay compatible. PostgreSQL 17 passed 50 review,
+  approval, agent-loop, provider and cumulative-budget/context tests, including
+  two new checkpoints/evidence/manifests, old approval rejection, competing
+  decisions, cross-owner/access denial and actual HTTP decision/replay. The
+  temporary database was removed. `make check`, package/frontend builds and
+  the Chromium browser suite passed: 519 Python tests (74 optional database cases skipped), 22
+  frontend tests, 21 edge tests and six Chromium browser tests, with formatting,
+  lint, Python/TypeScript typing, API generation checks and builds passing.
+  Browser tests exercise the built UI with explicit API fixtures, including
+  keyboard/mobile layout, hostile text, expiry/stale state and retry identity;
+  desktop/mobile renders were inspected. Playwright is pinned as a dev-only
+  browser-test dependency. The default API still fails closed without injected
+  identity, service and CSRF/origin boundaries; T29 must provide live sessions
+  and GitHub authorization. Docker, hosted integration and real-provider review
+  remain pending; no paid provider or GitHub mutation was made.
+  [Review contract and verification](../docs/review-interface.md).
+
+Implementation resumed through T28 following the user's continuation request.
+T29 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

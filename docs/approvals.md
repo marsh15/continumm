@@ -1,8 +1,9 @@
 # Publication approvals
 
 T27 freezes one exact, validated source candidate before the owner can approve
-publication. The approval service is internal to the runtime; this task adds no
-HTTP route, browser authentication, review screen, or GitHub mutation adapter.
+publication. T27 introduced the internal approval service. T28 now adds the
+[review API and interface](review-interface.md); browser authentication and the
+GitHub mutation adapter remain later tasks.
 
 ## Evidence and manifest creation
 
@@ -59,7 +60,7 @@ still idempotent.
 An approval atomically queues one `publish_approved` job using
 `ATTENTION_ON_UNKNOWN` replay policy and moves the run to `running`. Rejection
 terminalizes the run through the existing T11 path and erases run-scoped
-credentials. A changes decision is recorded for T28's bounded rework flow.
+credentials. A changes decision requires owner feedback and enters T28's bounded rework flow.
 T27 does not send GitHub writes. The later worker must request a fresh
 operation-specific grant for `write_git_objects`, `update_managed_branch`, or
 `create_pull_request`; the grant binds the approval digest, current revision,

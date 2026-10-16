@@ -213,7 +213,12 @@ function RunDetailForRun({ runId }: { runId: string }) {
           <p className="eyebrow">Run detail</p>
           <h1>Current run</h1>
         </div>
-        <Link to="/" className="text-link">Service status</Link>
+        <div className="run-heading-links">
+          {snapshot.status === "waiting_approval" ? (
+            <Link to={`/runs/${encodeURIComponent(runId)}/review`} className="review-route-link">Review candidate</Link>
+          ) : null}
+          <Link to="/" className="text-link">Service status</Link>
+        </div>
       </div>
 
       <p className="run-id-line">

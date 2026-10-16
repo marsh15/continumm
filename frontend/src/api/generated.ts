@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/approvals/{approval_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Review */
+        post: operations["decide_review_api_v1_approvals__approval_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -30,6 +47,23 @@ export interface paths {
         };
         /** Get Run Events */
         get: operations["get_run_events_api_v1_runs__run_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Review */
+        get: operations["get_review_api_v1_runs__run_id__review_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -82,6 +116,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * CommandEvidence
+         * @description Digest-only summary of one bounded fixed profile command.
+         */
+        CommandEvidence: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Phase */
+            phase: string;
+            /** Stderr Bytes */
+            stderr_bytes: number;
+            /** Stderr Sha256 */
+            stderr_sha256: string;
+            /** Stdout Bytes */
+            stdout_bytes: number;
+            /** Stdout Sha256 */
+            stdout_sha256: string;
+        };
         /**
          * ErrorResponse
          * @description Uniform machine-readable API error shape.
@@ -158,6 +210,11 @@ export interface components {
             /** Retryable */
             retryable: boolean;
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /**
          * HealthResponse
          * @description Documented successful health response shape.
@@ -182,6 +239,174 @@ export interface components {
              * @enum {string}
              */
             reason: "cursor_ahead" | "history_gap";
+        };
+        /** PhaseEvidence */
+        PhaseEvidence: {
+            /** Allocation Id */
+            allocation_id?: string | null;
+            /** Allocation Status */
+            allocation_status?: string | null;
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            artifact_id: string;
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Baseline Archive Sha256 */
+            baseline_archive_sha256: string;
+            /** Baseline Archive Tree Sha256 */
+            baseline_archive_tree_sha256: string;
+            /** Baseline Git Tree Sha256 */
+            baseline_git_tree_sha256: string;
+            /** Command Id */
+            command_id: string;
+            /** Commands */
+            commands: components["schemas"]["CommandEvidence"][];
+            /** Error Code */
+            error_code?: string | null;
+            /** Image */
+            image?: string | null;
+            /** Npm Version */
+            npm_version?: string | null;
+            outcome: components["schemas"]["PhaseOutcome"];
+            /** Package Count */
+            package_count: number;
+            phase: components["schemas"]["ValidationPhase"];
+            /** Profile Id */
+            profile_id: string;
+            /** Profile Version */
+            profile_version: string;
+            /** Repository Id */
+            repository_id: number;
+            /** Runtime Version */
+            runtime_version?: string | null;
+            /** Source Archive Sha256 */
+            source_archive_sha256: string;
+            /** Source Tree Sha256 */
+            source_tree_sha256: string;
+            /** Test Exit Code */
+            test_exit_code?: number | null;
+        };
+        /**
+         * PhaseOutcome
+         * @enum {string}
+         */
+        PhaseOutcome: "passed" | "test_failed" | "unsupported" | "setup_failed" | "unknown" | "not_run";
+        /** ReviewApproval */
+        ReviewApproval: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "approved" | "rejected" | "changes" | "expired";
+        };
+        /** ReviewDecisionReceipt */
+        ReviewDecisionReceipt: {
+            /**
+             * Approval Id
+             * Format: uuid
+             */
+            approval_id: string;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+            /** Revision */
+            revision: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "approved" | "rejected" | "changes";
+        };
+        /** ReviewDecisionRequest */
+        ReviewDecisionRequest: {
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject" | "changes";
+            /** Feedback */
+            feedback?: string | null;
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+        };
+        /** ReviewDiff */
+        ReviewDiff: {
+            /** Changed Paths */
+            changed_paths: string[];
+            /** Text */
+            text: string;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** ReviewLimits */
+        ReviewLimits: {
+            input_tokens: components["schemas"]["ReviewUsage"];
+            output_tokens: components["schemas"]["ReviewUsage"];
+            requests: components["schemas"]["ReviewUsage"];
+            sandbox_seconds: components["schemas"]["ReviewUsage"];
+        };
+        /** ReviewResponse */
+        ReviewResponse: {
+            approval: components["schemas"]["ReviewApproval"];
+            /** Decision Eligible */
+            decision_eligible: boolean;
+            diff: components["schemas"]["ReviewDiff"];
+            evidence: components["schemas"]["ValidationEvidence"];
+            limits: components["schemas"]["ReviewLimits"];
+            /** Manifest */
+            manifest: {
+                [key: string]: unknown;
+            };
+            /** Manifest Sha256 */
+            manifest_sha256: string;
+            /** Revision */
+            revision: number;
+            revisions: components["schemas"]["ReviewRevisions"];
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Status */
+            status: string;
+        };
+        /** ReviewRevisions */
+        ReviewRevisions: {
+            /**
+             * Limit
+             * @default 2
+             * @constant
+             */
+            limit: 2;
+            /** Remaining */
+            remaining: number;
+            /** Used */
+            used: number;
+        };
+        /** ReviewUsage */
+        ReviewUsage: {
+            /** Limit */
+            limit: number;
+            /** Used */
+            used: number;
         };
         /** RunSnapshotResponse */
         RunSnapshotResponse: {
@@ -231,6 +456,63 @@ export interface components {
             /** Type */
             type: string;
         };
+        /**
+         * ValidationClassification
+         * @enum {string}
+         */
+        ValidationClassification: "passed" | "passed_with_baseline_failure" | "candidate_test_failed" | "baseline_unsupported" | "baseline_setup_failed" | "baseline_unknown" | "candidate_unsupported" | "candidate_setup_failed" | "candidate_unknown";
+        /** ValidationError */
+        ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+        };
+        /**
+         * ValidationEvidence
+         * @description Prepared evidence. It becomes durable only with a fenced T08 commit.
+         */
+        ValidationEvidence: {
+            baseline: components["schemas"]["PhaseEvidence"];
+            /**
+             * Baseline Artifact Id
+             * Format: uuid
+             */
+            baseline_artifact_id: string;
+            candidate: components["schemas"]["PhaseEvidence"];
+            /** Candidate Archive Sha256 */
+            candidate_archive_sha256: string;
+            /** Candidate Lineage Sha256 */
+            candidate_lineage_sha256: string;
+            /** Candidate Source Tree Sha256 */
+            candidate_source_tree_sha256: string;
+            /** Changed Path Count */
+            changed_path_count: number;
+            classification: components["schemas"]["ValidationClassification"];
+            /**
+             * Evidence Version
+             * @default 1
+             * @constant
+             */
+            evidence_version: 1;
+            /**
+             * Regression On Original
+             * @default absent
+             * @constant
+             */
+            regression_on_original: "absent";
+        };
+        /**
+         * ValidationPhase
+         * @enum {string}
+         */
+        ValidationPhase: "baseline" | "candidate";
     };
     responses: never;
     parameters: never;
@@ -240,6 +522,106 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    decide_review_api_v1_approvals__approval_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                approval_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewDecisionReceipt"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_run_snapshot_api_v1_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -367,6 +749,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_review_api_v1_runs__run_id__review_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */

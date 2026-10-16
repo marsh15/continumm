@@ -333,8 +333,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T12, T26, T27.
 - **Scope:** Medium; review endpoint/UI and tests.
-- [ ] Display diff, test evidence, manifest and limits with approve/reject/changes actions.
-- [ ] Two revisions are supported; each gets new evidence/approval and shares existing resource allowance.
+- [x] Display diff, test evidence, manifest and limits with approve/reject/changes actions.
+- [x] Two revisions are supported; each gets new evidence/approval and shares existing resource allowance.
 - **Verify:** make test-ui; make test-e2e with approval/rework fixtures.
 
 ## Phase 4 — Correct external publication

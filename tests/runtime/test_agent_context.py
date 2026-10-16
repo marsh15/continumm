@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -358,3 +360,69 @@ def test_pinned_context_canonicalization_and_source_digest_are_stable() -> None:
             accepted_turn_ids=["not-a-database-id"],
             accepted_invocation_ids=[],
         )
+
+
+def test_revision_feedback_is_bound_without_changing_the_pinned_task() -> None:
+    feedback_text = "Please add a regression test for the empty input case."
+    feedback = {
+        "feedback_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "revision": 1,
+        "feedback": feedback_text,
+        "feedback_sha256": hashlib.sha256(feedback_text.encode()).hexdigest(),
+    }
+    context = build_agent_context(
+        initial_context=_INITIAL,
+        accepted_turns=[],
+        model_id=OPENAI_MODEL_ID,
+        budget=_BUDGET,
+        revision_feedback=feedback,
+    )
+    assert context["task"] == _INITIAL["task"]
+    assert context["constraints"] == _INITIAL["constraints"]
+    assert context["revision_feedback"] == feedback
+
+    accepted = _turn(OPENAI_MODEL_ID, context)
+    next_context = build_agent_context(
+        initial_context=_INITIAL,
+        accepted_turns=[accepted],
+        model_id=OPENAI_MODEL_ID,
+        budget=_BUDGET,
+        revision_feedback=feedback,
+    )
+    assert next_context["revision_feedback"] == feedback
+    assert "Please add a regression test" in str(next_context["openai_continuation_items"])
+    assert context_source_sha256(
+        initial_context=_INITIAL,
+        accepted_turn_ids=[],
+        accepted_invocation_ids=[],
+        revision_feedback=feedback,
+    ) != context_source_sha256(
+        initial_context=_INITIAL,
+        accepted_turn_ids=[],
+        accepted_invocation_ids=[],
+    )
+
+
+def test_revision_zero_source_hash_keeps_legacy_serialization() -> None:
+    payload = {
+        "initial_context": _INITIAL,
+        "accepted_turn_ids": [],
+        "accepted_invocation_ids": [],
+    }
+    expected = hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    assert (
+        context_source_sha256(
+            initial_context=_INITIAL,
+            accepted_turn_ids=[],
+            accepted_invocation_ids=[],
+        )
+        == expected
+    )

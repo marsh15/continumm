@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
@@ -86,6 +86,9 @@ frontend-openapi-check: frontend-install
 
 test-ui: frontend-openapi-check
 	cd frontend && npm run typecheck && npm run test -- --run
+
+test-e2e: build-frontend
+	cd frontend && npm run test:e2e
 
 build: build-package build-frontend build-container
 

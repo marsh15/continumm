@@ -549,6 +549,7 @@ def _decide(scenario: ApprovalScenario, decision: str = "approve") -> ApprovalRe
             approval_id=receipt.approval_id,
             manifest_sha256=receipt.manifest_sha256.hex(),
             decision=decision,
+            feedback="Please address the review comments." if decision == "changes" else None,
         )
     )
 
@@ -615,10 +616,10 @@ def test_approval_schedules_once_and_requires_live_publication_lease(
         _close_scenario(scenario)
 
 
-def test_rejection_terminalizes_and_changes_does_not_publish(
+def test_rejection_terminalizes_and_changes_enqueue_bounded_rework(
     t22_database: T22Database, tmp_path: Path
 ) -> None:
-    for decision, expected_status in (("reject", "failed"), ("changes", "waiting_approval")):
+    for decision, expected_status in (("reject", "failed"), ("changes", "running")):
         scenario = create_frozen_approval(t22_database, tmp_path)
         try:
             _decide(scenario, decision)
@@ -641,6 +642,24 @@ def test_rejection_terminalizes_and_changes_does_not_publish(
                     ).scalar_one()
                     == 0
                 )
+                if decision == "changes":
+                    assert (
+                        connection.execute(
+                            text("SELECT revision FROM runtime_private.runs WHERE run_id=:run"),
+                            {"run": scenario.run.run_id},
+                        ).scalar_one()
+                        == 1
+                    )
+                    assert (
+                        connection.execute(
+                            text(
+                                "SELECT count(*) FROM runtime_private.steps WHERE run_id=:run "
+                                "AND activity='agent_turn' AND revision=1"
+                            ),
+                            {"run": scenario.run.run_id},
+                        ).scalar_one()
+                        == 1
+                    )
         finally:
             _close_scenario(scenario)
 

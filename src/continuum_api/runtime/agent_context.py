@@ -52,13 +52,17 @@ def context_source_sha256(
     initial_context: Mapping[str, Any],
     accepted_turn_ids: Sequence[UUID | str],
     accepted_invocation_ids: Sequence[UUID | str],
+    revision_feedback: Mapping[str, Any] | None = None,
 ) -> str:
     """Hash pinned inputs and ordered database identities for context provenance."""
-    payload = {
+    payload: dict[str, Any] = {
         "initial_context": canonicalize_initial_context(initial_context),
         "accepted_turn_ids": _canonical_row_ids(accepted_turn_ids),
         "accepted_invocation_ids": _canonical_row_ids(accepted_invocation_ids),
     }
+    feedback = _validate_revision_feedback(revision_feedback)
+    if feedback is not None:
+        payload["revision_feedback"] = feedback
     try:
         encoded = json.dumps(
             payload,
@@ -78,6 +82,7 @@ def build_agent_context(
     accepted_turns: Sequence[Mapping[str, Any]],
     model_id: str,
     budget: Mapping[str, Any],
+    revision_feedback: Mapping[str, Any] | None = None,
     context_limit_bytes: int = MAX_AGENT_CONTEXT_BYTES,
 ) -> dict[str, Any]:
     """Build context only from pinned inputs and accepted durable turn records.
@@ -90,6 +95,7 @@ def build_agent_context(
     try:
         pinned = _validate_initial(initial_context)
         _validate_budget(budget)
+        feedback = _validate_revision_feedback(revision_feedback)
         openai_model_id, anthropic_model_id, scripted_model_id = _model_ids()
         if model_id not in {openai_model_id, anthropic_model_id, scripted_model_id}:
             raise AgentContextError("agent_context_model_invalid")
@@ -134,6 +140,8 @@ def build_agent_context(
         current = dict(pinned)
         current["budget"] = dict(budget)
         current.update(_visible_context(visible))
+        if feedback is not None:
+            current["revision_feedback"] = feedback
         if history and key is not None:
             current[key] = history
         _validate_json_value(current)
@@ -222,11 +230,51 @@ def _public_prior_context(
     _validate_budget(budget)
     expected: dict[str, Any] = {**pinned, "budget": dict(budget)}
     expected.update(_visible_context(prior_visible))
+    feedback = _validate_revision_feedback(context.get("revision_feedback"))
+    if feedback is not None:
+        expected["revision_feedback"] = feedback
     if expected_history and history_key is not None:
         expected[history_key] = expected_history
     if dict(context) != expected:
         raise AgentContextError("agent_context_history_invalid")
     return {key: item for key, item in expected.items() if key != history_key}
+
+
+def _validate_revision_feedback(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != {
+        "feedback_id",
+        "revision",
+        "feedback",
+        "feedback_sha256",
+    }:
+        raise AgentContextError("agent_context_revision_feedback_invalid")
+    feedback = value["feedback"]
+    revision = value["revision"]
+    digest = value["feedback_sha256"]
+    try:
+        feedback_id = str(UUID(str(value["feedback_id"])))
+        encoded = feedback.encode("utf-8", errors="strict")
+    except (AttributeError, TypeError, ValueError, UnicodeEncodeError):
+        raise AgentContextError("agent_context_revision_feedback_invalid") from None
+    if (
+        type(revision) is not int
+        or revision not in {1, 2}
+        or not isinstance(feedback, str)
+        or not feedback.strip()
+        or len(encoded) > 16_384
+        or not isinstance(digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        or hashlib.sha256(encoded).hexdigest() != digest
+    ):
+        raise AgentContextError("agent_context_revision_feedback_invalid")
+    return {
+        "feedback_id": feedback_id,
+        "revision": revision,
+        "feedback": feedback,
+        "feedback_sha256": digest,
+    }
 
 
 def _append_native_turn(

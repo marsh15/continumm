@@ -8,6 +8,12 @@ export type RunEvent = RunEventPage["events"][number];
 export type HistoryReset = components["schemas"]["HistoryResetPayload"];
 export type EventStreamError = components["schemas"]["EventStreamErrorPayload"];
 
+export type ReviewPhaseEvidence = components["schemas"]["PhaseEvidence"];
+export type ValidationEvidence = components["schemas"]["ValidationEvidence"];
+export type ReviewSnapshot = paths["/api/v1/runs/{run_id}/review"]["get"]["responses"][200]["content"]["application/json"];
+export type ApprovalDecision = components["schemas"]["ReviewDecisionRequest"]["decision"];
+export type ApprovalDecisionResponse = paths["/api/v1/approvals/{approval_id}/decision"]["post"]["responses"][202]["content"]["application/json"];
+
 export const RUN_EVENT_PAGE_SIZE = 50;
 
 const decimalSequence = /^(0|[1-9][0-9]{0,18})$/;
@@ -90,11 +96,13 @@ async function requestJson<T>(
   path: string,
   isResponse: (value: unknown) => value is T,
   signal?: AbortSignal,
+  init?: Pick<RequestInit, "method" | "headers" | "body">,
 ): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
-      headers: { Accept: "application/json" },
+      ...init,
+      headers: { Accept: "application/json", ...init?.headers },
       credentials: "same-origin",
       signal,
     });
@@ -159,6 +167,96 @@ function isHealthBody(value: unknown): value is HealthBody {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isReviewPhaseEvidence(value: unknown): value is ReviewPhaseEvidence {
+  if (!isRecord(value)) return false;
+  return (
+    (value.phase === "baseline" || value.phase === "candidate") &&
+    ["passed", "test_failed", "unsupported", "setup_failed", "unknown", "not_run"].includes(String(value.outcome)) &&
+    typeof value.artifact_id === "string" &&
+    typeof value.base_commit_sha === "string" &&
+    typeof value.baseline_archive_sha256 === "string" &&
+    typeof value.baseline_archive_tree_sha256 === "string" &&
+    typeof value.baseline_git_tree_sha256 === "string" &&
+    typeof value.command_id === "string" &&
+    typeof value.profile_id === "string" &&
+    typeof value.profile_version === "string" &&
+    typeof value.repository_id === "number" &&
+    typeof value.source_archive_sha256 === "string" &&
+    typeof value.source_tree_sha256 === "string" &&
+    typeof value.package_count === "number" &&
+    ((value.test_exit_code === undefined) || value.test_exit_code === null || typeof value.test_exit_code === "number") &&
+    ["allocation_id", "allocation_status", "error_code", "image", "npm_version", "runtime_version"].every(
+      (key) => value[key] === undefined || value[key] === null || typeof value[key] === "string",
+    ) &&
+    Array.isArray(value.commands) &&
+    value.commands.every(
+      (command) =>
+        isRecord(command) &&
+        typeof command.phase === "string" &&
+        ((command.exit_code === undefined) || command.exit_code === null || typeof command.exit_code === "number") &&
+        typeof command.stdout_bytes === "number" &&
+        typeof command.stderr_bytes === "number" &&
+        typeof command.stdout_sha256 === "string" &&
+        typeof command.stderr_sha256 === "string",
+    )
+  );
+}
+
+export function isReviewSnapshot(value: unknown): value is ReviewSnapshot {
+  if (!isRecord(value) || !isRecord(value.diff) || !isRecord(value.approval) || !isRecord(value.limits) || !isRecord(value.revisions)) return false;
+  const evidence = value.evidence;
+  const limits = value.limits;
+  const limitNames = ["requests", "input_tokens", "output_tokens", "sandbox_seconds"] as const;
+  return (
+    typeof value.run_id === "string" &&
+    typeof value.revision === "number" &&
+    typeof value.status === "string" &&
+    typeof value.diff.text === "string" &&
+    Array.isArray(value.diff.changed_paths) &&
+    value.diff.changed_paths.every((path) => typeof path === "string") &&
+    typeof value.diff.truncated === "boolean" &&
+    isRecord(evidence) &&
+    evidence.evidence_version === 1 &&
+    ["passed", "passed_with_baseline_failure", "candidate_test_failed", "baseline_unsupported", "baseline_setup_failed", "baseline_unknown", "candidate_unsupported", "candidate_setup_failed", "candidate_unknown"].includes(String(evidence.classification)) &&
+    typeof evidence.baseline_artifact_id === "string" &&
+    typeof evidence.candidate_archive_sha256 === "string" &&
+    typeof evidence.candidate_source_tree_sha256 === "string" &&
+    typeof evidence.candidate_lineage_sha256 === "string" &&
+    typeof evidence.changed_path_count === "number" &&
+    evidence.regression_on_original === "absent" &&
+    isReviewPhaseEvidence(evidence.baseline) &&
+    isReviewPhaseEvidence(evidence.candidate) &&
+    isRecord(value.manifest) &&
+    typeof value.manifest_sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(value.manifest_sha256) &&
+    typeof value.approval.approval_id === "string" &&
+    value.approval.manifest_sha256 === value.manifest_sha256 &&
+    typeof value.approval.expires_at === "string" &&
+    ["pending", "approved", "rejected", "changes", "expired"].includes(String(value.approval.status)) &&
+    limitNames.every((name) => {
+      const metric = limits[name];
+      return isRecord(metric) && typeof metric.used === "number" && typeof metric.limit === "number";
+    }) &&
+    typeof value.revisions.used === "number" &&
+    value.revisions.limit === 2 &&
+    typeof value.revisions.remaining === "number" &&
+    value.revisions.used === value.revision &&
+    value.revisions.remaining === value.revisions.limit - value.revisions.used &&
+    typeof value.decision_eligible === "boolean"
+  );
+}
+
+function isApprovalDecisionResponse(value: unknown): value is ApprovalDecisionResponse {
+  return (
+    isRecord(value) &&
+    typeof value.approval_id === "string" &&
+    typeof value.run_id === "string" &&
+    typeof value.revision === "number" &&
+    typeof value.status === "string" &&
+    typeof value.manifest_sha256 === "string"
+  );
 }
 
 function isRunSnapshot(value: unknown): value is RunSnapshot {
@@ -271,6 +369,45 @@ export function getRunSnapshot(runId: string, signal?: AbortSignal): Promise<Run
     `/api/v1/runs/${encodeURIComponent(runId)}`,
     isRunSnapshot,
     signal,
+  );
+}
+
+export function getRunReview(runId: string, signal?: AbortSignal): Promise<ReviewSnapshot> {
+  return requestJson<ReviewSnapshot>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/review`,
+    isReviewSnapshot,
+    signal,
+  );
+}
+
+export function submitApprovalDecision(
+  approvalId: string,
+  decision: ApprovalDecision,
+  manifestSha256: string,
+  idempotencyKey: string,
+  feedback?: string,
+): Promise<ApprovalDecisionResponse> {
+  const body: { decision: ApprovalDecision; manifest_sha256: string; feedback?: string } = {
+    decision,
+    manifest_sha256: manifestSha256,
+  };
+  if (feedback !== undefined) body.feedback = feedback;
+  const csrfCookie = typeof document === "undefined"
+    ? undefined
+    : document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("csrf_token="))?.slice("csrf_token=".length);
+  return requestJson<ApprovalDecisionResponse>(
+    `/api/v1/approvals/${encodeURIComponent(approvalId)}/decision`,
+    isApprovalDecisionResponse,
+    undefined,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+        ...(csrfCookie ? { "X-CSRF-Token": decodeURIComponent(csrfCookie) } : {}),
+      },
+      body: JSON.stringify(body),
+    },
   );
 }
 

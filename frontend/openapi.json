@@ -1,6 +1,60 @@
 {
   "components": {
     "schemas": {
+      "CommandEvidence": {
+        "additionalProperties": false,
+        "description": "Digest-only summary of one bounded fixed profile command.",
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "maximum": 255.0,
+                "minimum": -255.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "phase": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Phase",
+            "type": "string"
+          },
+          "stderr_bytes": {
+            "maximum": 2097152.0,
+            "minimum": 0.0,
+            "title": "Stderr Bytes",
+            "type": "integer"
+          },
+          "stderr_sha256": {
+            "title": "Stderr Sha256",
+            "type": "string"
+          },
+          "stdout_bytes": {
+            "maximum": 2097152.0,
+            "minimum": 0.0,
+            "title": "Stdout Bytes",
+            "type": "integer"
+          },
+          "stdout_sha256": {
+            "title": "Stdout Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "stdout_bytes",
+          "stderr_bytes",
+          "stdout_sha256",
+          "stderr_sha256"
+        ],
+        "title": "CommandEvidence",
+        "type": "object"
+      },
       "ErrorResponse": {
         "description": "Uniform machine-readable API error shape.",
         "properties": {
@@ -295,6 +349,19 @@
         "title": "EventStreamErrorPayload",
         "type": "object"
       },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthResponse": {
         "description": "Documented successful health response shape.",
         "properties": {
@@ -349,6 +416,499 @@
           "high_watermark"
         ],
         "title": "HistoryResetPayload",
+        "type": "object"
+      },
+      "PhaseEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Id"
+          },
+          "allocation_status": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allocation Status"
+          },
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "base_commit_sha": {
+            "maxLength": 64,
+            "minLength": 40,
+            "title": "Base Commit Sha",
+            "type": "string"
+          },
+          "baseline_archive_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Baseline Archive Sha256",
+            "type": "string"
+          },
+          "baseline_archive_tree_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Baseline Archive Tree Sha256",
+            "type": "string"
+          },
+          "baseline_git_tree_sha256": {
+            "maxLength": 64,
+            "minLength": 40,
+            "title": "Baseline Git Tree Sha256",
+            "type": "string"
+          },
+          "command_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Command Id",
+            "type": "string"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/CommandEvidence"
+            },
+            "maxItems": 24,
+            "title": "Commands",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 96,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "image": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image"
+          },
+          "npm_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Npm Version"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/PhaseOutcome"
+          },
+          "package_count": {
+            "maximum": 24.0,
+            "minimum": 0.0,
+            "title": "Package Count",
+            "type": "integer"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ValidationPhase"
+          },
+          "profile_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "profile_version": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Profile Version",
+            "type": "string"
+          },
+          "repository_id": {
+            "exclusiveMinimum": 0.0,
+            "title": "Repository Id",
+            "type": "integer"
+          },
+          "runtime_version": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Version"
+          },
+          "source_archive_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Source Archive Sha256",
+            "type": "string"
+          },
+          "source_tree_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Source Tree Sha256",
+            "type": "string"
+          },
+          "test_exit_code": {
+            "anyOf": [
+              {
+                "maximum": 255.0,
+                "minimum": -255.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Exit Code"
+          }
+        },
+        "required": [
+          "phase",
+          "outcome",
+          "artifact_id",
+          "repository_id",
+          "base_commit_sha",
+          "baseline_git_tree_sha256",
+          "profile_id",
+          "profile_version",
+          "command_id",
+          "baseline_archive_sha256",
+          "baseline_archive_tree_sha256",
+          "source_archive_sha256",
+          "source_tree_sha256",
+          "package_count",
+          "commands"
+        ],
+        "title": "PhaseEvidence",
+        "type": "object"
+      },
+      "PhaseOutcome": {
+        "enum": [
+          "passed",
+          "test_failed",
+          "unsupported",
+          "setup_failed",
+          "unknown",
+          "not_run"
+        ],
+        "title": "PhaseOutcome",
+        "type": "string"
+      },
+      "ReviewApproval": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "changes",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "manifest_sha256",
+          "expires_at",
+          "status"
+        ],
+        "title": "ReviewApproval",
+        "type": "object"
+      },
+      "ReviewDecisionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_id": {
+            "format": "uuid",
+            "title": "Approval Id",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "rejected",
+              "changes"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approval_id",
+          "run_id",
+          "revision",
+          "status",
+          "manifest_sha256"
+        ],
+        "title": "ReviewDecisionReceipt",
+        "type": "object"
+      },
+      "ReviewDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "enum": [
+              "approve",
+              "reject",
+              "changes"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "maxLength": 16384,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback"
+          },
+          "manifest_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Manifest Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "manifest_sha256"
+        ],
+        "title": "ReviewDecisionRequest",
+        "type": "object"
+      },
+      "ReviewDiff": {
+        "additionalProperties": false,
+        "properties": {
+          "changed_paths": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Changed Paths",
+            "type": "array"
+          },
+          "text": {
+            "maxLength": 65536,
+            "title": "Text",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "changed_paths",
+          "truncated"
+        ],
+        "title": "ReviewDiff",
+        "type": "object"
+      },
+      "ReviewLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "input_tokens": {
+            "$ref": "#/components/schemas/ReviewUsage"
+          },
+          "output_tokens": {
+            "$ref": "#/components/schemas/ReviewUsage"
+          },
+          "requests": {
+            "$ref": "#/components/schemas/ReviewUsage"
+          },
+          "sandbox_seconds": {
+            "$ref": "#/components/schemas/ReviewUsage"
+          }
+        },
+        "required": [
+          "requests",
+          "input_tokens",
+          "output_tokens",
+          "sandbox_seconds"
+        ],
+        "title": "ReviewLimits",
+        "type": "object"
+      },
+      "ReviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "approval": {
+            "$ref": "#/components/schemas/ReviewApproval"
+          },
+          "decision_eligible": {
+            "title": "Decision Eligible",
+            "type": "boolean"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/ReviewDiff"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ValidationEvidence"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ReviewLimits"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "manifest_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Manifest Sha256",
+            "type": "string"
+          },
+          "revision": {
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "revisions": {
+            "$ref": "#/components/schemas/ReviewRevisions"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "revision",
+          "status",
+          "diff",
+          "evidence",
+          "manifest",
+          "manifest_sha256",
+          "approval",
+          "limits",
+          "revisions",
+          "decision_eligible"
+        ],
+        "title": "ReviewResponse",
+        "type": "object"
+      },
+      "ReviewRevisions": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "const": 2,
+            "default": 2,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "remaining": {
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "used": {
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "remaining"
+        ],
+        "title": "ReviewRevisions",
+        "type": "object"
+      },
+      "ReviewUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "exclusiveMinimum": 0.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "used": {
+            "minimum": 0.0,
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used",
+          "limit"
+        ],
+        "title": "ReviewUsage",
         "type": "object"
       },
       "RunSnapshotResponse": {
@@ -455,6 +1015,137 @@
         ],
         "title": "TimelineEventResponse",
         "type": "object"
+      },
+      "ValidationClassification": {
+        "enum": [
+          "passed",
+          "passed_with_baseline_failure",
+          "candidate_test_failed",
+          "baseline_unsupported",
+          "baseline_setup_failed",
+          "baseline_unknown",
+          "candidate_unsupported",
+          "candidate_setup_failed",
+          "candidate_unknown"
+        ],
+        "title": "ValidationClassification",
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "ValidationEvidence": {
+        "additionalProperties": false,
+        "description": "Prepared evidence. It becomes durable only with a fenced T08 commit.",
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/PhaseEvidence"
+          },
+          "baseline_artifact_id": {
+            "format": "uuid",
+            "title": "Baseline Artifact Id",
+            "type": "string"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/PhaseEvidence"
+          },
+          "candidate_archive_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Candidate Archive Sha256",
+            "type": "string"
+          },
+          "candidate_lineage_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Candidate Lineage Sha256",
+            "type": "string"
+          },
+          "candidate_source_tree_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Candidate Source Tree Sha256",
+            "type": "string"
+          },
+          "changed_path_count": {
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Changed Path Count",
+            "type": "integer"
+          },
+          "classification": {
+            "$ref": "#/components/schemas/ValidationClassification"
+          },
+          "evidence_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Evidence Version",
+            "type": "integer"
+          },
+          "regression_on_original": {
+            "const": "absent",
+            "default": "absent",
+            "title": "Regression On Original",
+            "type": "string"
+          }
+        },
+        "required": [
+          "classification",
+          "baseline_artifact_id",
+          "candidate_archive_sha256",
+          "candidate_source_tree_sha256",
+          "candidate_lineage_sha256",
+          "changed_path_count",
+          "baseline",
+          "candidate"
+        ],
+        "title": "ValidationEvidence",
+        "type": "object"
+      },
+      "ValidationPhase": {
+        "enum": [
+          "baseline",
+          "candidate"
+        ],
+        "title": "ValidationPhase",
+        "type": "string"
       }
     }
   },
@@ -464,6 +1155,147 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/approvals/{approval_id}/decision": {
+      "post": {
+        "operationId": "decide_review_api_v1_approvals__approval_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Approval Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDecisionReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Decide Review",
+        "tags": [
+          "review"
+        ]
+      }
+    },
     "/api/v1/runs/{run_id}": {
       "get": {
         "operationId": "get_run_snapshot_api_v1_runs__run_id__get",
@@ -689,6 +1521,89 @@
         "summary": "Get Run Events",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/review": {
+      "get": {
+        "operationId": "get_review_api_v1_runs__run_id__review_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Review",
+        "tags": [
+          "review"
         ]
       }
     },

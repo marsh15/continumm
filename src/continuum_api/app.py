@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -36,6 +37,8 @@ def create_app(
     static_dir: Path | None = None,
     *,
     principal_resolver: Callable[[Request], Any] | None = None,
+    review_service_factory: Callable[[Request, Any], Any] | None = None,
+    csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
 ) -> FastAPI:
     """Build the API with an injected identity boundary and runtime database."""
@@ -67,6 +70,7 @@ def create_app(
     application.state.runtime_engine = runtime_engine
     application.state.owns_runtime_engine = False
     application.state.runtime_engine_lock = threading.Lock()
+    from continuum_api.runtime.review_routes import create_review_router
     from continuum_api.runtime.run_routes import (
         _StreamLimiter,
         create_run_router,
@@ -75,6 +79,9 @@ def create_app(
 
     application.state.sse_stream_limiter = _StreamLimiter()
     application.include_router(create_run_router(principal_resolver))
+    application.include_router(
+        create_review_router(principal_resolver, review_service_factory, csrf_guard)
+    )
     install_sse_openapi(application)
 
     @application.middleware("http")
@@ -146,6 +153,8 @@ def create_app(
         if mapped is None:
             if exc.status_code == 404:
                 code = "not_found"
+            elif isinstance(exc.detail, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,95}", exc.detail):
+                code = exc.detail
             else:
                 code = "http_error"
         else:

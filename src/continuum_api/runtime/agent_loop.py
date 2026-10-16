@@ -428,15 +428,26 @@ class DurableAgentLoopService:
             ).scalar_one()
             if replay_policy != ReplayPolicy.REPLAY_SAFE.value:
                 raise AgentLoopError("agent_turn_replay_policy_required")
-            activity: str = connection.execute(
-                text(
-                    "SELECT activity FROM runtime_private.steps "
-                    "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
-                ),
-                {"owner_id": lease.owner_id, "run_id": lease.run_id, "step_id": lease.step_id},
-            ).scalar_one()
-            if activity != "agent_turn":
+            step_row = (
+                connection.execute(
+                    text(
+                        "SELECT activity, revision FROM runtime_private.steps "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id AND step_id=:step_id"
+                    ),
+                    {
+                        "owner_id": lease.owner_id,
+                        "run_id": lease.run_id,
+                        "step_id": lease.step_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if step_row is None or step_row["activity"] != "agent_turn":
                 raise AgentLoopError("agent_turn_activity_required")
+            revision_feedback = _load_revision_feedback(
+                connection, lease.owner_id, lease.run_id, step_row["revision"]
+            )
             root_artifact_id = connection.execute(
                 text(
                     "SELECT artifact_id FROM runtime_private.accepted_results "
@@ -525,6 +536,7 @@ class DurableAgentLoopService:
                     initial_context=initial_context,
                     accepted_turn_ids=prior_turn_ids,
                     accepted_invocation_ids=prior_invocation_ids,
+                    revision_feedback=revision_feedback,
                 )
                 if row["source_sha256"].hex() != expected_source:
                     raise AgentLoopError("agent_context_provenance_missing")
@@ -537,6 +549,7 @@ class DurableAgentLoopService:
                             accepted_turns=prior_turns,
                             model_id=row["model_id"],
                             budget=row["context"]["budget"],
+                            revision_feedback=revision_feedback,
                         )
                     except (AgentContextError, KeyError, TypeError):
                         raise AgentLoopError("agent_context_provenance_missing") from None
@@ -669,6 +682,7 @@ class DurableAgentLoopService:
                     accepted_turns=accepted_turns,
                     model_id=model_id,
                     budget=budget_context,
+                    revision_feedback=revision_feedback,
                 )
             except AgentContextError as error:
                 raise AgentLoopError(error.code) from None
@@ -677,6 +691,7 @@ class DurableAgentLoopService:
                     initial_context=initial_context,
                     accepted_turn_ids=accepted_turn_ids,
                     accepted_invocation_ids=accepted_invocation_ids,
+                    revision_feedback=revision_feedback,
                 )
             )
             request_payload = {
@@ -962,6 +977,18 @@ class DurableAgentLoopService:
                 or run["model_tool_schema_sha256"] != schema_digest
             ):
                 raise AgentLoopError("agent_context_provenance_missing")
+            step_revision = connection.execute(
+                text(
+                    "SELECT revision FROM runtime_private.steps WHERE owner_id=:owner "
+                    "AND run_id=:run AND step_id=:step"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id, "step": persisted["step_id"]},
+            ).scalar_one_or_none()
+            if step_revision is None:
+                raise AgentLoopError("agent_context_provenance_missing")
+            revision_feedback = _load_revision_feedback(
+                connection, lease.owner_id, lease.run_id, step_revision
+            )
             expected_source_request = _source_request_digest(
                 baseline_artifact_id=persisted["baseline_artifact_id"],
                 logical_key=persisted["logical_key"],
@@ -986,6 +1013,7 @@ class DurableAgentLoopService:
                 initial_context=initial_context,
                 accepted_turn_ids=prior_turn_ids,
                 accepted_invocation_ids=prior_invocation_ids,
+                revision_feedback=revision_feedback,
             )
             if persisted["source_sha256"].hex() != expected_source:
                 raise AgentLoopError("agent_context_provenance_missing")
@@ -996,6 +1024,7 @@ class DurableAgentLoopService:
                     accepted_turns=prior_turns,
                     model_id=persisted["model_id"],
                     budget=budget,
+                    revision_feedback=revision_feedback,
                 )
             except (AgentContextError, KeyError, TypeError):
                 raise AgentLoopError("agent_context_provenance_missing") from None
@@ -2284,6 +2313,46 @@ def _source_request_digest(
     return hashlib.sha256(serialized.encode("utf-8")).digest()
 
 
+def _load_revision_feedback(
+    connection: Any,
+    owner_id: UUID,
+    run_id: UUID,
+    revision: int,
+) -> dict[str, Any] | None:
+    if revision == 0:
+        return None
+    if revision not in {1, 2}:
+        raise AgentLoopError("agent_revision_limit_exceeded")
+    row = (
+        connection.execute(
+            text(
+                "SELECT feedback_id, revision, feedback, feedback_sha256, actor_id "
+                "FROM runtime_private.revision_feedback WHERE owner_id=:owner "
+                "AND run_id=:run AND revision=:revision"
+            ),
+            {"owner": owner_id, "run": run_id, "revision": revision},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None or row["actor_id"] != owner_id:
+        raise AgentLoopError("agent_revision_feedback_missing")
+    feedback = row["feedback"]
+    digest = bytes(row["feedback_sha256"]).hex()
+    try:
+        encoded = feedback.encode("utf-8", errors="strict")
+    except (AttributeError, UnicodeEncodeError):
+        raise AgentLoopError("agent_revision_feedback_corrupt") from None
+    if len(encoded) > 16_384 or hashlib.sha256(encoded).hexdigest() != digest:
+        raise AgentLoopError("agent_revision_feedback_corrupt")
+    return {
+        "feedback_id": str(row["feedback_id"]),
+        "revision": row["revision"],
+        "feedback": feedback,
+        "feedback_sha256": digest,
+    }
+
+
 def _load_accepted_context_history(
     connection: Any,
     *,
@@ -2296,9 +2365,12 @@ def _load_accepted_context_history(
     turns = (
         connection.execute(
             text(
-                "SELECT * FROM runtime_private.agent_turns "
-                "WHERE owner_id=:owner AND run_id=:run AND status='response_accepted' "
-                "ORDER BY created_at, turn_id"
+                "SELECT turn.*, step.revision AS step_revision "
+                "FROM runtime_private.agent_turns AS turn "
+                "JOIN runtime_private.steps AS step ON step.owner_id=turn.owner_id "
+                "AND step.run_id=turn.run_id AND step.step_id=turn.step_id "
+                "WHERE turn.owner_id=:owner AND turn.run_id=:run "
+                "AND turn.status='response_accepted' ORDER BY turn.created_at, turn.turn_id"
             ),
             {"owner": owner_id, "run": run_id},
         )
@@ -2341,6 +2413,9 @@ def _load_accepted_context_history(
             initial_context=initial_context,
             accepted_turn_ids=turn_ids,
             accepted_invocation_ids=invocation_ids,
+            revision_feedback=_load_revision_feedback(
+                connection, owner_id, run_id, turn["step_revision"]
+            ),
         )
         if turn["source_sha256"].hex() != expected_source:
             raise AgentLoopError("agent_context_provenance_missing")

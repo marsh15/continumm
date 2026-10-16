@@ -769,15 +769,51 @@ class ApprovalService:
         approval_id: UUID,
         manifest_sha256: str,
         decision: Literal["approve", "reject", "changes"],
+        feedback: str | None = None,
+        idempotency_key: str | None = None,
     ) -> ApprovalReceipt:
         """Accept one owner decision after a fresh current-repository rights proof."""
         if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256):
             raise ApprovalConflict("approval_digest_invalid")
+        if decision == "changes":
+            feedback = _validate_revision_feedback_text(feedback)
+        elif feedback is not None:
+            raise ApprovalConflict("approval_feedback_unexpected")
+        if (
+            idempotency_key is not None
+            and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", idempotency_key) is None
+        ):
+            raise ApprovalConflict("approval_idempotency_key_invalid")
         expected_digest = bytes.fromhex(manifest_sha256)
+        request_digest = hashlib.sha256(
+            _canonical_json(
+                {
+                    "approval_id": str(approval_id),
+                    "decision": decision,
+                    "feedback": feedback,
+                    "manifest_sha256": manifest_sha256,
+                }
+            )
+        ).digest()
+        if idempotency_key is not None:
+            replay = self._read_decision_command(idempotency_key, request_digest)
+            if replay is not None:
+                return replay
         context = self._approval_context(approval_id, expected_digest)
         status = {"approve": "approved", "reject": "rejected", "changes": "changes"}[decision]
         if context["status"] != "pending":
             if context["status"] == status:
+                if status == "changes" and context.get("decided_feedback") != feedback:
+                    raise ApprovalConflict("approval_decision_conflict")
+                if idempotency_key is not None:
+                    return self._decide_locked(
+                        approval_id,
+                        expected_digest,
+                        status,
+                        feedback=feedback,
+                        idempotency_key=idempotency_key,
+                        request_digest=request_digest,
+                    )
                 return ApprovalReceipt(
                     approval_id,
                     context["run_id"],
@@ -795,7 +831,14 @@ class ApprovalService:
         )
         _validate_publication_facts(facts, context["repository_id"], context["github_user_id"])
         _validate_approved_base(context, facts)
-        receipt = self._decide_locked(approval_id, expected_digest, status)
+        receipt = self._decide_locked(
+            approval_id,
+            expected_digest,
+            status,
+            feedback=feedback,
+            idempotency_key=idempotency_key,
+            request_digest=request_digest,
+        )
         if receipt.status == "expired":
             raise ApprovalConflict("approval_expired")
         return receipt
@@ -922,10 +965,15 @@ class ApprovalService:
                     text(
                         "SELECT approval.run_id, run.github_repository_id, users.github_user_id, "
                         "approval.manifest_sha256, approval.manifest, approval.status, "
-                        "approval.revision, approval.expires_at "
+                        "approval.revision, approval.expires_at, "
+                        "revision_feedback.feedback AS decided_feedback "
                         "FROM runtime_private.approvals AS approval "
                         "JOIN runtime_private.runs AS run USING (owner_id,run_id) "
                         "JOIN runtime_private.users AS users ON users.user_id=run.owner_id "
+                        "LEFT JOIN runtime_private.revision_feedback AS revision_feedback "
+                        "ON revision_feedback.owner_id=approval.owner_id "
+                        "AND revision_feedback.run_id=approval.run_id "
+                        "AND revision_feedback.approval_id=approval.approval_id "
                         "WHERE approval.owner_id=:owner AND approval.approval_id=:approval"
                     ),
                     {"owner": self._principal.account_id, "approval": approval_id},
@@ -944,6 +992,7 @@ class ApprovalService:
                     "status": row["status"],
                     "revision": row["revision"],
                     "expires_at": row["expires_at"],
+                    "decided_feedback": row["decided_feedback"],
                 }
             return {
                 "run_id": row["run_id"],
@@ -953,11 +1002,92 @@ class ApprovalService:
                 "status": row["status"],
                 "revision": row["revision"],
                 "expires_at": row["expires_at"],
+                "decided_feedback": row["decided_feedback"],
             }
 
-    def _decide_locked(self, approval_id: UUID, digest: bytes, status: str) -> ApprovalReceipt:
+    def _read_decision_command(
+        self, idempotency_key: str, request_digest: bytes
+    ) -> ApprovalReceipt | None:
         with self._engine.begin() as connection:
             RuntimeRepository(connection, self._principal)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT request_sha256, receipt FROM runtime_private.approval_commands "
+                        "WHERE owner_id=:owner AND idempotency_key=:key "
+                        "AND created_at>clock_timestamp()-interval '24 hours'"
+                    ),
+                    {"owner": self._principal.account_id, "key": idempotency_key},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            return None
+        if bytes(row["request_sha256"]) != request_digest:
+            raise ApprovalConflict("approval_idempotency_conflict")
+        try:
+            payload = row["receipt"]
+            return ApprovalReceipt(
+                approval_id=UUID(payload["approval_id"]),
+                run_id=UUID(payload["run_id"]),
+                revision=int(payload["revision"]),
+                manifest_sha256=bytes.fromhex(payload["manifest_sha256"]),
+                expires_at=datetime.fromisoformat(payload["expires_at"]),
+                status=payload["status"],
+                adopted=payload["adopted"],
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ApprovalConflict("approval_idempotency_record_corrupt") from None
+
+    def _decide_locked(
+        self,
+        approval_id: UUID,
+        digest: bytes,
+        status: str,
+        *,
+        feedback: str | None,
+        idempotency_key: str | None,
+        request_digest: bytes,
+    ) -> ApprovalReceipt:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            if idempotency_key is not None:
+                connection.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key,0))"),
+                    {"lock_key": f"{self._principal.account_id}:{idempotency_key}"},
+                )
+                connection.execute(
+                    text(
+                        "DELETE FROM runtime_private.approval_commands WHERE owner_id=:owner "
+                        "AND created_at<=clock_timestamp()-interval '24 hours'"
+                    ),
+                    {"owner": self._principal.account_id},
+                )
+                prior_command = (
+                    connection.execute(
+                        text(
+                            "SELECT request_sha256, receipt FROM runtime_private.approval_commands "
+                            "WHERE owner_id=:owner AND idempotency_key=:key"
+                        ),
+                        {"owner": self._principal.account_id, "key": idempotency_key},
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+                if prior_command is not None:
+                    if bytes(prior_command["request_sha256"]) != request_digest:
+                        raise ApprovalConflict("approval_idempotency_conflict")
+                    payload = prior_command["receipt"]
+                    return ApprovalReceipt(
+                        approval_id=UUID(payload["approval_id"]),
+                        run_id=UUID(payload["run_id"]),
+                        revision=int(payload["revision"]),
+                        manifest_sha256=bytes.fromhex(payload["manifest_sha256"]),
+                        expires_at=datetime.fromisoformat(payload["expires_at"]),
+                        status=payload["status"],
+                        adopted=payload["adopted"],
+                    )
             run_id = connection.execute(
                 text(
                     "SELECT run_id FROM runtime_private.approvals WHERE owner_id=:owner "
@@ -995,7 +1125,21 @@ class ApprovalService:
                 raise ApprovalNotFound()
             if approval["status"] != "pending":
                 if approval["status"] == status:
-                    return ApprovalReceipt(
+                    if status == "changes":
+                        decided_feedback = connection.execute(
+                            text(
+                                "SELECT feedback FROM runtime_private.revision_feedback "
+                                "WHERE owner_id=:owner AND run_id=:run AND approval_id=:approval"
+                            ),
+                            {
+                                "owner": self._principal.account_id,
+                                "run": run_id,
+                                "approval": approval_id,
+                            },
+                        ).scalar_one_or_none()
+                        if decided_feedback != feedback:
+                            raise ApprovalConflict("approval_decision_conflict")
+                    receipt = ApprovalReceipt(
                         approval_id,
                         run_id,
                         approval["revision"],
@@ -1004,6 +1148,15 @@ class ApprovalService:
                         status,
                         True,
                     )
+                    if idempotency_key is not None:
+                        _store_approval_command(
+                            connection,
+                            owner_id=self._principal.account_id,
+                            idempotency_key=idempotency_key,
+                            request_digest=request_digest,
+                            receipt=receipt,
+                        )
+                    return receipt
                 raise ApprovalConflict("approval_decision_conflict")
             if (
                 run is None
@@ -1064,6 +1217,12 @@ class ApprovalService:
                     "expired",
                     False,
                 )
+            if status == "changes" and (run["revision"] >= 2 or feedback is None):
+                raise ApprovalConflict(
+                    "approval_revisions_exhausted"
+                    if run["revision"] >= 2
+                    else "approval_feedback_required"
+                )
             connection.execute(
                 text(
                     "UPDATE runtime_private.approvals SET status=:status, "
@@ -1079,6 +1238,7 @@ class ApprovalService:
                 },
             )
             next_job_id: UUID | None = None
+            next_revision: int | None = None
             if status == "approved":
                 repository = RuntimeRepository(connection, self._principal)
                 next_step_id = repository.create_step(
@@ -1113,6 +1273,50 @@ class ApprovalService:
                     attempt_failure_class=None,
                 )
                 _erase_run_credentials(connection, self._principal.account_id, run_id)
+            elif status == "changes":
+                next_revision = approval["revision"] + 1
+                feedback_id = uuid4()
+                feedback_digest = hashlib.sha256(feedback.encode("utf-8")).digest()
+                connection.execute(
+                    text(
+                        "INSERT INTO runtime_private.revision_feedback "
+                        "(feedback_id,owner_id,run_id,revision,approval_id,feedback,"
+                        "feedback_sha256,actor_id,created_at) VALUES "
+                        "(:id,:owner,:run,:revision,:approval,:feedback,:digest,:actor,:created)"
+                    ),
+                    {
+                        "id": feedback_id,
+                        "owner": self._principal.account_id,
+                        "run": run_id,
+                        "revision": next_revision,
+                        "approval": approval_id,
+                        "feedback": feedback,
+                        "digest": feedback_digest,
+                        "actor": self._principal.account_id,
+                        "created": now,
+                    },
+                )
+                repository = RuntimeRepository(connection, self._principal)
+                next_step_id = repository.create_step(
+                    run_id,
+                    f"t28:rework:{approval_id.hex}:r{next_revision}",
+                    "agent_turn",
+                    revision=next_revision,
+                )
+                next_job_id = repository.create_job(
+                    run_id, next_step_id, replay_policy=ReplayPolicy.REPLAY_SAFE
+                )
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.runs SET revision=:revision,status='running' "
+                        "WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {
+                        "revision": next_revision,
+                        "owner": self._principal.account_id,
+                        "run": run_id,
+                    },
+                )
             sequence = connection.execute(
                 text(
                     "SELECT COALESCE(MAX(sequence),0)+1 FROM runtime_private.events "
@@ -1130,10 +1334,12 @@ class ApprovalService:
                     "approval_id": str(approval_id),
                     "manifest_sha256": digest.hex(),
                     "revision": approval["revision"],
+                    "next_revision": next_revision,
+                    "feedback_sha256": None if feedback is None else feedback_digest.hex(),
                     "next_job_id": None if next_job_id is None else str(next_job_id),
                 },
             )
-            return ApprovalReceipt(
+            receipt = ApprovalReceipt(
                 approval_id,
                 run_id,
                 approval["revision"],
@@ -1142,6 +1348,15 @@ class ApprovalService:
                 status,
                 False,
             )
+            if idempotency_key is not None:
+                _store_approval_command(
+                    connection,
+                    owner_id=self._principal.account_id,
+                    idempotency_key=idempotency_key,
+                    request_digest=request_digest,
+                    receipt=receipt,
+                )
+            return receipt
 
     async def authorize_dispatch(
         self,
@@ -1619,6 +1834,53 @@ def _canonical_json(value: Any) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, UnicodeError):
         raise ApprovalManifestError("approval_manifest_not_canonical") from None
+
+
+def _validate_revision_feedback_text(value: str | None) -> str:
+    if not isinstance(value, str):
+        raise ApprovalConflict("approval_feedback_required")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError:
+        raise ApprovalConflict("approval_feedback_invalid") from None
+    if not value.strip() or len(encoded) > 16_384 or "\x00" in value:
+        raise ApprovalConflict("approval_feedback_invalid")
+    return value
+
+
+def _store_approval_command(
+    connection: Any,
+    *,
+    owner_id: UUID,
+    idempotency_key: str,
+    request_digest: bytes,
+    receipt: ApprovalReceipt,
+) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO runtime_private.approval_commands "
+            "(owner_id,idempotency_key,request_sha256,receipt) VALUES "
+            "(:owner,:key,:digest,CAST(:receipt AS jsonb))"
+        ),
+        {
+            "owner": owner_id,
+            "key": idempotency_key,
+            "digest": request_digest,
+            "receipt": json.dumps(
+                {
+                    "approval_id": str(receipt.approval_id),
+                    "run_id": str(receipt.run_id),
+                    "revision": receipt.revision,
+                    "manifest_sha256": receipt.manifest_sha256.hex(),
+                    "expires_at": receipt.expires_at.isoformat(),
+                    "status": receipt.status,
+                    "adopted": receipt.adopted,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        },
+    )
 
 
 def _erase_run_credentials(connection: Any, owner_id: UUID, run_id: UUID) -> None:
