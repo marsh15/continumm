@@ -319,14 +319,14 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T20, T22.
 - **Scope:** Medium; canonical manifest, approval migration/service and race tests.
-- [ ] Freeze exact publication content and evidence before presenting approval.
-- [ ] Accept one current owner decision under expiry/cancellation/revision checks; every later mutation authorization remains deadline-bound.
+- [x] Freeze exact publication content and evidence before presenting approval.
+- [x] Accept one current owner decision under expiry/cancellation/revision checks; every later mutation authorization remains deadline-bound.
 - **Verify:** make test-target TARGET=tests/integration/test_approvals.py.
 
 ### Checkpoint I — Approval safety
 
-- [ ] Approved digest equals the independently validated candidate.
-- [ ] Stale/expired/conflicting approval never dispatches publication.
+- [x] Approved digest equals the independently validated candidate (local verified archives and independent Git proof).
+- [x] Stale/expired/conflicting approval never dispatches publication (local PostgreSQL authorization proof; live publication remains pending).
 - [ ] Both live providers use the same policy and runtime boundaries.
 
 ### T28 — Review interface and bounded rework

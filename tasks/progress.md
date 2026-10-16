@@ -314,8 +314,34 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   No live or paid provider call was made. The disposable database was removed.
   [Limits and context contract](../docs/model-limits.md).
 
-Implementation resumed from T24 on 15 October 2026 and is stopped after T26 at
-the user's request. T27 and later tasks have not started. A local test or mocked adapter does not
+## 16 October 2026
+
+- T27: exact publication approvals complete locally. Migration 16 adds
+  owner-isolated immutable manifests, checkpoint/evidence foreign keys and
+  one decision per run revision. The T20 bridge records strict passing evidence
+  through T08; freezing restores verified archives and checks the hash-verified
+  apply-patch checkpoint chain to the original validation baseline, including
+  multiple accepted edits. Canonical manifest hashing binds deterministic Git
+  objects/commit bytes, cumulative patch digest, exact branch/PR fields,
+  validation result, policy and capped deadlines. Independent Git commands
+  confirm tree/commit identity for nested directories, Unicode, binary and
+  executable files. Decisions serialize against cancellation/revision/expiry;
+  approval queues one publication job, rejection uses terminal cleanup, and
+  changes awaits T28. Each future remote mutation requires a fresh grant bound
+  to current execution, operation, manifest digest and PostgreSQL time.
+  Prepared manifests recover after transition loss; an obsolete approval's
+  expiry cannot terminalize a newer revision. `make check` passed 508 Python
+  tests (optional database cases skipped), 16 frontend tests and 21 edge tests,
+  with formatting, lint, typing and API checks. Package/frontend builds passed.
+  Dedicated PostgreSQL 17 verification passed 44 approval, agent-loop, provider
+  and model-limit/context cases. The disposable database was removed after
+  verification. Repository facts/access default to fail closed until the T29
+  live verifier; T27 adds no public route or GitHub writes. Docker, real-provider
+  approval flows and hosted release evidence remain pending. No paid provider
+  call was made. [Approval contract](../docs/approvals.md).
+
+Implementation resumed through T27 following the user's continuation request.
+T28 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

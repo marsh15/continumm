@@ -20,6 +20,7 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [OpenAI adapter and local evidence](openai-adapter.md)
 - [Anthropic adapter and local evidence](anthropic-adapter.md)
 - [Run model budgets and durable context](model-limits.md)
+- [Exact publication approvals and decisions](approvals.md)
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the historical Continuum specification from September. Its claims of prior approval do not override the new interview decisions or the current proposed plan. It is preserved unchanged as reference material.
 
