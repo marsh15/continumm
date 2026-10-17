@@ -64,8 +64,21 @@ class ExternalOperationReceipt:
     approval_sha256: bytes | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalOperationObservation:
+    observation_key: str
+    outcome: str
+    details: dict[str, Any]
+    actor_type: str
+    actor_id: str | None
+
+
 class ExternalOperationService:
-    """Persist external-effect intent, dispatch authorization, and observations."""
+    """Persist external-effect intent, dispatch authorization, and observations.
+
+    ``dispatch_authorized_at`` fences a reservation against later writes. It is
+    not evidence that an HTTP request was sent.
+    """
 
     def __init__(self, engine: Engine, principal: Principal) -> None:
         self._engine = engine
@@ -149,6 +162,208 @@ class ExternalOperationService:
             )
         )
 
+    def adopt_existing(
+        self,
+        dispatch_receipt: ExternalOperationReceipt,
+        *,
+        observation_key: str,
+        details: dict[str, Any],
+        outcome: str = "confirmed",
+    ) -> ExternalOperationReceipt:
+        """Record a remote object found for this intent without authorizing a send.
+
+        Adoption seals a PREPARED reservation so cancellation, expiry, or lease
+        loss cannot later make it dispatchable. The timestamp records that
+        fencing transition; it does not claim an HTTP request was sent.
+        """
+        if outcome not in {"confirmed", "conflict"}:
+            raise ValueError("runtime_external_observation_outcome_invalid")
+        observation_key = _validate_key(observation_key, "runtime_external_observation_key_invalid")
+        observation_json = _canonical_json(
+            {
+                "actor_id": "github"
+                if dispatch_receipt.request_metadata.get("operation") == "create_pull_request"
+                else "external",
+                "actor_type": EventActor.PROVIDER.value,
+                "details": details,
+                "outcome": outcome,
+            }
+        )
+        details_json = _canonical_json(details)
+        if len(observation_json.encode("utf-8")) > MAX_OBSERVATION_BYTES:
+            raise ValueError("runtime_external_observation_too_large")
+        return _retry_database_only(
+            lambda: self._adopt_existing_once(
+                dispatch_receipt,
+                observation_key,
+                details_json,
+                observation_json,
+                outcome,
+            )
+        )
+
+    def _adopt_existing_once(
+        self,
+        dispatch_receipt: ExternalOperationReceipt,
+        observation_key: str,
+        details_json: str,
+        observation_json: str,
+        outcome: str,
+    ) -> ExternalOperationReceipt:
+        run_id = dispatch_receipt.run_id
+        operation_key = _validate_key(
+            dispatch_receipt.operation_key, "runtime_external_operation_key_invalid"
+        )
+        with self._engine.begin() as connection:
+            repository = RuntimeRepository(connection, self._principal)
+            owner_id = self._principal.account_id
+            run = connection.execute(
+                text(
+                    "SELECT run_id FROM runtime_private.runs WHERE owner_id=:owner_id "
+                    "AND run_id=:run_id FOR UPDATE"
+                ),
+                {"owner_id": owner_id, "run_id": run_id},
+            ).one_or_none()
+            if run is None:
+                raise ExternalOperationNotFound("runtime_external_operation_not_found")
+            operation = (
+                connection.execute(
+                    text(
+                        "SELECT operation_id, generation, attempt_id, request_sha256, "
+                        "request_metadata, approval_id, approval_sha256, status "
+                        "FROM runtime_private.external_operations WHERE owner_id=:owner_id "
+                        "AND run_id=:run_id AND operation_key=:operation_key FOR UPDATE"
+                    ),
+                    {
+                        "owner_id": owner_id,
+                        "run_id": run_id,
+                        "operation_key": operation_key,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if operation is None:
+                raise ExternalOperationNotFound("runtime_external_operation_not_found")
+            if (
+                dispatch_receipt.run_id != run_id
+                or dispatch_receipt.operation_key != operation_key
+                or dispatch_receipt.operation_id != operation["operation_id"]
+                or dispatch_receipt.generation != operation["generation"]
+                or dispatch_receipt.attempt_id != operation["attempt_id"]
+                or dispatch_receipt.request_sha256 != operation["request_sha256"]
+                or dispatch_receipt.request_metadata != operation["request_metadata"]
+                or dispatch_receipt.approval_id != operation["approval_id"]
+                or dispatch_receipt.approval_sha256 != operation["approval_sha256"]
+                or hashlib.sha256(
+                    _canonical_json(dispatch_receipt.request_metadata).encode("utf-8")
+                ).digest()
+                != operation["request_sha256"]
+            ):
+                raise ExternalOperationConflict("runtime_external_dispatch_identity_mismatch")
+
+            previous = (
+                connection.execute(
+                    text(
+                        "SELECT outcome, details, actor_type, actor_id FROM "
+                        "runtime_private.external_operation_observations WHERE owner_id=:owner_id "
+                        "AND run_id=:run_id AND operation_id=:operation_id "
+                        "AND observation_key=:observation_key"
+                    ),
+                    {
+                        "owner_id": owner_id,
+                        "run_id": run_id,
+                        "operation_id": operation["operation_id"],
+                        "observation_key": observation_key,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if previous is not None:
+                previous_json = _canonical_json(
+                    {
+                        "actor_id": previous["actor_id"],
+                        "actor_type": previous["actor_type"],
+                        "details": previous["details"],
+                        "outcome": previous["outcome"],
+                    }
+                )
+                if previous_json != observation_json:
+                    raise ExternalOperationConflict("runtime_external_observation_conflict")
+                return _receipt(operation, run_id, operation_key, adopted=True)
+
+            allowed_statuses = {"prepared", "dispatching", "unknown", "confirmed"}
+            if outcome == "conflict":
+                allowed_statuses.add("conflict")
+            if operation["status"] not in allowed_statuses:
+                raise ExternalOperationConflict("runtime_external_operation_conflict")
+            if operation["status"] == "prepared":
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.external_operations SET status='dispatching', "
+                        "dispatch_authorized_at=clock_timestamp(), updated_at=clock_timestamp() "
+                        "WHERE operation_id=:operation_id AND status='prepared'"
+                    ),
+                    {"operation_id": operation["operation_id"]},
+                )
+
+            observation_id = uuid4()
+            actor_id = (
+                "github"
+                if operation["request_metadata"].get("operation") == "create_pull_request"
+                else "external"
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO runtime_private.external_operation_observations "
+                    "(observation_id, owner_id, run_id, operation_id, observation_key, outcome, "
+                    "details, actor_type, actor_id) VALUES (:observation_id, :owner_id, :run_id, "
+                    ":operation_id, :observation_key, :outcome, CAST(:details AS jsonb), "
+                    ":actor_type, :actor_id)"
+                ),
+                {
+                    "observation_id": observation_id,
+                    "owner_id": owner_id,
+                    "run_id": run_id,
+                    "operation_id": operation["operation_id"],
+                    "observation_key": observation_key,
+                    "outcome": outcome,
+                    "details": details_json,
+                    "actor_type": EventActor.PROVIDER.value,
+                    "actor_id": actor_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.external_operations SET status=:status, "
+                    "updated_at=clock_timestamp() WHERE operation_id=:operation_id "
+                    "AND status IN ('dispatching','unknown','confirmed','conflict')"
+                ),
+                {"operation_id": operation["operation_id"], "status": outcome},
+            )
+            event_sequence = _next_event_sequence(connection, owner_id, run_id)
+            repository.append_event(
+                run_id,
+                event_sequence,
+                "external_operation.adopted"
+                if outcome == "confirmed"
+                else "external_operation.conflict_observed",
+                EventActor.PROVIDER,
+                actor_id=actor_id,
+                payload={
+                    "observation_id": str(observation_id),
+                    "observation_key": observation_key,
+                    "operation_id": str(operation["operation_id"]),
+                    "operation_key": operation_key,
+                    "outcome": outcome,
+                    "status": outcome,
+                },
+            )
+            adopted_operation = dict(operation)
+            adopted_operation["status"] = outcome
+            return _receipt(adopted_operation, run_id, operation_key, adopted=True)
+
     def read(self, run_id: UUID, operation_key: str) -> ExternalOperationReceipt | None:
         """Read one owner-scoped operation without requiring a live lease."""
         operation_key = _validate_key(operation_key, "runtime_external_operation_key_invalid")
@@ -175,6 +390,67 @@ class ExternalOperationService:
         if operation is None:
             return None
         return _receipt(operation, run_id, operation_key, adopted=True)
+
+    def read_observations(
+        self,
+        run_id: UUID,
+        operation_key: str,
+        *,
+        observation_key: str | None = None,
+        limit: int = 100,
+    ) -> tuple[ExternalOperationObservation, ...]:
+        """Read bounded observations, optionally by their stable key.
+
+        The optional key lets a caller retrieve a durable external reference even
+        after later reconciliation observations have accumulated.
+        """
+        operation_key = _validate_key(operation_key, "runtime_external_operation_key_invalid")
+        if observation_key is not None:
+            observation_key = _validate_key(
+                observation_key, "runtime_external_observation_key_invalid"
+            )
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("runtime_external_observation_limit_invalid")
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            rows = (
+                connection.execute(
+                    text(
+                        "SELECT observation.observation_key, observation.outcome, "
+                        "observation.details, observation.actor_type, observation.actor_id "
+                        "FROM runtime_private.external_operation_observations AS observation "
+                        "JOIN runtime_private.external_operations AS operation "
+                        "ON operation.owner_id=observation.owner_id "
+                        "AND operation.run_id=observation.run_id "
+                        "AND operation.operation_id=observation.operation_id "
+                        "WHERE operation.owner_id=:owner_id AND operation.run_id=:run_id "
+                        "AND operation.operation_key=:operation_key "
+                        "AND (CAST(:observation_key AS text) IS NULL OR "
+                        "observation.observation_key=:observation_key) "
+                        "ORDER BY observation.observed_at DESC, observation.observation_id DESC "
+                        "LIMIT :limit"
+                    ),
+                    {
+                        "owner_id": self._principal.account_id,
+                        "run_id": run_id,
+                        "operation_key": operation_key,
+                        "observation_key": observation_key,
+                        "limit": limit,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            ExternalOperationObservation(
+                observation_key=row["observation_key"],
+                outcome=row["outcome"],
+                details=row["details"],
+                actor_type=row["actor_type"],
+                actor_id=row["actor_id"],
+            )
+            for row in rows
+        )
 
     def _prepare_once(
         self,

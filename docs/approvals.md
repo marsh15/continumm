@@ -68,8 +68,9 @@ operation-specific grant for `write_git_objects`, `update_managed_branch`, or
 run lease generation, and attempt. Each authorization is recorded as an
 immutable run event. An expired or cancelled run cannot receive a grant.
 [T31 branch publication](github-branch-publication.md) now consumes this boundary
-for exact Git objects and managed refs. Worker orchestration and PR publication
-remain later tasks.
+for exact Git objects and managed refs. [T32](github-pr-publication.md) consumes
+the PR-specific grant for creation and read-only reconciliation. Worker
+orchestration remains later work.
 
 `ApprovalService.expire_due(limit=...)` expires pending and approved approvals
 in bounded owner-scoped batches. It locks run then approval, records expiry,

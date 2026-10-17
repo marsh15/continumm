@@ -1,8 +1,7 @@
 # Deterministic Git and branch publication
 
 T31 adds a trusted internal publication boundary. It does not expose a public
-publication endpoint or wire the workflow to a live GitHub App. PR creation and
-reconciliation remain T32 work.
+publication endpoint or wire the workflow to a live GitHub App. [T32](github-pr-publication.md) adds PR creation and reconciliation.
 
 ## Exact approved objects
 

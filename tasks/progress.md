@@ -442,8 +442,31 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   workflow wiring and hosted verification remain later work.
   [Publication contract and local limits](../docs/github-branch-publication.md).
 
-Implementation resumed through T31 following the user's continuation request.
-T32 and later tasks have not started. A local test or mocked adapter does not
+## 18 October 2026
+
+- T32: local pull-request creation and reconciliation complete. The trusted PR
+  adapter obtains a one-repository Pull requests scope, checks current actor/App
+  rights and approved base/head before a single create, and scans all PR states
+  within page/byte/time bounds. The service adopts one exact approved identity,
+  persists PR number/ID/URL and open/closed/merged observations, and surfaces
+  duplicate or divergent matches without reopening or overwriting PRs. Lost
+  responses and negative or incomplete reads never grant replacement creation.
+  Read-only adoption and conflict discovery atomically seal prepared intents;
+  no live lease or new send grant is required. Fresh detail state takes precedence
+  over a stale list, and conflict remains sticky across concurrent confirmation.
+  Independent Luna/high review's adoption/state findings were fixed and closed.
+  Backend formatting, lint, strict typing (77 source files), 555 Python tests
+  (125 optional database skips) and package build passed. PostgreSQL verification
+  covered all 71 PR-fault/branch/ledger/approval/review/auth cases: 70 passed in
+  the combined run, and the remaining large-conflict test passed after correcting
+  its expected fixture count from 1,001 to 1,000. This includes 33 PR fault cases.
+  All 22 frontend tests, API generation/types, 21 edge tests and frontend build
+  passed. Disposable PostgreSQL was removed. No live PR API call was made;
+  attention UI, end-to-end workflow wiring and hosted proof remain later tasks.
+  [PR publication contract and local limits](../docs/github-pr-publication.md).
+
+Implementation resumed through T32 following the user's continuation request.
+T33 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

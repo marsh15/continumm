@@ -159,6 +159,27 @@ class GitHubAuthorizationClient:
         except GitHubAuthorizationError:
             raise
 
+    async def pull_request_authorization(
+        self, repository_id: int, github_user_id: int, *, permission: str
+    ) -> tuple[RepositoryPublicationFacts, SecretStr]:
+        """Mint a repository-scoped token for pull-request reads or creation."""
+        if permission not in {"read", "write"}:
+            raise GitHubAuthorizationError("github_permission_invalid")
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                result = await self._current(
+                    repository_id,
+                    github_user_id,
+                    return_installation_token=True,
+                    pull_requests_permission=permission,
+                )
+                assert isinstance(result, tuple)
+                return result
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+        except GitHubAuthorizationError:
+            raise
+
     async def _current(
         self,
         repository_id: int,
@@ -166,6 +187,7 @@ class GitHubAuthorizationClient:
         *,
         contents_permission: str = "read",
         return_installation_token: bool = False,
+        pull_requests_permission: str | None = None,
     ) -> RepositoryPublicationFacts | tuple[RepositoryPublicationFacts, SecretStr]:
         if type(repository_id) is not int or repository_id <= 0:
             raise GitHubAuthorizationError("repository_id_invalid")
@@ -240,6 +262,9 @@ class GitHubAuthorizationClient:
             if repository_id not in user_installation_ids:
                 raise GitHubAuthorizationError("github_installation_user_access_required")
 
+            requested_permissions = {"contents": contents_permission, "metadata": "read"}
+            if pull_requests_permission is not None:
+                requested_permissions["pull_requests"] = pull_requests_permission
             token_payload = await _request_json(
                 client,
                 budget,
@@ -248,7 +273,7 @@ class GitHubAuthorizationClient:
                 headers=app_headers,
                 json_body={
                     "repository_ids": [repository_id],
-                    "permissions": {"contents": contents_permission, "metadata": "read"},
+                    "permissions": requested_permissions,
                 },
             )
             installation_token = token_payload.get("token")
@@ -265,7 +290,7 @@ class GitHubAuthorizationClient:
             ):
                 raise GitHubAuthorizationError("github_installation_token_repository_scope_invalid")
             token_permissions = token_payload.get("permissions")
-            if token_permissions != {"contents": contents_permission, "metadata": "read"}:
+            if token_permissions != requested_permissions:
                 raise GitHubAuthorizationError("github_installation_token_scope_invalid")
             expires_at = token_payload.get("expires_at")
             try:

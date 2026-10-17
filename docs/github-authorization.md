@@ -65,7 +65,9 @@ narrow capability that repeats these checks and mints a one-repository contents-
 token for the [trusted publication adapter](github-branch-publication.md). Ordinary
 verification and review paths continue to request read-only tokens. Token responses
 must confirm exactly the requested repository and permissions and a current bounded
-expiry. Local write fixtures do not establish live GitHub publication evidence.
+expiry. [T32 PR operations](github-pr-publication.md) request a separate Pull requests
+read/write scope with Contents: read. Local write fixtures do not establish live
+GitHub publication evidence.
 
 Auth tables have FORCE RLS and no direct runtime-role grants. Narrow SECURITY
 DEFINER routines revoke PUBLIC execution, pin `search_path=pg_catalog`, qualify

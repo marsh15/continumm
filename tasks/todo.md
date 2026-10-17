@@ -373,8 +373,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T31.
 - **Scope:** Medium; PR adapter and remote-failure tests.
-- [ ] Adopt one exact matching PR across states/pages; expose conflicts and closed/merged outcomes.
-- [ ] A response-lost or temporarily invisible PR never triggers speculative replacement creation.
+- [x] Adopt one exact matching PR across states/pages; expose conflicts and closed/merged outcomes.
+- [x] A response-lost or temporarily invisible PR never triggers speculative replacement creation.
 - **Verify:** make test-target TARGET=tests/faults/test_pr_reconciliation.py.
 
 ### T33 — External attention and cancellation display
