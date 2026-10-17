@@ -359,15 +359,15 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T29, T30.
 - **Scope:** Medium; GitHub publication adapter and fixtures.
-- [ ] Prepare deterministic Git identity before approval, then upload approved content-addressed objects and create/adopt only the exact managed branch state.
-- [ ] Reject unexpected branch/base changes without force overwrite or implicit rebase.
+- [x] Prepare deterministic Git identity before approval, then upload approved content-addressed objects and create/adopt only the exact managed branch state.
+- [x] Reject unexpected branch/base changes without force overwrite or implicit rebase.
 - **Verify:** make test-target TARGET=tests/adapters/test_github_branch.py.
 
 ### Checkpoint J — Remote write boundary
 
-- [ ] Publication needs current actor rights and the exact approval.
-- [ ] Content-addressed safe repetition is distinct from uncertain non-idempotent creation.
-- [ ] Repository code never sees publication credentials.
+- [x] Publication needs current actor rights and the exact approval (local fixture proof; live verification pending).
+- [x] Content-addressed safe repetition is distinct from uncertain non-idempotent creation.
+- [x] Repository code never sees publication credentials.
 
 ### T32 — PR creation and reconciliation
 

@@ -60,9 +60,12 @@ the operation; installation alone never grants user write permission.
 The authorization client implements both the T13 repository verifier and T27
 publication-facts interfaces. The configured browser boundary composes it with
 T28 review reads/decisions. The adapter creates only short-lived authentication
-tokens and reads repository metadata; it exposes no Git mutation. Later admission
-and publication services must use these same owner-bound interfaces. A read-only
-App token is not a claim that publication write permissions were exercised.
+tokens and reads repository metadata; it exposes no Git mutation. T31 adds a
+narrow capability that repeats these checks and mints a one-repository contents-write
+token for the [trusted publication adapter](github-branch-publication.md). Ordinary
+verification and review paths continue to request read-only tokens. Token responses
+must confirm exactly the requested repository and permissions and a current bounded
+expiry. Local write fixtures do not establish live GitHub publication evidence.
 
 Auth tables have FORCE RLS and no direct runtime-role grants. Narrow SECURITY
 DEFINER routines revoke PUBLIC execution, pin `search_path=pg_catalog`, qualify

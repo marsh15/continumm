@@ -133,6 +133,23 @@ class ApprovalDispatchGrant:
     attempt_id: UUID
 
 
+@dataclass(frozen=True, slots=True)
+class ApprovalPublicationSnapshot:
+    """Owner-scoped frozen publication inputs, readable for reconciliation."""
+
+    approval_id: UUID
+    owner_id: UUID
+    run_id: UUID
+    repository_id: int
+    github_user_id: int
+    revision: int
+    manifest_sha256: bytes
+    manifest: dict[str, Any]
+    status: str
+    expires_at: datetime
+    candidate_object_key: str | None
+
+
 class ApprovalService:
     """Persist T20 evidence and freeze/decide exact owner-scoped approvals."""
 
@@ -150,6 +167,83 @@ class ApprovalService:
         self._transitions = transitions
         self._storage = storage
         self._publication_facts = publication_facts or PendingPublicationFactsProvider()
+
+    def publication_snapshot(
+        self, approval_id: UUID, manifest_sha256: str
+    ) -> ApprovalPublicationSnapshot:
+        """Read exact frozen publication inputs without authorizing a mutation.
+
+        This accessor intentionally remains available after expiry or cancellation so
+        callers can reconcile an already-dispatched remote effect. Every mutation
+        still needs a fresh ``authorize_dispatch`` grant.
+        """
+        if not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256):
+            raise ApprovalConflict("approval_digest_invalid")
+        expected_digest = bytes.fromhex(manifest_sha256)
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT approval.owner_id, approval.run_id, approval.manifest_sha256, "
+                        "approval.manifest, "
+                        "approval.status, approval.revision, approval.expires_at, "
+                        "run.github_repository_id, users.github_user_id, upload.object_key "
+                        "FROM runtime_private.approvals AS approval "
+                        "JOIN runtime_private.runs AS run USING (owner_id, run_id) "
+                        "JOIN runtime_private.users AS users ON users.user_id=run.owner_id "
+                        "LEFT JOIN runtime_private.artifact_uploads AS upload "
+                        "ON upload.owner_id=approval.owner_id AND upload.run_id=approval.run_id "
+                        "AND upload.upload_id="
+                        "(approval.manifest->'candidate'->>'checkpoint_id')::uuid "
+                        "WHERE approval.owner_id=:owner AND approval.approval_id=:approval"
+                    ),
+                    {"owner": self._principal.account_id, "approval": approval_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None or bytes(row["manifest_sha256"]) != expected_digest:
+            raise ApprovalNotFound()
+        manifest = row["manifest"]
+        try:
+            _encoded, actual_digest = digest_manifest(manifest)
+        except ApprovalManifestError:
+            raise ApprovalConflict("approval_manifest_corrupt") from None
+        if actual_digest != expected_digest:
+            raise ApprovalConflict("approval_manifest_corrupt")
+        if (
+            manifest.get("run_id") != str(row["run_id"])
+            or manifest.get("revision") != row["revision"]
+            or not isinstance(manifest.get("repository"), dict)
+            or manifest.get("repository", {}).get("id") != row["github_repository_id"]
+        ):
+            raise ApprovalConflict("approval_manifest_corrupt")
+        return ApprovalPublicationSnapshot(
+            approval_id=approval_id,
+            owner_id=row["owner_id"],
+            run_id=row["run_id"],
+            repository_id=row["github_repository_id"],
+            github_user_id=row["github_user_id"],
+            revision=row["revision"],
+            manifest_sha256=expected_digest,
+            manifest=manifest,
+            status=row["status"],
+            expires_at=row["expires_at"],
+            candidate_object_key=row["object_key"],
+        )
+
+    async def download_publication_candidate(
+        self, approval_id: UUID, manifest_sha256: str
+    ) -> bytes:
+        """Load the archive referenced by an owner-scoped publication snapshot."""
+        snapshot = self.publication_snapshot(approval_id, manifest_sha256)
+        if snapshot.candidate_object_key is None:
+            raise ApprovalError("approval_candidate_unavailable")
+        try:
+            return await self._storage.download(snapshot.candidate_object_key)
+        except Exception:
+            raise ApprovalError("approval_candidate_unavailable") from None
 
     def record_validation(
         self,

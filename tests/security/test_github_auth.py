@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -396,7 +398,14 @@ def test_session_identity_wires_live_authorizer_into_review_and_denies_removed_r
         elif path == "/user/installations/77/repositories":
             payload = {"repositories": [{"id": repository_id}]}
         elif path == "/app/installations/77/access_tokens":
-            payload = {"token": "synthetic-installation-token"}
+            permissions = json.loads(request.content)["permissions"]
+            payload = {
+                "token": "synthetic-installation-token",
+                "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                "permissions": permissions,
+                "repository_selection": "selected",
+                "repositories": [{"id": repository_id}],
+            }
         elif path == "/repos/fixture/project/git/ref/heads/main":
             payload = {"object": {"sha": "a" * 40}}
         else:

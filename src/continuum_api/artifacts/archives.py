@@ -17,6 +17,8 @@ MAX_COMPRESSED_BYTES = 10 * 1024 * 1024
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 MAX_FILES = 5_000
 MAX_PATH_BYTES = 255
+# File and directory path nodes; T31 additionally creates a root tree and commit.
+MAX_SOURCE_TREE_NODES = 19_998
 TAR_BLOCK_BYTES = 512
 TAR_RECORD_BYTES = 10 * 1024
 # One USTAR header plus worst-case content padding per file, plus final records.
@@ -351,6 +353,8 @@ def _validate_files(files: Iterable[ArchiveFile]) -> tuple[ArchiveFile, ...]:
                     raise ArchiveError("archive_path_conflict")
             else:
                 nodes[canonical] = (spelling, is_file)
+                if len(nodes) > MAX_SOURCE_TREE_NODES:
+                    raise ArchiveError("archive_tree_node_limit")
         normalized.append(ArchiveFile(path, source_file.content, source_file.mode))
 
     normalized.sort(key=lambda entry: entry.path.encode("utf-8"))

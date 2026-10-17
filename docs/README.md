@@ -24,6 +24,7 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [Candidate review interface and bounded rework](review-interface.md)
 - [GitHub identity, sessions and authorization](github-authorization.md)
 - [External-operation ledger and uncertain effects](external-operation-ledger.md)
+- [Deterministic Git and managed branch publication](github-branch-publication.md)
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the historical Continuum specification from September. Its claims of prior approval do not override the new interview decisions or the current proposed plan. It is preserved unchanged as reference material.
 

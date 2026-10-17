@@ -420,8 +420,30 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   blocker. No live remote mutation was made; hosted verification remains pending.
   [Ledger contract and limitations](../docs/external-operation-ledger.md).
 
-Implementation resumed through T30 following the user's continuation request.
-T31 and later tasks have not started. A local test or mocked adapter does not
+- T31: local deterministic Git and managed-branch publication complete. The
+  trusted service rebuilds the frozen archive into exact approved Git objects,
+  validates commit bytes and returned SHAs, and obtains fresh operation-specific
+  approval and scoped GitHub authorization before writes. Mutations recheck the
+  approved repository coordinates and base; only exact branch creation/adoption
+  is supported, with no force update or implicit rebase. Unknown effects use
+  read-only reconciliation, including after source cleanup or lease loss; known
+  conflicts remain sticky and transient reads do not invent a conflict. Calls
+  perform at most 16 new Git mutations and return resumable `pending` receipts.
+  Source path nodes and Git object counts are bounded before construction.
+  Independent Luna/high review accepted the workload-bound correction and found
+  no remaining blocker. Final backend checks passed formatting, lint, strict typing
+  (75 source files), 548 Python tests (92 optional database skips), and package
+  build. A final isolated PostgreSQL run passed all 38 publication, ledger,
+  approval/deadline, review and auth cases, including the low-budget resumption
+  proof. Seven HTTP publication fixtures are included in the Python total.
+  All 22 frontend tests passed on a sequential rerun after host-load timeouts;
+  API generation/types, 21 edge tests and frontend build passed. Disposable
+  PostgreSQL was removed. No live publication API call was made. PR creation,
+  workflow wiring and hosted verification remain later work.
+  [Publication contract and local limits](../docs/github-branch-publication.md).
+
+Implementation resumed through T31 following the user's continuation request.
+T32 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

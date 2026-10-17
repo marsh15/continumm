@@ -270,6 +270,21 @@ def test_verify_stops_at_file_count_limit(monkeypatch: pytest.MonkeyPatch) -> No
         verify_archive(_gzip_tar(members))
 
 
+def test_source_tree_node_limit_is_enforced_for_create_and_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = (ArchiveFile("a/file.txt", b"a"), ArchiveFile("b/file.txt", b"b"))
+    monkeypatch.setattr("continuum_api.artifacts.archives.MAX_SOURCE_TREE_NODES", 4)
+    bundle = create_archive(files)
+    assert len(verify_archive(bundle.archive).files) == 2
+
+    monkeypatch.setattr("continuum_api.artifacts.archives.MAX_SOURCE_TREE_NODES", 3)
+    with pytest.raises(ArchiveError, match="archive_tree_node_limit"):
+        create_archive(files)
+    with pytest.raises(ArchiveError, match="archive_tree_node_limit"):
+        verify_archive(bundle.archive)
+
+
 def test_expected_archive_tree_and_manifest_digests_are_checked() -> None:
     bundle = create_archive((ArchiveFile("src/file.py", b"safe"),))
     wrong = "0" * 64

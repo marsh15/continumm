@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -81,7 +82,16 @@ class GitHubMock:
         if path == f"/app/installations/{INSTALLATION_ID}/access_tokens":
             if request.method != "POST":
                 return _json({"message": "unexpected method"}, 405)
-            return _json({"token": "synthetic-installation-token"})
+            requested = json.loads(request.content)["permissions"]
+            return _json(
+                {
+                    "token": "synthetic-installation-token",
+                    "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                    "permissions": requested,
+                    "repository_selection": "selected",
+                    "repositories": [{"id": REPOSITORY_ID}],
+                }
+            )
         if (
             path == f"/repositories/{REPOSITORY_ID}"
             and auth == "Bearer synthetic-installation-token"
@@ -171,6 +181,23 @@ def test_current_facts_require_user_and_app_access_and_only_read_scope(
         or (request.method == "POST" and "/access_tokens" not in request.url.path)
         for request in mock.requests
     )
+
+
+def test_publication_authorization_mints_only_repository_scoped_contents_write_token(
+    private_key: SecretStr,
+) -> None:
+    mock = GitHubMock()
+    client, _store = _client(mock, private_key)
+    facts, token = asyncio.run(client.publication_authorization(REPOSITORY_ID, USER_ID))
+    assert facts.repository_id == REPOSITORY_ID
+    assert token.get_secret_value() == "synthetic-installation-token"
+    token_request = next(
+        request for request in mock.requests if request.url.path.endswith("/access_tokens")
+    )
+    assert json.loads(token_request.content) == {
+        "repository_ids": [REPOSITORY_ID],
+        "permissions": {"contents": "write", "metadata": "read"},
+    }
 
 
 def test_wrong_numeric_user_identity_fails_closed(private_key: SecretStr) -> None:

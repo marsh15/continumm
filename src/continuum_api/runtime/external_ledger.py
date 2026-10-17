@@ -60,6 +60,8 @@ class ExternalOperationReceipt:
     dispatch_allowed: bool
     adopted: bool
     event_sequence: int | None = None
+    approval_id: UUID | None = None
+    approval_sha256: bytes | None = None
 
 
 class ExternalOperationService:
@@ -146,6 +148,33 @@ class ExternalOperationService:
                 observation_json,
             )
         )
+
+    def read(self, run_id: UUID, operation_key: str) -> ExternalOperationReceipt | None:
+        """Read one owner-scoped operation without requiring a live lease."""
+        operation_key = _validate_key(operation_key, "runtime_external_operation_key_invalid")
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            operation = (
+                connection.execute(
+                    text(
+                        "SELECT operation_id, step_id, job_id, generation, attempt_id, "
+                        "lease_owner, request_sha256, request_metadata, approval_id, "
+                        "approval_sha256, status FROM runtime_private.external_operations "
+                        "WHERE owner_id=:owner_id AND run_id=:run_id "
+                        "AND operation_key=:operation_key"
+                    ),
+                    {
+                        "owner_id": self._principal.account_id,
+                        "run_id": run_id,
+                        "operation_key": operation_key,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if operation is None:
+            return None
+        return _receipt(operation, run_id, operation_key, adopted=True)
 
     def _prepare_once(
         self,
@@ -245,6 +274,8 @@ class ExternalOperationService:
                 dispatch_allowed=False,
                 adopted=False,
                 event_sequence=event_sequence,
+                approval_id=approval_id,
+                approval_sha256=approval_sha256,
             )
 
     def _authorize_dispatch_once(
@@ -365,6 +396,8 @@ class ExternalOperationService:
                 dispatch_allowed=True,
                 adopted=False,
                 event_sequence=event_sequence,
+                approval_id=operation["approval_id"],
+                approval_sha256=operation["approval_sha256"],
             )
 
     def _observe_once(
@@ -395,7 +428,7 @@ class ExternalOperationService:
                 connection.execute(
                     text(
                         "SELECT operation_id, generation, attempt_id, request_sha256, "
-                        "request_metadata, status "
+                        "request_metadata, approval_id, approval_sha256, status "
                         "FROM runtime_private.external_operations WHERE owner_id=:owner_id "
                         "AND run_id=:run_id AND operation_key=:operation_key FOR UPDATE"
                     ),
@@ -505,6 +538,8 @@ class ExternalOperationService:
                 dispatch_allowed=False,
                 adopted=False,
                 event_sequence=event_sequence,
+                approval_id=operation["approval_id"],
+                approval_sha256=operation["approval_sha256"],
             )
 
 
@@ -552,6 +587,8 @@ def _receipt(
         status=operation["status"],
         dispatch_allowed=False,
         adopted=adopted,
+        approval_id=operation["approval_id"],
+        approval_sha256=operation["approval_sha256"],
     )
 
 

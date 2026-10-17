@@ -9,6 +9,7 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import quote
 
@@ -101,6 +102,7 @@ class GitHubAuthorizationClient:
         try:
             async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
                 facts = await self._current(repository_id, github_user_id)
+                assert isinstance(facts, RepositoryPublicationFacts)
                 return facts.access_proof
         except TimeoutError:
             raise RepositoryPreflightError("github_authorization_timeout") from None
@@ -110,13 +112,61 @@ class GitHubAuthorizationClient:
     async def current(self, repository_id: int, github_user_id: int) -> RepositoryPublicationFacts:
         try:
             async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
-                return await self._current(repository_id, github_user_id)
+                result = await self._current(repository_id, github_user_id)
+                assert isinstance(result, RepositoryPublicationFacts)
+                return result
         except TimeoutError:
             raise ApprovalError("github_authorization_timeout") from None
         except GitHubAuthorizationError as error:
             raise ApprovalError(error.code) from None
 
-    async def _current(self, repository_id: int, github_user_id: int) -> RepositoryPublicationFacts:
+    async def publication_authorization(
+        self, repository_id: int, github_user_id: int
+    ) -> tuple[RepositoryPublicationFacts, SecretStr]:
+        """Recheck both principals and mint a repository-scoped contents-write token.
+
+        This narrow capability is reserved for the trusted publication adapter. The
+        ordinary ``current`` and ``verify`` paths continue to mint read-only tokens.
+        """
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                result = await self._current(
+                    repository_id,
+                    github_user_id,
+                    contents_permission="write",
+                    return_installation_token=True,
+                )
+                assert isinstance(result, tuple)
+                return result
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+        except GitHubAuthorizationError:
+            raise
+
+    async def repository_read_authorization(
+        self, repository_id: int, github_user_id: int
+    ) -> tuple[RepositoryPublicationFacts, SecretStr]:
+        """Return fresh repository facts and a read-only, repository-scoped token."""
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                result = await self._current(
+                    repository_id, github_user_id, return_installation_token=True
+                )
+                assert isinstance(result, tuple)
+                return result
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+        except GitHubAuthorizationError:
+            raise
+
+    async def _current(
+        self,
+        repository_id: int,
+        github_user_id: int,
+        *,
+        contents_permission: str = "read",
+        return_installation_token: bool = False,
+    ) -> RepositoryPublicationFacts | tuple[RepositoryPublicationFacts, SecretStr]:
         if type(repository_id) is not int or repository_id <= 0:
             raise GitHubAuthorizationError("repository_id_invalid")
         if type(github_user_id) is not int or github_user_id <= 0:
@@ -198,12 +248,39 @@ class GitHubAuthorizationClient:
                 headers=app_headers,
                 json_body={
                     "repository_ids": [repository_id],
-                    "permissions": {"contents": "read", "metadata": "read"},
+                    "permissions": {"contents": contents_permission, "metadata": "read"},
                 },
             )
             installation_token = token_payload.get("token")
             if not isinstance(installation_token, str) or not installation_token:
                 raise GitHubAuthorizationError("github_installation_token_unavailable")
+            scoped_repositories = token_payload.get("repositories")
+            if (
+                token_payload.get("repository_selection") != "selected"
+                or not isinstance(scoped_repositories, list)
+                or len(scoped_repositories) != 1
+                or not isinstance(scoped_repositories[0], dict)
+                or type(scoped_repositories[0].get("id")) is not int
+                or scoped_repositories[0].get("id") != repository_id
+            ):
+                raise GitHubAuthorizationError("github_installation_token_repository_scope_invalid")
+            token_permissions = token_payload.get("permissions")
+            if token_permissions != {"contents": contents_permission, "metadata": "read"}:
+                raise GitHubAuthorizationError("github_installation_token_scope_invalid")
+            expires_at = token_payload.get("expires_at")
+            try:
+                if not isinstance(expires_at, str):
+                    raise ValueError
+                expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                now = datetime.now(UTC)
+                if (
+                    expiry.tzinfo is None
+                    or expiry <= now
+                    or expiry > now + timedelta(hours=1, minutes=5)
+                ):
+                    raise ValueError
+            except (AttributeError, TypeError, ValueError):
+                raise GitHubAuthorizationError("github_installation_token_expiry_invalid") from None
             scoped_headers = {"Authorization": f"Bearer {installation_token}"}
             app_repo = await _request_json(
                 client,
@@ -236,7 +313,7 @@ class GitHubAuthorizationClient:
                 actor_can_write=True,
                 app_can_access=True,
             )
-            return RepositoryPublicationFacts(
+            facts = RepositoryPublicationFacts(
                 repository_id=repository_id,
                 github_user_id=github_user_id,
                 owner=owner,
@@ -245,6 +322,9 @@ class GitHubAuthorizationClient:
                 base_commit_sha=head,
                 access_proof=proof,
             )
+            if return_installation_token:
+                return facts, SecretStr(installation_token)
+            return facts
 
     async def _list_user_installation_repositories(
         self,
