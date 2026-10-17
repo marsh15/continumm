@@ -55,3 +55,7 @@ caller-supplied account header. Live deployment qualification remains pending. T
 
 The design reference and dependency decision are recorded in
 [the frontend decision ledger](../frontend/docs/review-interface-decisions.md).
+
+External outcome investigation is separate from review decisions. The
+[external-effects panel](external-attention.md) remains available after
+cancellation and cannot approve, retry, or resume a run.

@@ -1,6 +1,128 @@
 {
   "components": {
     "schemas": {
+      "AttentionEffect": {
+        "additionalProperties": false,
+        "properties": {
+          "can_reconcile": {
+            "title": "Can Reconcile",
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effect_id": {
+            "format": "uuid",
+            "title": "Effect Id",
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/AttentionEvidence"
+          },
+          "kind": {
+            "enum": [
+              "external_operation",
+              "dispatch_intent",
+              "resource_reservation",
+              "cleanup_intent"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "prepared",
+              "dispatching",
+              "unknown",
+              "conflict",
+              "reserved",
+              "pending"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "kind",
+          "effect_id",
+          "status",
+          "created_at",
+          "can_reconcile",
+          "evidence"
+        ],
+        "title": "AttentionEffect",
+        "type": "object"
+      },
+      "AttentionEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "pr_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Id"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pr_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "closed",
+                  "merged"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr State"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          }
+        },
+        "title": "AttentionEvidence",
+        "type": "object"
+      },
       "CommandEvidence": {
         "additionalProperties": false,
         "description": "Digest-only summary of one bounded fixed profile command.",
@@ -349,6 +471,34 @@
         "title": "EventStreamErrorPayload",
         "type": "object"
       },
+      "ExternalAttentionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/AttentionEffect"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id",
+          "effects",
+          "truncated"
+        ],
+        "title": "ExternalAttentionResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -622,6 +772,86 @@
         ],
         "title": "PhaseOutcome",
         "type": "string"
+      },
+      "ReconcileResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effect_id": {
+            "format": "uuid",
+            "title": "Effect Id",
+            "type": "string"
+          },
+          "pr_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Id"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pr_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "closed",
+                  "merged"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr State"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "status": {
+            "enum": [
+              "adopted",
+              "closed",
+              "merged",
+              "unknown",
+              "conflict",
+              "unavailable",
+              "not_dispatched",
+              "not_started",
+              "definitely_failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "effect_id",
+          "status"
+        ],
+        "title": "ReconcileResponse",
+        "type": "object"
       },
       "ReviewApproval": {
         "additionalProperties": false,
@@ -1815,6 +2045,182 @@
         "summary": "Get Run Events",
         "tags": [
           "runs"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/external-effects": {
+      "get": {
+        "operationId": "list_external_effects_api_v1_runs__run_id__external_effects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalAttentionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "List External Effects",
+        "tags": [
+          "external-effects"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/external-effects/{effect_id}/reconcile": {
+      "post": {
+        "operationId": "reconcile_external_effect_api_v1_runs__run_id__external_effects__effect_id__reconcile_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "effect_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Effect Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconcileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Reconcile External Effect",
+        "tags": [
+          "external-effects"
         ]
       }
     },

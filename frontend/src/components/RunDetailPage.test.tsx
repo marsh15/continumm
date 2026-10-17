@@ -100,6 +100,10 @@ function page(
   };
 }
 
+function emptyEffects(runId: string) {
+  return { run_id: runId, effects: [], truncated: false };
+}
+
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
@@ -163,6 +167,7 @@ describe("run detail", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), window.location.origin);
         if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE));
+        if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
         return jsonResponse(snapshot(RUN_ONE));
       }),
     );
@@ -184,6 +189,7 @@ describe("run detail", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), window.location.origin);
         if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE));
+        if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
         snapshotRequests += 1;
         return snapshotRequests === 1
           ? apiError("authentication_required", "Sign in to view this run.", 401)
@@ -205,6 +211,7 @@ describe("run detail", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), window.location.origin);
       if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE, [], watermark));
+      if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
       return jsonResponse(snapshot(RUN_ONE, watermark));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -245,6 +252,7 @@ describe("run detail", () => {
           eventPageRequests += 1;
           return jsonResponse(page(RUN_ONE, [], watermark));
         }
+        if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
         return jsonResponse(snapshot(RUN_ONE, watermark));
       }),
     );
@@ -285,6 +293,7 @@ describe("run detail", () => {
           history_gap: true,
         });
       }
+      if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
       snapshotRequests += 1;
       return jsonResponse(snapshot(RUN_ONE, "40"));
     }));
@@ -301,6 +310,7 @@ describe("run detail", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), window.location.origin);
       if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE));
+      if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
       return jsonResponse(snapshot(RUN_ONE));
     }));
     renderRun();
@@ -324,6 +334,7 @@ describe("run detail", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), window.location.origin);
       if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE));
+      if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
       snapshotRequests += 1;
       return snapshotRequests === 1
         ? jsonResponse(snapshot(RUN_ONE))
@@ -354,6 +365,7 @@ describe("run detail", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = new URL(String(input), window.location.origin);
         if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE));
+        if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(RUN_ONE));
         snapshotRequests += 1;
         return snapshotRequests === 1
           ? jsonResponse(snapshot(RUN_ONE))
@@ -380,6 +392,7 @@ describe("run detail", () => {
         const url = new URL(String(input), window.location.origin);
         const runId = url.pathname.split("/")[4] ?? RUN_ONE;
         if (url.pathname.endsWith("/events")) return jsonResponse(page(runId));
+        if (url.pathname.includes("/external-effects")) return jsonResponse(emptyEffects(runId));
         return jsonResponse(snapshot(runId));
       }),
     );
@@ -398,5 +411,77 @@ describe("run detail", () => {
 
     view.unmount();
     expect(FakeEventSource.instances[1].closed).toBe(true);
+  });
+
+  it("investigates unresolved effects after cancellation and adopts only matching evidence", async () => {
+    const effectId = "780f5a75-8f6f-499a-a15f-a4bb15dc6318";
+    let effectVisible = false;
+    let adopted = false;
+    let reconcileRequest: { method: string | undefined; csrf: string | undefined; url: string } | undefined;
+    document.cookie = "csrf_token=run-effect-csrf; path=/";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), window.location.origin);
+      if (url.pathname.endsWith("/events")) return jsonResponse(page(RUN_ONE));
+      if (url.pathname.endsWith("/external-effects")) {
+        return jsonResponse({
+          run_id: RUN_ONE,
+          truncated: false,
+          effects: !effectVisible || adopted ? [] : [{
+            kind: "external_operation",
+            effect_id: effectId,
+            status: "unknown",
+            created_at: "2026-10-12T08:02:00Z",
+            updated_at: null,
+            evidence: { pr_number: null, pr_id: null, pr_url: null, pr_state: null, details: "private metadata" },
+            can_reconcile: true,
+          }],
+        });
+      }
+      if (url.pathname.endsWith(`/external-effects/${effectId}/reconcile`)) {
+        reconcileRequest = {
+          method: init?.method,
+          csrf: new Headers(init?.headers).get("X-CSRF-Token") ?? undefined,
+          url: url.pathname,
+        };
+        adopted = true;
+        return jsonResponse({
+          effect_id: effectId,
+          status: "adopted",
+          pr_number: 42,
+          pr_id: 1234,
+          pr_url: "https://github.com/acme/repo/pull/42",
+          pr_state: "open",
+        });
+      }
+      return jsonResponse(snapshot(RUN_ONE, "0", "cancelled"));
+    }));
+
+    renderRun();
+
+    expect(await screen.findByText("No unresolved external effects.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Unresolved effects" })).toBeInTheDocument();
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText(/terminal run/)).toBeInTheDocument();
+
+    // The fixture initially has no effects; make one visible with a safe list refresh.
+    effectVisible = true;
+    fireEvent.click(screen.getByRole("button", { name: "Refresh effects" }));
+    expect(await screen.findByRole("button", { name: "Investigate outcome" })).toBeInTheDocument();
+    expect(screen.queryByText("private metadata")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Investigate outcome" }));
+
+    expect(await screen.findByRole("link", { name: "View pull request #42" })).toHaveAttribute(
+      "href",
+      "https://github.com/acme/repo/pull/42",
+    );
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(reconcileRequest).toEqual({
+      method: "POST",
+      csrf: "run-effect-csrf",
+      url: `/api/v1/runs/${RUN_ONE}/external-effects/${effectId}/reconcile`,
+    });
+    expect(screen.queryByRole("button", { name: /retry.*external/i })).not.toBeInTheDocument();
+
+    document.cookie = "csrf_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   });
 });

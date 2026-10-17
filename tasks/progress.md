@@ -465,8 +465,26 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   attention UI, end-to-end workflow wiring and hosted proof remain later tasks.
   [PR publication contract and local limits](../docs/github-pr-publication.md).
 
-Implementation resumed through T32 following the user's continuation request.
-T33 and later tasks have not started. A local test or mocked adapter does not
+- T33: external attention and cancellation display complete. The run-detail panel
+  independently displays unresolved publication, legacy dispatch, reservation and
+  cleanup effects while preserving terminal run status. The authenticated API
+  projects fixed safe fields, caps each effect class at 100 with explicit
+  truncation, and retains unrecognized legacy observations as uncertain. The
+  CSRF-protected investigation command derives the exact stored approval binding
+  and uses the T32 reconciler for GitHub reads and local evidence adoption only;
+  it cannot dispatch, replace a PR, or resume the run. Production wiring uses the
+  configured owner GitHub authorization boundary and needs no retained source
+  archive. Independent Luna/high review found no remaining remote-write or
+  terminality bypass after the legacy-observation correction. Verification passed
+  formatting, lint, strict typing (79 source files), 557 Python tests (126 optional
+  database skips), package build, all 72 PostgreSQL publication/ledger/approval/
+  review/auth cases, 23 frontend tests, generated API checks and 9 browser cases.
+  Desktop/mobile visual review preserved the existing product layout without
+  overflow. No live GitHub publication or hosted proof was performed.
+  [Attention interface and limits](../docs/external-attention.md).
+
+Implementation resumed through T33 following the user's continuation request.
+T34 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

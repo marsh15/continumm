@@ -14,6 +14,13 @@ export type ReviewSnapshot = paths["/api/v1/runs/{run_id}/review"]["get"]["respo
 export type ApprovalDecision = components["schemas"]["ReviewDecisionRequest"]["decision"];
 export type ApprovalDecisionResponse = paths["/api/v1/approvals/{approval_id}/decision"]["post"]["responses"][202]["content"]["application/json"];
 
+export type ExternalEffectsResponse = paths["/api/v1/runs/{run_id}/external-effects"]["get"]["responses"][200]["content"]["application/json"];
+export type ExternalEffect = ExternalEffectsResponse["effects"][number];
+export type ExternalEffectKind = ExternalEffect["kind"];
+export type ExternalEffectStatus = ExternalEffect["status"];
+export type ExternalEffectEvidence = ExternalEffect["evidence"];
+export type ExternalEffectReconcileResponse = paths["/api/v1/runs/{run_id}/external-effects/{effect_id}/reconcile"]["post"]["responses"][200]["content"]["application/json"];
+
 export const RUN_EVENT_PAGE_SIZE = 50;
 
 const decimalSequence = /^(0|[1-9][0-9]{0,18})$/;
@@ -259,6 +266,85 @@ function isApprovalDecisionResponse(value: unknown): value is ApprovalDecisionRe
   );
 }
 
+const externalEffectKinds: readonly ExternalEffectKind[] = [
+  "external_operation",
+  "dispatch_intent",
+  "resource_reservation",
+  "cleanup_intent",
+];
+const externalEffectStatuses: readonly ExternalEffectStatus[] = [
+  "prepared",
+  "dispatching",
+  "unknown",
+  "conflict",
+  "reserved",
+  "pending",
+];
+const reconcileStatuses: readonly ExternalEffectReconcileResponse["status"][] = [
+  "adopted",
+  "closed",
+  "merged",
+  "unknown",
+  "conflict",
+  "unavailable",
+  "not_dispatched",
+  "not_started",
+  "definitely_failed",
+];
+
+function isGithubPullRequestUrl(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(value)
+  );
+}
+
+function isExternalEffectEvidence(value: unknown): value is ExternalEffectEvidence {
+  if (!isRecord(value)) return false;
+  return (
+    ["pr_number", "pr_id"].every(
+      (key) => value[key] === undefined || value[key] === null || (typeof value[key] === "number" && Number.isInteger(value[key]) && value[key] > 0),
+    ) &&
+    (value.pr_url === undefined || value.pr_url === null || isGithubPullRequestUrl(value.pr_url)) &&
+    (value.pr_state === undefined || value.pr_state === null || value.pr_state === "open" || value.pr_state === "closed" || value.pr_state === "merged")
+  );
+}
+
+function isExternalEffect(value: unknown): value is ExternalEffect {
+  return (
+    isRecord(value) &&
+    externalEffectKinds.includes(value.kind as ExternalEffectKind) &&
+    typeof value.effect_id === "string" &&
+    /^[0-9a-f-]{36}$/i.test(value.effect_id) &&
+    externalEffectStatuses.includes(value.status as ExternalEffectStatus) &&
+    typeof value.created_at === "string" &&
+    !Number.isNaN(Date.parse(value.created_at)) &&
+    (value.updated_at === undefined || value.updated_at === null || (typeof value.updated_at === "string" && !Number.isNaN(Date.parse(value.updated_at)))) &&
+    isExternalEffectEvidence(value.evidence) &&
+    typeof value.can_reconcile === "boolean"
+  );
+}
+
+function isExternalEffectsResponse(value: unknown): value is ExternalEffectsResponse {
+  return (
+    isRecord(value) &&
+    typeof value.run_id === "string" &&
+    Array.isArray(value.effects) &&
+    value.effects.every(isExternalEffect) &&
+    typeof value.truncated === "boolean"
+  );
+}
+
+function isExternalEffectReconcileResponse(value: unknown): value is ExternalEffectReconcileResponse {
+  return (
+    isRecord(value) &&
+    typeof value.effect_id === "string" &&
+    /^[0-9a-f-]{36}$/i.test(value.effect_id) &&
+    reconcileStatuses.includes(value.status as ExternalEffectReconcileResponse["status"]) &&
+    isExternalEffectEvidence(value)
+  );
+}
+
 function isRunSnapshot(value: unknown): value is RunSnapshot {
   return (
     isRecord(value) &&
@@ -377,6 +463,34 @@ export function getRunReview(runId: string, signal?: AbortSignal): Promise<Revie
     `/api/v1/runs/${encodeURIComponent(runId)}/review`,
     isReviewSnapshot,
     signal,
+  );
+}
+
+export function getRunExternalEffects(runId: string, signal?: AbortSignal): Promise<ExternalEffectsResponse> {
+  return requestJson<ExternalEffectsResponse>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/external-effects`,
+    isExternalEffectsResponse,
+    signal,
+  );
+}
+
+export function reconcileRunExternalEffect(
+  runId: string,
+  effectId: string,
+): Promise<ExternalEffectReconcileResponse> {
+  const csrfCookie = typeof document === "undefined"
+    ? undefined
+    : document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("csrf_token="))?.slice("csrf_token=".length);
+  return requestJson<ExternalEffectReconcileResponse>(
+    `/api/v1/runs/${encodeURIComponent(runId)}/external-effects/${encodeURIComponent(effectId)}/reconcile`,
+    isExternalEffectReconcileResponse,
+    undefined,
+    {
+      method: "POST",
+      headers: {
+        ...(csrfCookie ? { "X-CSRF-Token": decodeURIComponent(csrfCookie) } : {}),
+      },
+    },
   );
 }
 

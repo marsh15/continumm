@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import {
   getRunEventPage,
+  getRunExternalEffects,
   getRunSnapshot,
+  reconcileRunExternalEffect,
   RUN_EVENT_PAGE_SIZE,
+  type ExternalEffect,
+  type ExternalEffectReconcileResponse,
   type RunEvent,
   type RunSnapshot,
 } from "../api/client";
@@ -17,6 +21,176 @@ import {
 } from "./useRunEventStream";
 
 const MAX_EVENT_PAGES = 10;
+
+const externalEffectsQueryKey = (runId: string) => ["run", runId, "external-effects"] as const;
+
+function externalEffectKindLabel(effect: ExternalEffect): string {
+  switch (effect.kind) {
+    case "external_operation": return "External operation";
+    case "dispatch_intent": return "Dispatch intent";
+    case "resource_reservation": return "Resource reservation";
+    case "cleanup_intent": return "Cleanup intent";
+  }
+}
+
+function externalEffectStatusLabel(status: ExternalEffect["status"]): string {
+  switch (status) {
+    case "prepared": return "Dispatch not confirmed";
+    case "dispatching": return "Dispatch may still be in progress";
+    case "unknown": return "Outcome unknown";
+    case "conflict": return "Conflicting evidence";
+    case "reserved": return "Reservation unresolved";
+    case "pending": return "Cleanup pending";
+  }
+}
+
+function reconcileMessage(result: ExternalEffectReconcileResponse): string {
+  switch (result.status) {
+    case "adopted": return "Matching outcome found and recorded as evidence.";
+    case "closed": return "The matching pull request is closed; evidence was recorded.";
+    case "merged": return "The matching pull request is merged; evidence was recorded.";
+    case "unknown": return "The outcome is still unknown. No matching result was confirmed.";
+    case "unavailable": return "The outcome could not be checked. The effect remains unresolved.";
+    case "conflict": return "Conflicting evidence was found. The effect remains unresolved.";
+    case "not_dispatched": return "No dispatch was recorded for this effect.";
+    case "not_started": return "This effect did not start.";
+    case "definitely_failed": return "The effect is confirmed as failed.";
+  }
+}
+
+function ExternalEffectResult({ result }: { result: ExternalEffectReconcileResponse }) {
+  const message = reconcileMessage(result);
+  const link = result.pr_url && /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(result.pr_url)
+    ? result.pr_url
+    : undefined;
+
+  return (
+    <div className="external-effect-result" role="status" aria-live="polite">
+      <p className="external-effect-result-id">Investigation result for effect <code>{result.effect_id}</code></p>
+      <p>{message}</p>
+      {link && result.pr_number ? (
+        <a href={link} target="_blank" rel="noreferrer">View pull request #{result.pr_number}</a>
+      ) : null}
+    </div>
+  );
+}
+
+function ExternalEffectsSection({ runId }: { runId: string }) {
+  const queryClient = useQueryClient();
+  const effectsQuery = useQuery({
+    queryKey: externalEffectsQueryKey(runId),
+    queryFn: ({ signal }) => getRunExternalEffects(runId, signal),
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const reconcileMutation = useMutation({
+    mutationFn: (effectId: string) => reconcileRunExternalEffect(runId, effectId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: externalEffectsQueryKey(runId) }),
+  });
+
+  return (
+    <section className="external-effects-section" aria-labelledby="external-effects-heading">
+      <div className="run-section-heading external-effects-heading">
+        <div>
+          <p className="eyebrow">External outcomes</p>
+          <h2 id="external-effects-heading">Unresolved effects</h2>
+        </div>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => void effectsQuery.refetch()}
+          disabled={effectsQuery.isFetching}
+        >
+          {effectsQuery.isFetching ? "Refreshing…" : "Refresh effects"}
+        </button>
+      </div>
+      <p className="external-effects-intro">
+        These effects are tracked separately from the run status. Investigation reads the remote outcome and records matching evidence. Recorded PR state shows the last observation and may have changed since.
+      </p>
+
+      {effectsQuery.isPending ? (
+        <p className="timeline-message" role="status">Checking for unresolved external effects…</p>
+      ) : effectsQuery.isError ? (
+        <div>
+          <p className="external-effects-error" role="alert">
+            Could not load external effect status. The run remains unchanged.
+          </p>
+          <button className="text-button retry-button" type="button" onClick={() => void effectsQuery.refetch()}>
+            Retry loading effects
+          </button>
+        </div>
+      ) : effectsQuery.data?.effects.length === 0 ? (
+        <p className="timeline-message" role="status">
+          {effectsQuery.data.truncated
+            ? "No unresolved effects are visible in the partial result. The full list is not available."
+            : "No unresolved external effects."}
+        </p>
+      ) : (
+        <>
+          <ul className="external-effects-list" aria-label="Unresolved external effects">
+            {effectsQuery.data?.effects.map((effect) => {
+              const isInvestigating = reconcileMutation.isPending && reconcileMutation.variables === effect.effect_id;
+              const hasError = reconcileMutation.isError && reconcileMutation.variables === effect.effect_id;
+              const evidenceUrl = effect.evidence.pr_url && /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(effect.evidence.pr_url)
+                ? effect.evidence.pr_url
+                : undefined;
+
+              return (
+                <li key={effect.effect_id} className="external-effect-item">
+                  <div className="external-effect-topline">
+                    <div>
+                      <h3>{externalEffectKindLabel(effect)}</h3>
+                      <p className="external-effect-id">Effect ID <code>{effect.effect_id}</code></p>
+                    </div>
+                    <span className="external-effect-status">{externalEffectStatusLabel(effect.status)}</span>
+                  </div>
+                  <dl className="external-effect-facts">
+                    <div><dt>Created</dt><dd><time dateTime={effect.created_at}>{formatTimestamp(effect.created_at)}</time></dd></div>
+                    {effect.updated_at ? <div><dt>Last updated</dt><dd><time dateTime={effect.updated_at}>{formatTimestamp(effect.updated_at)}</time></dd></div> : null}
+                    {effect.evidence.pr_number ? <div><dt>Pull request</dt><dd>{evidenceUrl ? <a href={evidenceUrl} target="_blank" rel="noreferrer">#{effect.evidence.pr_number}</a> : `#${effect.evidence.pr_number}`}</dd></div> : null}
+                    {effect.evidence.pr_state ? <div><dt>Recorded PR state</dt><dd>{humanize(effect.evidence.pr_state)}</dd></div> : null}
+                  </dl>
+                  <div className="external-effect-actions">
+                    {effect.can_reconcile ? (
+                      <>
+                        <button
+                          className="text-button"
+                          type="button"
+                          onClick={() => reconcileMutation.mutate(effect.effect_id)}
+                          disabled={reconcileMutation.isPending}
+                          aria-describedby={`external-effect-help-${effect.effect_id}`}
+                        >
+                          {isInvestigating ? "Investigating…" : "Investigate outcome"}
+                        </button>
+                        <p id={`external-effect-help-${effect.effect_id}`}>
+                          Check for an existing matching result and record it as evidence if found.
+                        </p>
+                      </>
+                    ) : (
+                      <p>This effect needs service-side review. No investigation action is available here.</p>
+                    )}
+                  </div>
+                  {hasError ? (
+                    <p className="external-effects-error" role="alert">
+                      Could not investigate this effect. It remains unresolved; you can try again later.
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {effectsQuery.data?.truncated ? (
+            <p className="timeline-limit" role="status">The list is incomplete. More unresolved effects may exist.</p>
+          ) : null}
+        </>
+      )}
+      {reconcileMutation.data ? (
+        <ExternalEffectResult result={reconcileMutation.data} />
+      ) : null}
+    </section>
+  );
+}
 
 function humanize(value: string): string {
   return value
@@ -266,6 +440,8 @@ function RunDetailForRun({ runId }: { runId: string }) {
           <div><dt>Latest event sequence</dt><dd><code>{snapshot.event_watermark}</code></dd></div>
         </dl>
       </section>
+
+      <ExternalEffectsSection runId={runId} />
 
       <section className="timeline-section" aria-labelledby="event-history-heading">
         <div className="run-section-heading timeline-section-heading">

@@ -123,6 +123,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/external-effects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List External Effects */
+        get: operations["list_external_effects_api_v1_runs__run_id__external_effects_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/external-effects/{effect_id}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile External Effect */
+        post: operations["reconcile_external_effect_api_v1_runs__run_id__external_effects__effect_id__reconcile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/review": {
         parameters: {
             query?: never;
@@ -184,6 +218,45 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AttentionEffect */
+        AttentionEffect: {
+            /** Can Reconcile */
+            can_reconcile: boolean;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Effect Id
+             * Format: uuid
+             */
+            effect_id: string;
+            evidence: components["schemas"]["AttentionEvidence"];
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "external_operation" | "dispatch_intent" | "resource_reservation" | "cleanup_intent";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "prepared" | "dispatching" | "unknown" | "conflict" | "reserved" | "pending";
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** AttentionEvidence */
+        AttentionEvidence: {
+            /** Pr Id */
+            pr_id?: number | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Pr State */
+            pr_state?: ("open" | "closed" | "merged") | null;
+            /** Pr Url */
+            pr_url?: string | null;
+        };
         /**
          * CommandEvidence
          * @description Digest-only summary of one bounded fixed profile command.
@@ -278,6 +351,18 @@ export interface components {
             /** Retryable */
             retryable: boolean;
         };
+        /** ExternalAttentionResponse */
+        ExternalAttentionResponse: {
+            /** Effects */
+            effects: components["schemas"]["AttentionEffect"][];
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Truncated */
+            truncated: boolean;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -361,6 +446,27 @@ export interface components {
          * @enum {string}
          */
         PhaseOutcome: "passed" | "test_failed" | "unsupported" | "setup_failed" | "unknown" | "not_run";
+        /** ReconcileResponse */
+        ReconcileResponse: {
+            /**
+             * Effect Id
+             * Format: uuid
+             */
+            effect_id: string;
+            /** Pr Id */
+            pr_id?: number | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Pr State */
+            pr_state?: ("open" | "closed" | "merged") | null;
+            /** Pr Url */
+            pr_url?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "adopted" | "closed" | "merged" | "unknown" | "conflict" | "unavailable" | "not_dispatched" | "not_started" | "definitely_failed";
+        };
         /** ReviewApproval */
         ReviewApproval: {
             /**
@@ -1088,6 +1194,141 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_external_effects_api_v1_runs__run_id__external_effects_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalAttentionResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    reconcile_external_effect_api_v1_runs__run_id__external_effects__effect_id__reconcile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                effect_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReconcileResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Service Unavailable */

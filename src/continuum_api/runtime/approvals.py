@@ -158,7 +158,7 @@ class ApprovalService:
         engine: Engine,
         principal: Principal,
         transitions: TransitionService,
-        storage: ApprovalObjectStorage,
+        storage: ApprovalObjectStorage | None,
         *,
         publication_facts: PublicationFactsProvider | None = None,
     ) -> None:
@@ -238,7 +238,7 @@ class ApprovalService:
     ) -> bytes:
         """Load the archive referenced by an owner-scoped publication snapshot."""
         snapshot = self.publication_snapshot(approval_id, manifest_sha256)
-        if snapshot.candidate_object_key is None:
+        if self._storage is None or snapshot.candidate_object_key is None:
             raise ApprovalError("approval_candidate_unavailable")
         try:
             return await self._storage.download(snapshot.candidate_object_key)
@@ -406,6 +406,8 @@ class ApprovalService:
         if adopted is not None:
             return adopted
         context = self._freeze_context(lease.run_id)
+        if self._storage is None:
+            raise ApprovalError("approval_candidate_unavailable")
         read_facts = await self._publication_facts.current(
             context["repository_id"], context["github_user_id"]
         )

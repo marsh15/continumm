@@ -1,7 +1,8 @@
 # External-operation ledger
 
 T30 adds an internal, owner-scoped ledger for logical remote mutations. It does
-not send GitHub requests or expose a browser endpoint. [T31](github-branch-publication.md) supplies the first trusted branch adapter.
+not send GitHub requests itself. [T33](external-attention.md) exposes a safe
+owner-scoped attention summary and read-only PR investigation. [T31](github-branch-publication.md) supplies the first trusted branch adapter.
 
 ## Dispatch and recovery
 

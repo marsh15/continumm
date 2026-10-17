@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -31,11 +32,13 @@ from test_approvals import (  # noqa: E402
     create_frozen_approval,
 )
 
+from continuum_api.app import create_app  # noqa: E402
 from continuum_api.publication.github_pr import (  # noqa: E402
     GitHubPRTransportError,
     GitHubPullRequest,
 )
 from continuum_api.runtime.approvals import RepositoryPublicationFacts  # noqa: E402
+from continuum_api.runtime.external_attention import ExternalAttentionService  # noqa: E402
 from continuum_api.runtime.external_ledger import ExternalOperationService  # noqa: E402
 from continuum_api.runtime.github_pr_publication import (  # noqa: E402
     OPERATION_KEY,
@@ -433,6 +436,139 @@ def test_reconciliation_after_cancel_or_expiry_is_read_only(
             source_path.write_bytes(frozen_source)
         finally:
             _close_scenario(scenario)
+
+
+def test_cancelled_unknown_pr_is_visible_and_adopted_through_owner_scoped_api(
+    t22_database: T22Database, tmp_path: Path
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from continuum_api.runtime.cancellation import CancellationService, DispatchIntentService
+
+    scenario = create_frozen_approval(t22_database, tmp_path)
+    try:
+        _decide(scenario)
+        lease = _lease(scenario)
+        dispatcher = DispatchIntentService(t22_database.runtime_engine, scenario.principal)
+        unknown_dispatch = dispatcher.authorize(lease, "legacy-unknown", {"intent": "test"})
+        completed_dispatch = dispatcher.authorize(lease, "legacy-completed", {"intent": "test"})
+        remote = _remote(scenario)
+        remote.lose_create_response = True
+        first = _publish(_service(scenario, remote), lease, scenario)
+        assert first.status == "unknown"
+        CancellationService(t22_database.runtime_engine, scenario.principal).cancel(
+            scenario.run.run_id
+        )
+        dispatcher.observe(
+            run_id=scenario.run.run_id,
+            operation_key=unknown_dispatch.operation_key,
+            observation={"state": "unknown", "secret": "must-not-be-returned"},
+        )
+        dispatcher.observe(
+            run_id=scenario.run.run_id,
+            operation_key=completed_dispatch.operation_key,
+            observation={"state": "completed", "secret": "must-not-be-returned"},
+        )
+        with t22_database.admin_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO runtime_private.resource_reservations "
+                    "(reservation_id, owner_id, run_id, logical_key, resource_kind, "
+                    "status, metadata) "
+                    "VALUES (:id, :owner, :run, :key, 'sandbox', :status, "
+                    '\'{"secret":"hidden"}\'::jsonb)'
+                ),
+                [
+                    {
+                        "id": uuid4(),
+                        "owner": scenario.run.owner_id,
+                        "run": scenario.run.run_id,
+                        "key": f"reservation-{index}",
+                        "status": "reserved" if index % 2 == 0 else "unknown",
+                    }
+                    for index in range(101)
+                ],
+            )
+
+        service = _service(scenario, remote)
+        application = create_app(
+            tmp_path,
+            principal_resolver=lambda _request: scenario.principal,
+            csrf_guard=lambda _request: True,
+            runtime_engine=t22_database.runtime_engine,
+            external_attention_service_factory=lambda _request, principal: (
+                ExternalAttentionService(t22_database.runtime_engine, principal),
+                service,
+            ),
+        )
+        with TestClient(application, base_url="https://continuum.test") as client:
+            path = f"/api/v1/runs/{scenario.run.run_id}/external-effects"
+            listed = client.get(path)
+            assert listed.status_code == 200
+            effects = listed.json()["effects"]
+            effect = next(item for item in effects if item["kind"] == "external_operation")
+            assert effect["kind"] == "external_operation"
+            assert effect["status"] == "unknown"
+            assert effect["can_reconcile"] is True
+            assert listed.json()["truncated"] is True
+            assert effect["evidence"] == {
+                "pr_number": None,
+                "pr_id": None,
+                "pr_url": None,
+                "pr_state": None,
+            }
+            assert "request_metadata" not in effect
+            assert len([item for item in effects if item["kind"] == "resource_reservation"]) == 100
+            assert len([item for item in effects if item["kind"] == "dispatch_intent"]) == 1
+            assert len([item for item in effects if item["kind"] == "cleanup_intent"]) == 2
+            assert all("secret" not in str(item) for item in effects)
+            assert all(item["status"] != "completed" for item in effects)
+            assert listed.headers["cache-control"] == "private, no-store"
+
+            effect_id = effect["effect_id"]
+            reconcile_path = f"{path}/{effect_id}/reconcile"
+            denied = client.post(reconcile_path)
+            assert denied.status_code == 403
+            malformed = client.post(
+                f"{path}/not-a-uuid/reconcile",
+                headers={"Origin": "https://continuum.test", "X-CSRF-Token": "fixture-token"},
+            )
+            assert malformed.status_code == 422
+            body_override = client.post(
+                reconcile_path,
+                json={"approval_id": str(uuid4()), "manifest_sha256": "0" * 64},
+                headers={"Origin": "https://continuum.test", "X-CSRF-Token": "fixture-token"},
+            )
+            assert body_override.status_code == 400
+            reconciled = client.post(
+                reconcile_path,
+                headers={"Origin": "https://continuum.test", "X-CSRF-Token": "fixture-token"},
+            )
+            assert reconciled.status_code == 200
+            assert reconciled.json()["status"] == "adopted"
+            assert reconciled.json()["pr_number"] == 17
+            assert remote.create_calls == 1
+            remaining = client.get(path).json()["effects"]
+            assert all(item["kind"] != "external_operation" for item in remaining)
+            assert any(item["kind"] == "cleanup_intent" for item in remaining)
+
+        stranger_app = create_app(
+            tmp_path,
+            principal_resolver=lambda _request: type(scenario.principal)(uuid4()),
+            runtime_engine=t22_database.runtime_engine,
+        )
+        with TestClient(stranger_app, base_url="https://continuum.test") as client:
+            cross_owner = client.get(f"/api/v1/runs/{scenario.run.run_id}/external-effects")
+            assert cross_owner.status_code == 404
+
+        with t22_database.admin_engine.connect() as connection:
+            status = connection.execute(
+                text("SELECT status FROM runtime_private.runs WHERE run_id=:run"),
+                {"run": scenario.run.run_id},
+            ).scalar_one()
+        assert status == "cancelled"
+    finally:
+        _close_scenario(scenario)
 
 
 @pytest.mark.parametrize("drift", ["auth", "repo", "base", "head"])

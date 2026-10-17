@@ -381,8 +381,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T11, T28, T32.
 - **Scope:** Medium; attention API/UI and tests.
-- [ ] Show unresolved effects after cancellation without reopening the run.
-- [ ] Provide read-only investigation/adoption where evidence permits; no force-retry bypass.
+- [x] Show unresolved effects after cancellation without reopening the run.
+- [x] Provide read-only investigation/adoption where evidence permits; no force-retry bypass.
 - **Verify:** make test-e2e with unknown-publication/cancellation fixtures.
 
 ### T34 — End-to-end demonstration milestone

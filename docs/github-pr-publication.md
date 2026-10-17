@@ -2,7 +2,8 @@
 
 T32 adds a trusted internal PR publication service and a bounded GitHub transport.
 It consumes T27's exact approval and T30's durable external-operation ledger.
-Browser attention controls and end-to-end worker wiring remain later tasks.
+T33 supplies [browser attention and read-only investigation](external-attention.md).
+End-to-end worker wiring and the controlled live demonstration remain later tasks.
 
 ## Identity and authorization
 
