@@ -351,8 +351,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T08, T27.
 - **Scope:** Medium; effect migration/service and fake-remote tests.
-- [ ] Record mutation intent, dispatch, observations, unknown outcome and conflicts with stable identity.
-- [ ] Database retries never replay a remote mutation and cancelled runs cannot dispatch new effects.
+- [x] Record mutation intent, dispatch, observations, unknown outcome and conflicts with stable identity.
+- [x] Database retries never replay a remote mutation and cancelled runs cannot dispatch new effects.
 - **Verify:** make test-target TARGET=tests/integration/test_external_ledger.py.
 
 ### T31 — Deterministic commit and branch publication

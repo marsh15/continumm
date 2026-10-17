@@ -400,8 +400,28 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   provider request or Git publication was used. [Configuration and trust
   boundaries](../docs/github-authorization.md).
 
-Implementation resumed through T29 following the user's continuation request.
-T30 and later tasks have not started. A local test or mocked adapter does not
+- T30: local external-operation ledger complete. Migration `20261017_19` adds
+  owner-isolated immutable intent, dispatch ownership and append-only observations.
+  Only a newly committed dispatch authorization permits a send; adopted receipts
+  permit reconciliation without another mutation. Prepared intent can be rebound
+  after worker loss, while dispatched identity cannot be rewritten or rearmed.
+  Cancellation blocks new dispatch while preserving matching late observations.
+  Approval revision, requested operation and expiry are checked, including after
+  authorization writes; exact remote action validation remains the T31 adapter's
+  responsibility. Three dedicated PostgreSQL 17 tests passed with a controlled
+  fake remote, lost responses, delayed visibility, restarted workers, concurrent
+  dispatch, retry adoption, cancellation, stale ownership, approval expiry during
+  event insertion, and direct database guard checks. Nineteen approval/deadline/
+  review regression cases passed against PostgreSQL. `make check build-package
+  build-frontend` passed 539 Python tests (85 optional database skips), 22 frontend
+  tests, 21 edge tests, formatting, lint, strict typing and both builds. Final
+  backend checks were repeated after the expiry error refinement and test updates
+  with the same result. A read-only Luna/high review found no remaining T30
+  blocker. No live remote mutation was made; hosted verification remains pending.
+  [Ledger contract and limitations](../docs/external-operation-ledger.md).
+
+Implementation resumed through T30 following the user's continuation request.
+T31 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 
