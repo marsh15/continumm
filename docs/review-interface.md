@@ -33,10 +33,10 @@ source history and run deadline remain cumulative. A new validated candidate
 must freeze a new exact manifest and approval before publication can proceed.
 
 Application construction accepts a trusted principal resolver, review-service
-factory and CSRF/origin guard. These default to unavailable; the application does
-not trust a caller-supplied account header or implement a temporary login. T29
-must supply the live session, CSRF and repository-access integrations before this
-screen is enabled for real accounts. T28 performs no GitHub mutation.
+factory and CSRF/origin guard. T29 now supplies the configurable
+[GitHub session and repository-access boundary](github-authorization.md). It
+remains disabled without explicit server configuration and never trusts a
+caller-supplied account header. Live deployment qualification remains pending. T28 performs no GitHub mutation.
 
 ## Local verification
 

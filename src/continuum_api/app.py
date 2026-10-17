@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import secrets
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -14,13 +15,15 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import Engine
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
 from continuum_api.api_models import ErrorResponse
+from continuum_api.auth.boundary import GitHubAuthBoundary, configured_boundary
 from continuum_api.wake import create_wake_router
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,7 @@ def create_app(
     review_service_factory: Callable[[Request, Any], Any] | None = None,
     csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
+    github_auth_boundary: GitHubAuthBoundary | None = None,
 ) -> FastAPI:
     """Build the API with an injected identity boundary and runtime database."""
     if static_dir is None:
@@ -56,27 +60,98 @@ def create_app(
         try:
             yield
         finally:
+            auth = application.state.github_auth_boundary
+            if auth is not None:
+                await auth.aclose()
             if application.state.owns_runtime_engine:
                 application.state.runtime_engine.dispose()
 
     application = FastAPI(
         title="Continumm API",
         version="0.1.0",
-        docs_url="/docs",
+        docs_url=None,
         redoc_url=None,
         lifespan=lifespan,
     )
+
+    @application.get("/docs", include_in_schema=False)
+    def documentation() -> HTMLResponse:
+        # Preserve the existing documentation UI without allowing arbitrary inline scripts.
+        nonce = secrets.token_urlsafe(24)
+        html = get_swagger_ui_html(openapi_url="/openapi.json", title="Continumm API - Swagger UI")
+        body = bytes(html.body).decode("utf-8").replace("<script", f'<script nonce="{nonce}"')
+        return HTMLResponse(
+            body,
+            headers={
+                "Content-Security-Policy": (
+                    f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; "
+                    "style-src 'self' https://cdn.jsdelivr.net; object-src 'none'; "
+                    "base-uri 'none'; frame-ancestors 'none'; "
+                    "connect-src 'self'; form-action 'self'"
+                )
+            },
+        )
+
     application.include_router(create_wake_router())
+    application.state.github_auth_boundary = github_auth_boundary
+    application.state.github_auth_lock = threading.Lock()
     application.state.runtime_engine = runtime_engine
     application.state.owns_runtime_engine = False
     application.state.runtime_engine_lock = threading.Lock()
+    from continuum_api.auth.routes import create_auth_router
+    from continuum_api.auth.sessions import AuthStorageError
     from continuum_api.runtime.review_routes import create_review_router
     from continuum_api.runtime.run_routes import (
         _StreamLimiter,
         create_run_router,
+        get_runtime_engine,
         install_sse_openapi,
     )
 
+    def auth_boundary(request: Request) -> GitHubAuthBoundary:
+        existing = request.app.state.github_auth_boundary
+        if isinstance(existing, GitHubAuthBoundary):
+            return existing
+        with request.app.state.github_auth_lock:
+            existing = request.app.state.github_auth_boundary
+            if isinstance(existing, GitHubAuthBoundary):
+                return existing
+            try:
+                from continuum_api.settings import get_settings
+
+                if not get_settings().enable_github_auth:
+                    raise StarletteHTTPException(503, "github_auth_unavailable")
+                configured = configured_boundary(get_runtime_engine(request))
+            except StarletteHTTPException:
+                raise
+            except Exception:
+                raise StarletteHTTPException(503, "github_auth_unavailable") from None
+            request.app.state.github_auth_boundary = configured
+            return configured
+
+    async def browser_principal(request: Request) -> Any:
+        try:
+            return await auth_boundary(request).principal(request)
+        except StarletteHTTPException as error:
+            if error.detail == "github_auth_unavailable":
+                raise StarletteHTTPException(401, "authentication_required") from None
+            raise
+        except AuthStorageError:
+            raise StarletteHTTPException(503, "github_auth_unavailable") from None
+
+    def browser_review(request: Request, principal: Any) -> Any:
+        return auth_boundary(request).review(request, principal)
+
+    async def browser_csrf(request: Request) -> bool:
+        try:
+            return await auth_boundary(request).csrf(request)
+        except AuthStorageError:
+            return False
+
+    principal_resolver = principal_resolver or browser_principal
+    review_service_factory = review_service_factory or browser_review
+    csrf_guard = csrf_guard or browser_csrf
+    application.include_router(create_auth_router(auth_boundary))
     application.state.sse_stream_limiter = _StreamLimiter()
     application.include_router(create_run_router(principal_resolver))
     application.include_router(
@@ -97,6 +172,21 @@ def create_app(
             logger.exception("request failed", extra={"request_id": request_id})
             raise
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+                "form-action 'self'; connect-src 'self'"
+            ),
+        )
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000"
+        if request.url.path.startswith("/api/v1/auth/"):
+            response.headers["Cache-Control"] = "private, no-store"
         logger.info(
             "http request completed",
             extra={
@@ -146,6 +236,26 @@ def create_app(
             ),
             "not_found": ("not_found", "The requested API resource was not found."),
         }
+        auth_messages = {
+            "github_auth_unavailable": "GitHub sign-in is temporarily unavailable.",
+            "github_auth_rate_limited": "Too many sign-in attempts. Try again later.",
+            "auth_origin_invalid": "The browser origin is not allowed.",
+            "github_oauth_state_invalid": (
+                "The sign-in request expired or did not match this browser."
+            ),
+            "github_oauth_failed": "GitHub sign-in could not be completed. Start again.",
+            "account_unavailable": "This account is unavailable.",
+            "github_user_token_unavailable": (
+                "Reconnect GitHub to verify current repository access."
+            ),
+            "github_identity_mismatch": "Reconnect GitHub with the linked account.",
+            "repository_actor_write_access_required": "GitHub write access is required.",
+            "github_installation_user_access_required": "GitHub App access is required.",
+            "github_authorization_timeout": "GitHub access verification timed out.",
+            "github_api_unavailable": "GitHub access verification is temporarily unavailable.",
+            "github_api_request_failed": "Current GitHub access could not be verified.",
+        }
+        messages.update({code: (code, message) for code, message in auth_messages.items()})
         mapped = messages.get(exc.detail) if isinstance(exc.detail, str) else None
         message = (
             exc.detail if isinstance(exc.detail, str) else "The request could not be completed."

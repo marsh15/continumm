@@ -77,7 +77,11 @@ class CredentialService:
         run_id: UUID | None = None,
         saved_key_opt_in: bool = False,
     ) -> CredentialMetadata:
-        if not isinstance(provider, CredentialProvider) or not isinstance(scope, CredentialScope):
+        if (
+            not isinstance(provider, CredentialProvider)
+            or provider not in {CredentialProvider.OPENAI, CredentialProvider.ANTHROPIC}
+            or not isinstance(scope, CredentialScope)
+        ):
             raise CredentialError("credential_identity_invalid")
         if scope is CredentialScope.SAVED and saved_key_opt_in is not True:
             raise CredentialError("credential_saved_opt_in_required")
@@ -140,7 +144,10 @@ class CredentialService:
             return tuple(_metadata(dict(row)) for row in rows)
 
     def bind_run(self, run_id: UUID, provider: CredentialProvider, credential_id: UUID) -> None:
-        if not isinstance(provider, CredentialProvider):
+        if not isinstance(provider, CredentialProvider) or provider not in {
+            CredentialProvider.OPENAI,
+            CredentialProvider.ANTHROPIC,
+        }:
             raise CredentialError("credential_provider_invalid")
         with self._connection() as connection:
             self._lock_user(connection, active=True)
@@ -237,7 +244,11 @@ class CredentialService:
         """
         if lease.owner_id != self._principal.account_id:
             raise LeaseLost("runtime_lease_owner_mismatch")
-        if not isinstance(provider, CredentialProvider) or not isinstance(request_id, UUID):
+        if (
+            not isinstance(provider, CredentialProvider)
+            or provider not in {CredentialProvider.OPENAI, CredentialProvider.ANTHROPIC}
+            or not isinstance(request_id, UUID)
+        ):
             raise CredentialError("credential_dispatch_identity_invalid")
         failure: str | None = None
         grant: CredentialDispatchGrant | None = None

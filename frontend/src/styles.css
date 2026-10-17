@@ -1140,6 +1140,10 @@ h2 {
 }
 
 .review-limit-track {
+  display: block;
+  width: 100%;
+  border: 0;
+  appearance: none;
   height: 4px;
   margin-top: 10px;
   border-radius: 4px;
@@ -1147,11 +1151,9 @@ h2 {
   overflow: hidden;
 }
 
-.review-limit-track span {
-  display: block;
-  height: 100%;
-  background: var(--blue);
-}
+.review-limit-track::-webkit-progress-bar { background: #e8ebef; }
+.review-limit-track::-webkit-progress-value { background: var(--blue); }
+.review-limit-track::-moz-progress-bar { background: var(--blue); }
 
 .review-decision-section {
   padding-bottom: 25px;

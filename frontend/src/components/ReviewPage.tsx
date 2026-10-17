@@ -79,14 +79,13 @@ function PhaseEvidence({ title, phase }: { title: string; phase: ReviewPhaseEvid
 }
 
 function LimitMeter({ label, used, limit, unit }: { label: string; used: number; limit: number; unit?: string }) {
-  const percentage = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   return (
     <div className="review-limit">
       <div className="review-limit-heading">
         <dt>{label}</dt>
         <dd><span className="review-number">{used.toLocaleString()}</span> / {limit.toLocaleString()}{unit ? ` ${unit}` : ""}</dd>
       </div>
-      <div className="review-limit-track" aria-hidden="true"><span style={{ width: `${percentage}%` }} /></div>
+      <progress className="review-limit-track" value={Math.min(used, limit)} max={limit} aria-hidden="true" />
     </div>
   );
 }

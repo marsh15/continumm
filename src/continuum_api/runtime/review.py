@@ -182,6 +182,8 @@ class ReviewService:
             facts = await self._publication_facts.current(
                 data["repository_id"], data["github_user_id"]
             )
+        except ApprovalError:
+            raise
         except Exception:
             raise ApprovalError("repository_authorization_pending") from None
         _validate_publication_facts(facts, data["repository_id"], data["github_user_id"])
@@ -231,6 +233,8 @@ class ReviewService:
             current_facts = await self._publication_facts.current(
                 data["repository_id"], data["github_user_id"]
             )
+        except ApprovalError:
+            raise
         except Exception:
             raise ApprovalError("repository_authorization_pending") from None
         _validate_publication_facts(current_facts, data["repository_id"], data["github_user_id"])

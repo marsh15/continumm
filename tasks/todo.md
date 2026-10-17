@@ -343,8 +343,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T23.
 - **Scope:** Medium; OAuth/session service and security tests.
-- [ ] Link immutable GitHub identity and installation access; use secure rotated sessions.
-- [ ] Recheck actor/repository rights and protect state-changing browser requests from CSRF.
+- [x] Link immutable GitHub identity and installation access; use secure rotated sessions.
+- [x] Recheck actor/repository rights and protect state-changing browser requests from CSRF.
 - **Verify:** make test-target TARGET=tests/security/test_github_auth.py.
 
 ### T30 — External-operation ledger

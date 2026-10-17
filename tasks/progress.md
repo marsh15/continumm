@@ -367,8 +367,41 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   remain pending; no paid provider or GitHub mutation was made.
   [Review contract and verification](../docs/review-interface.md).
 
-Implementation resumed through T28 following the user's continuation request.
-T29 and later tasks have not started. A local test or mocked adapter does not
+## 17 October 2026
+
+- T29: GitHub identity, sessions and authorization complete locally. Migration
+  18 adds restricted auth routines, one-use hashed browser-bound OAuth state,
+  shared IP-HMAC rate limiting, hashed seven-day sessions and owner-bound
+  encrypted GitHub user tokens. Authlib handles fixed-callback S256 PKCE and
+  bounded OAuth exchange; login rotates the browser session and retains the
+  immutable numeric GitHub identity across handle changes. Refresh tokens are
+  discarded and repository access requires reauthorization after the eight-hour
+  user token expires. Current checks independently verify actor write permission
+  and App/user installation intersection using a repository-scoped read-only
+  App token. The configured browser boundary now supplies identity, CSRF/origin
+  checks and review authorization while remaining explicitly disabled without
+  server configuration. Security headers cover the application; the existing
+  documentation UI uses script nonces and review meters need no inline styles.
+  A read-only Luna/high review found no authentication bypass. `make check
+  build-package build-frontend test-e2e` passed 539 Python tests (82 optional
+  database cases skipped), 22 frontend tests, 21 edge tests and six browser
+  cases, including typing, lint, formatting, API generation and both builds.
+  Dedicated PostgreSQL/security verification passed 59 auth/review/approval,
+  agent-loop/provider and budget/context cases; the existing T23 PostgreSQL
+  credential lifecycle test also passed. Tests cover concurrent state replay,
+  expiry after a held row lock, session rotation and token decryption after
+  relogin, suspension/deletion/expiry, private-table denial, actual callback and
+  CSRF logout, and session-to-review authorization with removed repository
+  rights. The disposable databases were removed. Runtime and both npm audits
+  found no known vulnerabilities; the previously documented dev-only pytest
+  advisory retains its private-temp-directory mitigation and separate upgrade
+  review. Real GitHub consent/installations, production proxy/cookie behavior,
+  hosted verification and Docker remain pending. No live credentials, paid
+  provider request or Git publication was used. [Configuration and trust
+  boundaries](../docs/github-authorization.md).
+
+Implementation resumed through T29 following the user's continuation request.
+T30 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

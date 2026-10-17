@@ -65,6 +65,26 @@ class _StreamLimiter:
                 self._active[owner_id] = active - 1
 
 
+def get_runtime_engine(request: Request) -> Engine:
+    configured = cast(Engine | None, request.app.state.runtime_engine)
+    if configured is not None:
+        return configured
+    with request.app.state.runtime_engine_lock:
+        configured = cast(Engine | None, request.app.state.runtime_engine)
+        if configured is not None:
+            return configured
+        try:
+            database_url = get_settings().runtime_database_url
+            if database_url is None or not database_url.get_secret_value().strip():
+                raise ValueError("runtime_database_url_missing")
+            configured = create_runtime_engine(database_url.get_secret_value())
+        except (ValueError, ValidationError):
+            raise HTTPException(status_code=503, detail="runtime_database_unavailable") from None
+        request.app.state.runtime_engine = configured
+        request.app.state.owns_runtime_engine = True
+        return configured
+
+
 def create_run_router(principal_resolver: PrincipalResolver | None) -> APIRouter:
     router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -82,27 +102,6 @@ def create_run_router(principal_resolver: PrincipalResolver | None) -> APIRouter
             raise HTTPException(status_code=401, detail="authentication_required")
         return principal
 
-    def runtime_engine(request: Request) -> Engine:
-        configured = cast(Engine | None, request.app.state.runtime_engine)
-        if configured is not None:
-            return configured
-        with request.app.state.runtime_engine_lock:
-            configured = cast(Engine | None, request.app.state.runtime_engine)
-            if configured is not None:
-                return configured
-            try:
-                database_url = get_settings().runtime_database_url
-                if database_url is None or not database_url.get_secret_value().strip():
-                    raise ValueError("runtime_database_url_missing")
-                configured = create_runtime_engine(database_url.get_secret_value())
-            except (ValueError, ValidationError):
-                raise HTTPException(
-                    status_code=503, detail="runtime_database_unavailable"
-                ) from None
-            request.app.state.runtime_engine = configured
-            request.app.state.owns_runtime_engine = True
-            return configured
-
     @router.get(
         "/{run_id}",
         response_model=RunSnapshotResponse,
@@ -117,7 +116,7 @@ def create_run_router(principal_resolver: PrincipalResolver | None) -> APIRouter
         run_id: UUID,
         response: Response,
         principal: Principal = Depends(authenticated_principal),  # noqa: B008
-        engine: Engine = Depends(runtime_engine),  # noqa: B008
+        engine: Engine = Depends(get_runtime_engine),  # noqa: B008
     ) -> RunSnapshotResponse:
         response.headers["Cache-Control"] = "private, no-store"
         try:
@@ -149,7 +148,7 @@ def create_run_router(principal_resolver: PrincipalResolver | None) -> APIRouter
         request: Request,
         response: Response,
         principal: Principal = Depends(authenticated_principal),  # noqa: B008
-        engine: Engine = Depends(runtime_engine),  # noqa: B008
+        engine: Engine = Depends(get_runtime_engine),  # noqa: B008
         after: Annotated[str | None, Query(json_schema_extra={"maxLength": 19})] = None,
         last_event_id: Annotated[
             str | None,

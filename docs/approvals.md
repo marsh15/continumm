@@ -2,8 +2,9 @@
 
 T27 freezes one exact, validated source candidate before the owner can approve
 publication. T27 introduced the internal approval service. T28 now adds the
-[review API and interface](review-interface.md); browser authentication and the
-GitHub mutation adapter remain later tasks.
+[review API and interface](review-interface.md), and T29 supplies configurable
+[GitHub authentication](github-authorization.md). The GitHub mutation adapter
+remains a later task.
 
 ## Evidence and manifest creation
 
@@ -81,6 +82,6 @@ The service requires a `PublicationFactsProvider` that returns current owner,
 repository name, default branch, branch head, and a `RepositoryAccessProof` for
 the signed-in GitHub numeric user. The built-in default provider fails closed.
 Installing the GitHub App alone is not considered user write permission. T29
-must provide the live verifier and current repository facts before this flow is
-available. If the default branch or its head changes after freeze, decision or
+provides the [configured verifier and repository facts](github-authorization.md);
+the default remains unavailable without server configuration. If the default branch or its head changes after freeze, decision or
 dispatch authorization fails and requires a new reviewed run.

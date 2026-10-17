@@ -31,6 +31,7 @@ class CredentialError(RuntimeError):
 class CredentialProvider(StrEnum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    GITHUB = "github"
 
 
 class CredentialScope(StrEnum):

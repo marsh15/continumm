@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     encryption_key: SecretStr | None = None
     encryption_key_version: str = Field(default="v1", pattern=r"^[A-Za-z0-9_-]{1,32}$")
     encryption_previous_keys: SecretStr | None = None
+    enable_github_auth: bool = False
+    github_client_id: str | None = None
+    github_client_secret: SecretStr | None = None
+    github_public_origin: str | None = None
+    github_state_key: SecretStr | None = None
+    github_app_id: int | None = Field(default=None, gt=0)
+    github_app_private_key: SecretStr | None = None
+    supabase_url: str | None = None
+    supabase_secret_key: SecretStr | None = None
+    supabase_bucket: str = "continuum-checkpoints"
 
     @model_validator(mode="before")
     @classmethod
