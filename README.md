@@ -1,6 +1,12 @@
 # Continumm
 
-Continumm is a service under development for turning bounded coding tasks into reviewed GitHub pull requests. The current implementation establishes its Python API and React frontend foundations. The public service has not launched.
+Continumm is a service under development for turning bounded coding tasks into reviewed GitHub pull requests. The current implementation includes its Python API, React review console, durable runtime and locally verified publication services. The public service has not launched.
+
+The [controlled demonstration](docs/demonstration.md) exercises local revision,
+approval, branch/PR publication and response-loss recovery, with separate actual
+worker-death and stale-worker experiments. Run it with `make demo-local` against
+explicitly disposable local test databases. Real OpenAI generation and normal
+GitHub publication on Render remain pending setup and activity-runner wiring.
 
 ## Local development
 
@@ -30,7 +36,7 @@ make check
 make build
 ```
 
-`make build` creates a Python distribution under `dist/`, a static frontend build, and the local Docker image `continuum-api:local`. The container serves the built frontend from the API process. The image defaults to production configuration and exits with a redacted configuration error until explicit deployment settings are provided. Authentication and worker orchestration are not implemented yet, so this foundation is not a public service.
+`make build` creates a Python distribution under `dist/`, a static frontend build, and the local Docker image `continuum-api:local`. The container serves the built frontend from the API process. The image defaults to production configuration and exits with a redacted configuration error until explicit deployment settings are provided. GitHub authentication is opt-in. The live activity runner and hosted end-to-end workflow remain unverified, so this foundation is not a public service.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-faults demo-local test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
@@ -37,6 +37,18 @@ eval-live:
 
 test-integration:
 	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q tests/integration
+
+test-faults:
+	@test "$(CONFIRM_DISPOSABLE_FAULT_DATABASES)" = "1" || (echo "This target resets and drops its local PostgreSQL test databases. Set CONFIRM_DISPOSABLE_FAULT_DATABASES=1 only when both configured databases are disposable." >&2; exit 2)
+	@test -n "$$CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL" || (echo "Set CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL to loopback PostgreSQL database continuum_checkpoint_d_test." >&2; exit 2)
+	@test -n "$$CONTINUUM_T22_TEST_DATABASE_URL" || (echo "Set CONTINUUM_T22_TEST_DATABASE_URL to loopback PostgreSQL database continuum_t22_test." >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python scripts/demo_local.py --faults-only
+
+demo-local:
+	@test "$(CONFIRM_DISPOSABLE_FAULT_DATABASES)" = "1" || (echo "This target resets and drops its local PostgreSQL test databases. Set CONFIRM_DISPOSABLE_FAULT_DATABASES=1 only when both configured databases are disposable." >&2; exit 2)
+	@test -n "$$CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL" || (echo "Set CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL to loopback PostgreSQL database continuum_checkpoint_d_test." >&2; exit 2)
+	@test -n "$$CONTINUUM_T22_TEST_DATABASE_URL" || (echo "Set CONTINUUM_T22_TEST_DATABASE_URL to loopback PostgreSQL database continuum_t22_test." >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python scripts/demo_local.py
 
 test-edge:
 	npm --prefix tools/edge test

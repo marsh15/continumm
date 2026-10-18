@@ -488,14 +488,21 @@ def create_frozen_approval(
 
 
 def _read_approval(store: T22Database, scenario: ApprovalScenario) -> dict[str, Any]:
+    receipt = scenario.frozen_receipt
+    assert receipt is not None
     with store.runtime_engine.begin() as connection:
         RuntimeRepository(connection, scenario.principal)
         return dict(
             connection.execute(
                 text(
-                    "SELECT * FROM runtime_private.approvals WHERE owner_id=:owner AND run_id=:run"
+                    "SELECT * FROM runtime_private.approvals "
+                    "WHERE owner_id=:owner AND run_id=:run AND approval_id=:approval"
                 ),
-                {"owner": scenario.run.owner_id, "run": scenario.run.run_id},
+                {
+                    "owner": scenario.run.owner_id,
+                    "run": scenario.run.run_id,
+                    "approval": receipt.approval_id,
+                },
             )
             .mappings()
             .one()
@@ -764,7 +771,23 @@ def test_freeze_recovers_prepared_manifest_after_transition_loss(
         with patch.object(scenario.transitions, "commit_result", side_effect=RuntimeError("crash")):
             with pytest.raises(ApprovalError, match="approval_manifest_transition_failed"):
                 asyncio.run(scenario.service.freeze(scenario.freeze_lease))
-        prepared = _read_approval(t22_database, scenario)
+        with t22_database.runtime_engine.begin() as connection:
+            RuntimeRepository(connection, scenario.principal)
+            # This scenario has one freeze attempt at its current revision; the
+            # transition failure leaves that exact manifest available to adopt.
+            prepared = dict(
+                connection.execute(
+                    text(
+                        "SELECT * FROM runtime_private.approvals "
+                        "WHERE owner_id=:owner AND run_id=:run AND revision=("
+                        "SELECT revision FROM runtime_private.runs "
+                        "WHERE owner_id=:owner AND run_id=:run)"
+                    ),
+                    {"owner": scenario.run.owner_id, "run": scenario.run.run_id},
+                )
+                .mappings()
+                .one()
+            )
         recovered = asyncio.run(scenario.service.freeze(scenario.freeze_lease))
         assert recovered.adopted
         assert recovered.approval_id == prepared["approval_id"]
@@ -876,6 +899,7 @@ def test_multiple_candidate_checkpoints_freeze_cumulative_patch(
     scenario = create_approval_scenario(t22_database, tmp_path, second_candidate=True)
     try:
         receipt = asyncio.run(scenario.service.freeze(scenario.freeze_lease))
+        scenario.frozen_receipt = receipt
         assert receipt.status == "pending"
         row = _read_approval(t22_database, scenario)
         assert row["manifest"]["candidate"]["checkpoint_id"] == str(scenario.candidate_artifact_id)

@@ -483,8 +483,25 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   overflow. No live GitHub publication or hosted proof was performed.
   [Attention interface and limits](../docs/external-attention.md).
 
-Implementation resumed through T33 following the user's continuation request.
-T34 and later tasks have not started. A local test or mocked adapter does not
+- T34 preparation: added guarded `make demo-local` and `make test-faults` commands
+  with private, bounded JSON evidence. Five separate local cases passed: actual
+  process death and checkpoint recovery, resumed stale-owner rejection, PR
+  response-loss reconciliation, and coherent revision/approval/publication
+  journeys with normal and lost fixture responses. The composed journey caught
+  and corrected a test helper that assumed one approval per run. The runner
+  rejects missing confirmation, non-loopback/wrong database targets, libpq routing
+  overrides, retained fixture credentials, skips and failed experiments; timed
+  out case process groups are killed and reaped. Backend verification passed
+  576 tests (128 optional database skips), lint, formatting, strict typing and
+  package build. Render's Blueprint now includes the runtime URL required by
+  production settings. User-selected live target: Render, OpenAI and
+  `marsh15/continumm`; the owner confirmed these services are not configured.
+  T34 remains incomplete: no live provider patch/PR or hosted recovery was
+  performed, and the live activity runner is not wired. T35 has not started.
+  [Local evidence and remaining gates](../docs/evidence/t34-demonstration.md).
+
+Implementation is complete through T33; T34 local preparation is committed and
+its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
 configuration and real hosted evidence exist.
 

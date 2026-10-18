@@ -390,8 +390,9 @@ All tasks additionally require relevant documentation updates, no secret exposur
 - **Dependencies:** T25, T28, T32, T33.
 - **Scope:** Medium; controlled demo script and end-to-end fixtures.
 - [ ] Complete a real-provider patch, revision, approval and normal GitHub publication.
-- [ ] Demonstrate actual worker death, stale-owner rejection and lost-response reconciliation separately.
+- [x] Demonstrate actual worker death, stale-owner rejection and lost-response reconciliation separately (local controlled fixtures).
 - **Verify:** make test-faults; controlled live demo with recorded evidence.
+- **Status:** Local harness and recovery evidence implemented; live OpenAI/Render/GitHub demonstration remains open pending service setup and activity-runner wiring. [Evidence](../docs/evidence/t34-demonstration.md).
 
 ### Checkpoint K — Portfolio demonstration
 
