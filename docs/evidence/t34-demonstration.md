@@ -50,3 +50,33 @@ Checkpoint K remain open.
 Follow [the demonstration guide](../demonstration.md) for reproduction and the
 remaining setup and activity-runner gates. No credential values, database URLs,
 model responses, source archives or raw subprocess output belong in this report.
+
+## Subsequent publication-worker proof
+
+The bounded activity runner now scopes claims to one existing admitted run and
+maintains heartbeats while trusted handlers run. The opt-in publication CLI
+connects that runner to the existing branch and PR services. A separate fenced
+completion transaction derives success only from exact approved publication
+proof and absence of unresolved required work. Generic activity results still
+cannot set success.
+
+Verification on 18 October 2026 passed 607 Python tests (144 optional database
+skips), strict typing across 83 source files, lint, formatting and package build.
+All 16 new PostgreSQL cases passed: publication activity dispatch including
+budgeted continuations and unknown PR responses, admitted-run/owner isolation,
+and completion proof, replay, stale-owner and cancellation races. The broader
+publication/approval/rework run passed 62 cases; its remaining runner fixture was
+corrected to respect the one-active-run-per-account rule and passed in the final
+16-case run. No admission constraint was weakened. The CLI without its execution
+flag returned `execution_required` before settings/client construction.
+
+Migration `20261018_20` permits successful accepted-result receipts. Downgrade
+preserved those existing receipts while restoring rejection of new success rows;
+the fixture's older-schema transition proof passed afterward.
+
+This proof uses controlled remote adapters. It does not replace the clean-commit
+five-case report above or claim that report tested these later changes. Live
+OpenAI generation, server setup and the trusted admission/input-resolution/
+validation composition remain pending. The publication worker is an explicit
+operator invocation; the Render image still starts only the API.
+[Worker contract and commands](../activity-runner.md).

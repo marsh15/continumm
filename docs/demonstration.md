@@ -84,11 +84,13 @@ Before the live demonstration can run:
 3. Configure the managed sandbox and execution profile, and supply the OpenAI key
    through the existing encrypted credential service. A raw environment key must
    not bypass durable model reservations or credential dispatch.
-4. Complete a controlled activity runner connecting admission, model/tool turns,
-   validation, review/revision, approval and publication. The current Docker
-   entrypoint runs Uvicorn; no live worker loop connects those services yet.
-   `make eval-live PROVIDER=openai` continues to fail closed rather than sending
-   an untracked model request.
+4. Complete the trusted admission/input-resolution/validation composition for
+   model/tool turns. A [bounded activity runner and approved-publication CLI](activity-runner.md)
+   now connect the publication portion, including durable continuations and
+   evidence-gated completion. The model/tool dispatcher needs trusted resolvers;
+   the CLI registers only publication. The current Docker entrypoint still runs
+   Uvicorn. `make eval-live PROVIDER=openai` continues to fail closed rather than
+   sending an untracked model request.
 5. Run a bounded task, request and validate one revision, inspect the exact new
    manifest, approve it, and publish normally to the managed branch and PR. Record
    real run/approval identifiers, approved commit, PR link, timestamps, provider

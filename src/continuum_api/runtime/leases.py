@@ -73,11 +73,13 @@ class QueueService:
         self._engine = engine
         self._principal = principal
 
-    def claim_one(self, lease_owner: str) -> ExecutionLease | None:
+    def claim_one(self, lease_owner: str, *, run_id: UUID | None = None) -> ExecutionLease | None:
         lease_owner = lease_owner.strip()
         if not lease_owner or len(lease_owner) > 128:
             raise ValueError("runtime_lease_owner_invalid")
-        return _retry_database_only(lambda: self._claim_once(lease_owner))
+        if run_id is not None and not isinstance(run_id, UUID):
+            raise ValueError("runtime_claim_run_id_invalid")
+        return _retry_database_only(lambda: self._claim_once(lease_owner, run_id))
 
     def heartbeat(self, lease: ExecutionLease) -> ExecutionLease:
         return _retry_database_only(lambda: self._heartbeat_once(lease))
@@ -101,7 +103,7 @@ class QueueService:
             )
         )
 
-    def _claim_once(self, lease_owner: str) -> ExecutionLease | None:
+    def _claim_once(self, lease_owner: str, run_id: UUID | None = None) -> ExecutionLease | None:
         with self._engine.begin() as connection:
             RuntimeRepository(connection, self._principal)
             owner_id = self._principal.account_id
@@ -111,6 +113,7 @@ class QueueService:
                     SELECT run.run_id, run.status, run.deadline_at
                     FROM runtime_private.runs AS run
                     WHERE run.owner_id=:owner_id
+                      AND (CAST(:run_id AS uuid) IS NULL OR run.run_id=CAST(:run_id AS uuid))
                       AND run.status IN ('queued', 'running')
                       AND (run.deadline_at IS NULL OR run.deadline_at > clock_timestamp())
                       AND (
@@ -141,7 +144,7 @@ class QueueService:
                     FOR UPDATE OF run SKIP LOCKED
                     """
                 ),
-                {"owner_id": owner_id},
+                {"owner_id": owner_id, "run_id": run_id},
             ).one_or_none()
             if candidate is None:
                 return None

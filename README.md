@@ -6,7 +6,9 @@ The [controlled demonstration](docs/demonstration.md) exercises local revision,
 approval, branch/PR publication and response-loss recovery, with separate actual
 worker-death and stale-worker experiments. Run it with `make demo-local` against
 explicitly disposable local test databases. Real OpenAI generation and normal
-GitHub publication on Render remain pending setup and activity-runner wiring.
+GitHub publication on Render remain pending setup and model-workflow composition.
+An opt-in [publication worker](docs/activity-runner.md) can execute already-approved
+work for one existing run when its server dependencies are configured.
 
 ## Local development
 

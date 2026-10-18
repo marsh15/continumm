@@ -500,8 +500,24 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   the three-case guarded fault target; its JSON report records local-only proof
   with no live execution. [Report](../docs/evidence/t34-local.json).
   T34 remains incomplete: no live provider patch/PR or hosted recovery was
-  performed, and the live activity runner is not wired. T35 has not started.
+  performed, and the complete model workflow is not wired. T35 has not started.
   [Local evidence and remaining gates](../docs/evidence/t34-demonstration.md).
+
+- T34 publication-worker slice: implemented exact-run queue claims, bounded async
+  dispatch with heartbeats, a model/tool dispatcher using trusted resolvers, and
+  an opt-in publication-only operator CLI. Approved publication runs use existing
+  branch/PR services, commit replay-safe continuations for bounded branch slices,
+  and stop on unknown/conflicting effects. A specialized transactional finalizer
+  checks the exact current approved manifest, confirmed branch/PR ledger and
+  reference, live lease and absence of unresolved work before accepting success.
+  Generic activity results cannot set success. Migration 20 permits the resulting
+  receipt; rollback preserves history while rejecting new success rows on the
+  older constraint. Verification passed 607 tests (144 optional database skips),
+  typing across 83 source files, lint, formatting, package build, and all 16 new
+  PostgreSQL worker/completion cases. Broader publication/approval/rework checks
+  passed after fixing a test fixture that violated the active-account limit.
+  Independent Luna/high review found no blocker. No live or paid calls were made.
+  [Worker scope and remaining composition](../docs/activity-runner.md).
 
 Implementation is complete through T33; T34 local preparation is committed and
 its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not

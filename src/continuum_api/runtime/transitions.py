@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -111,6 +112,25 @@ class TransitionService:
         self._principal = principal
         self._artifact_persistence = artifact_persistence
 
+    def complete_publication(
+        self, lease: ExecutionLease, approval_id: UUID, manifest_sha256: str
+    ) -> TransitionReceipt:
+        """Finish only a fully evidenced publication; generic activities cannot succeed a run."""
+        if lease.owner_id != self._principal.account_id:
+            raise LeaseLost("runtime_lease_owner_mismatch")
+        if not isinstance(approval_id, UUID) or not re.fullmatch(r"[0-9a-f]{64}", manifest_sha256):
+            raise InvalidTransition("publication_binding_invalid")
+        return self._commit_result(
+            lease=lease,
+            result={
+                "approval_id": str(approval_id),
+                "manifest_sha256": manifest_sha256,
+                "publication": "confirmed",
+            },
+            target_run_status=RunStatus.SUCCEEDED,
+            publication_binding=(approval_id, bytes.fromhex(manifest_sha256)),
+        )
+
     def commit_result(
         self,
         *,
@@ -120,7 +140,32 @@ class TransitionService:
         next_work: NextWork | None = None,
         artifact_id: UUID | None = None,
     ) -> TransitionReceipt:
-        self._validate_plan(target_run_status, next_work)
+        return self._commit_result(
+            lease=lease,
+            result=result,
+            target_run_status=target_run_status,
+            next_work=next_work,
+            artifact_id=artifact_id,
+        )
+
+    def _commit_result(
+        self,
+        *,
+        lease: ExecutionLease,
+        result: dict[str, Any],
+        target_run_status: RunStatus,
+        next_work: NextWork | None = None,
+        artifact_id: UUID | None = None,
+        publication_binding: tuple[UUID, bytes] | None = None,
+    ) -> TransitionReceipt:
+        if publication_binding is None:
+            self._validate_plan(target_run_status, next_work)
+        elif (
+            target_run_status is not RunStatus.SUCCEEDED
+            or next_work is not None
+            or artifact_id is not None
+        ):
+            raise InvalidTransition("publication_completion_plan_invalid")
         result_json = _canonical_json(result)
         if len(result_json.encode("utf-8")) > MAX_RESULT_BYTES:
             raise InvalidTransition("accepted_result_too_large")
@@ -143,6 +188,7 @@ class TransitionService:
                     target_run_status=target_run_status,
                     next_work=next_work,
                     artifact_id=artifact_id,
+                    publication_binding=publication_binding,
                 )
             except DBAPIError as error:
                 if (
@@ -216,6 +262,7 @@ class TransitionService:
         target_run_status: RunStatus,
         next_work: NextWork | None,
         artifact_id: UUID | None,
+        publication_binding: tuple[UUID, bytes] | None = None,
     ) -> TransitionReceipt:
         with self._engine.begin() as connection:
             repository = RuntimeRepository(connection, self._principal)
@@ -315,6 +362,9 @@ class TransitionService:
             locked = lock_current_execution(connection, self._principal, lease)
             if locked.run_status != RunStatus.RUNNING.value:
                 raise InvalidTransition("runtime_run_not_running")
+
+            if publication_binding is not None:
+                _assert_publication_complete(connection, lease, *publication_binding)
 
             artifact_reference: ArtifactReference | None = None
             if artifact_id is not None:
@@ -510,6 +560,149 @@ class TransitionService:
     @staticmethod
     def _validate_plan(target_run_status: RunStatus, next_work: NextWork | None) -> None:
         _validate_transition_plan(target_run_status, next_work)
+
+
+def _assert_publication_complete(
+    connection: Connection, lease: ExecutionLease, approval_id: UUID, digest: bytes
+) -> None:
+    """Read the completion proof under the same run lock as the accepted result."""
+    from continuum_api.approvals.manifest import ApprovalManifestError, digest_manifest
+
+    parameters = {
+        "owner": lease.owner_id,
+        "run": lease.run_id,
+        "step": lease.step_id,
+        "job": lease.job_id,
+        "approval": approval_id,
+    }
+    row = (
+        connection.execute(
+            text(
+                "SELECT approval.manifest, approval.manifest_sha256, approval.status, "
+                "approval.revision, run.revision AS run_revision, step.revision AS step_revision, "
+                "step.activity, step.logical_key FROM runtime_private.approvals AS approval "
+                "JOIN runtime_private.runs AS run USING(owner_id, run_id) "
+                "JOIN runtime_private.steps AS step ON step.owner_id=run.owner_id "
+                "AND step.run_id=run.run_id AND step.step_id=:step "
+                "WHERE approval.owner_id=:owner AND approval.run_id=:run "
+                "AND approval.approval_id=:approval"
+            ),
+            parameters,
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise InvalidTransition("publication_completion_binding_missing")
+    key = row["logical_key"]
+    root = f"publish-approved:{approval_id.hex}"
+    if (
+        row["status"] != "approved"
+        or bytes(row["manifest_sha256"]) != digest
+        or row["revision"] != row["run_revision"]
+        or row["revision"] != row["step_revision"]
+        or row["activity"] != "publish_approved"
+        or re.fullmatch(rf"{root}(?::part:(?:0|[1-9][0-9]{{0,5}}))?", key) is None
+    ):
+        raise InvalidTransition("publication_completion_binding_invalid")
+    try:
+        manifest = row["manifest"]
+        _encoded, actual_digest = digest_manifest(manifest)
+        branch_metadata = {
+            "operation": "update_managed_branch",
+            "branch": manifest["branch"]["name"],
+            "desired_sha": manifest["commit"]["sha"],
+        }
+        pr = manifest["pull_request"]
+        pr_metadata = {
+            "operation": "create_pull_request",
+            "repository_id": manifest["repository"]["id"],
+            "owner": manifest["repository"]["owner"],
+            "name": manifest["repository"]["name"],
+            "title": pr["title"],
+            "body": pr["body"],
+            "base_branch": pr["base"],
+            "base_sha": manifest["base"]["commit_sha"],
+            "head_branch": pr["head"],
+            "head_sha": manifest["commit"]["sha"],
+            "marker": pr["marker"],
+        }
+    except (KeyError, TypeError, ApprovalManifestError):
+        raise InvalidTransition("publication_completion_manifest_invalid") from None
+    if actual_digest != digest:
+        raise InvalidTransition("publication_completion_manifest_invalid")
+    operations = (
+        connection.execute(
+            text(
+                "SELECT operation_id, operation_key, status, approval_id, approval_sha256, "
+                "request_metadata FROM runtime_private.external_operations "
+                "WHERE owner_id=:owner AND run_id=:run "
+                "AND operation_key IN ('github:managed-branch','github:pull-request')"
+            ),
+            parameters,
+        )
+        .mappings()
+        .all()
+    )
+    by_key = {item["operation_key"]: item for item in operations}
+    for op_key, metadata in (
+        ("github:managed-branch", branch_metadata),
+        ("github:pull-request", pr_metadata),
+    ):
+        operation = by_key.get(op_key)
+        if (
+            operation is None
+            or operation["status"] != "confirmed"
+            or operation["approval_id"] != approval_id
+            or operation["approval_sha256"] is None
+            or bytes(operation["approval_sha256"]) != digest
+            or operation["request_metadata"] != metadata
+        ):
+            raise InvalidTransition("publication_completion_unconfirmed")
+    reference = connection.execute(
+        text(
+            "SELECT observation.details FROM runtime_private.external_operation_observations "
+            "AS observation JOIN runtime_private.external_operations AS operation "
+            "USING(owner_id,run_id,operation_id) WHERE operation.owner_id=:owner "
+            "AND operation.run_id=:run AND operation.operation_key='github:pull-request' "
+            "AND observation.observation_key='pull-request-reference' "
+            "AND observation.outcome='confirmed'"
+        ),
+        parameters,
+    ).scalar_one_or_none()
+    if (
+        not isinstance(reference, dict)
+        or type(reference.get("number")) is not int
+        or reference["number"] <= 0
+        or type(reference.get("id")) is not int
+        or reference["id"] <= 0
+        or reference.get("url")
+        != f"https://github.com/{pr_metadata['owner']}/{pr_metadata['name']}/pull/{reference['number']}"
+    ):
+        raise InvalidTransition("publication_completion_reference_invalid")
+    checks = (
+        ("steps", "step_id<>:step AND status<>'succeeded'"),
+        ("jobs", "job_id<>:job AND status<>'succeeded'"),
+        ("external_operations", "status<>'confirmed'"),
+        ("sandbox_allocations", "status NOT IN ('stopped','destroyed','not_applied','released')"),
+        ("resource_reservations", "status<>'released'"),
+        (
+            "dispatch_intents",
+            "observation IS NULL OR "
+            "coalesce(observation->>'state','') NOT IN ('completed','confirmed')",
+        ),
+        ("cleanup_intents", "status='pending'"),
+    )
+    for table, predicate in checks:
+        exists = connection.execute(
+            text(
+                f"SELECT EXISTS(SELECT 1 FROM runtime_private.{table} "
+                f"WHERE owner_id=:owner AND run_id=:run AND ({predicate}))"
+            ),
+            parameters,
+        ).scalar_one()
+        if exists:
+            raise InvalidTransition("publication_completion_unresolved_work")
 
 
 def _canonical_json(value: dict[str, Any]) -> str:
