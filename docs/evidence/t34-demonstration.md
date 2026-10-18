@@ -103,3 +103,26 @@ found no blocker within this scope.
 This is a resolver for previously initialized turns. First-run input pinning,
 policy/validation composition and service setup remain pending; T34 is still
 open and T35 has not started.
+
+## Subsequent first-turn initialization proof
+
+The resolver now provides a trusted `initialize` API for a fresh turn. It pins
+the exact task context, model and tool-schema digest under the current owner and
+lease after verifying the revision-zero replay-safe activity and accepted root
+baseline. Identical calls are idempotent. Conflicts, partial pins and missing
+pins with existing turn history reject without overwriting stored inputs.
+
+Two PostgreSQL integration cases passed. They exercise fresh initialization,
+persisted resolution and real durable turn preparation, repeated initialization,
+wrong-owner and stale leases, step and baseline mismatches, conflicting context,
+and partial or missing historical pins. Initialization leaves turn counts and
+model reservation counters unchanged; `prepare_turn` remains responsible for
+checkpoint verification and model budget reservation.
+
+Final checks passed 609 Python tests (146 optional database skips), formatting,
+lint, strict typing and package build.
+
+This is a trusted server API with controlled local evidence. It adds no browser
+admission endpoint and performs no live provider call. Admission/source
+preparation, policy/validation composition and live service setup still need
+wiring. T34 remains open; T35 has not started.

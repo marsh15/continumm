@@ -119,9 +119,9 @@ def _canonical_json(value: Any, code: str) -> str:
 class PersistedAgentTurnInputResolver:
     """Resolve a turn only from owner-scoped, already pinned run inputs.
 
-    A prior trusted `prepare_turn` call must have pinned the model, task context,
-    and schema digest before this resolver can dispatch a resumed turn. It has
-    no defaults for those persisted values.
+    Trusted initialization may pin the model, task context, and schema digest
+    before the first turn is prepared. Resolution only reads the persisted
+    values, so resumed turns cannot replace them.
     """
 
     def __init__(
@@ -143,6 +143,167 @@ class PersistedAgentTurnInputResolver:
         self._schema_digest = hashlib.sha256(encoded.encode("utf-8")).digest()
         self._engine = engine
         self._principal = principal
+
+    async def initialize(
+        self,
+        lease: ExecutionLease,
+        step: AgentActivityStep,
+        *,
+        context: dict[str, Any],
+        model_id: str,
+        baseline_artifact_id: UUID,
+    ) -> None:
+        """Pin trusted first-turn inputs without reserving model budget."""
+        if step.activity != "agent_turn":
+            raise AgentLoopError("agent_turn_activity_required")
+        if model_id not in {OPENAI_MODEL_ID, ANTHROPIC_MODEL_ID, "scripted-v1"}:
+            raise AgentLoopError("agent_context_model_invalid")
+        if not isinstance(baseline_artifact_id, UUID):
+            raise AgentLoopError("agent_baseline_artifact_invalid")
+        try:
+            initial_context = canonicalize_initial_context(context)
+            context_json = _canonical_json(initial_context, "agent_context_initial_invalid")
+            initial_context = json.loads(context_json)
+        except AgentContextError as error:
+            raise AgentLoopError(error.code) from None
+        except ValueError as error:
+            raise AgentLoopError(str(error)) from None
+        try:
+            await asyncio.to_thread(
+                self._initialize_once,
+                lease,
+                step,
+                initial_context,
+                context_json,
+                model_id,
+                baseline_artifact_id,
+            )
+        except LeaseLost:
+            raise AgentLoopError("agent_lease_lost") from None
+        except SQLAlchemyError:
+            raise AgentLoopError("agent_persistence_unavailable") from None
+
+    def _initialize_once(
+        self,
+        lease: ExecutionLease,
+        step: AgentActivityStep,
+        initial_context: dict[str, Any],
+        context_json: str,
+        model_id: str,
+        baseline_artifact_id: UUID,
+    ) -> None:
+        with self._engine.begin() as connection:
+            RuntimeRepository(connection, self._principal)
+            lock_current_execution(connection, self._principal, lease)
+            stored_step = (
+                connection.execute(
+                    text(
+                        "SELECT activity, logical_key, revision FROM runtime_private.steps "
+                        "WHERE owner_id=:owner AND run_id=:run AND step_id=:step"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id, "step": lease.step_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                stored_step is None
+                or stored_step["activity"] != step.activity
+                or stored_step["logical_key"] != step.logical_key
+                or stored_step["revision"] != step.revision
+            ):
+                raise AgentLoopError("agent_step_identity_conflict")
+            if stored_step["revision"] != 0:
+                raise AgentLoopError("agent_turn_initialization_only")
+
+            replay_policy = connection.execute(
+                text(
+                    "SELECT replay_policy FROM runtime_private.jobs "
+                    "WHERE owner_id=:owner AND run_id=:run AND job_id=:job"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id, "job": lease.job_id},
+            ).scalar_one_or_none()
+            if replay_policy != ReplayPolicy.REPLAY_SAFE.value:
+                raise AgentLoopError("agent_turn_replay_policy_required")
+
+            root_artifact_id = connection.execute(
+                text(
+                    "SELECT artifact_id FROM runtime_private.accepted_results "
+                    "WHERE owner_id=:owner AND run_id=:run AND artifact_id IS NOT NULL "
+                    "ORDER BY event_sequence ASC LIMIT 1"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id},
+            ).scalar_one_or_none()
+            if root_artifact_id is None:
+                raise AgentLoopError("agent_baseline_artifact_missing")
+            if root_artifact_id != baseline_artifact_id:
+                raise AgentLoopError("agent_baseline_artifact_mismatch")
+
+            run = (
+                connection.execute(
+                    text(
+                        "SELECT model_id, model_task_context, model_tool_schema_sha256 "
+                        "FROM runtime_private.runs WHERE owner_id=:owner AND run_id=:run "
+                        "FOR UPDATE"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if run is None:
+                raise AgentLoopError("agent_run_not_found")
+            stored_values = (
+                run["model_id"],
+                run["model_task_context"],
+                run["model_tool_schema_sha256"],
+            )
+            if all(value is None for value in stored_values):
+                prior_turn_count = connection.execute(
+                    text(
+                        "SELECT count(*) FROM runtime_private.agent_turns "
+                        "WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {"owner": lease.owner_id, "run": lease.run_id},
+                ).scalar_one()
+                if prior_turn_count:
+                    raise AgentLoopError("agent_turn_inputs_invalid")
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.runs SET model_id=:model, "
+                        "model_task_context=CAST(:context AS jsonb), "
+                        "model_tool_schema_sha256=:schema_hash "
+                        "WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {
+                        "model": model_id,
+                        "context": context_json,
+                        "schema_hash": self._schema_digest,
+                        "owner": lease.owner_id,
+                        "run": lease.run_id,
+                    },
+                )
+                return
+
+            if any(value is None for value in stored_values):
+                raise AgentLoopError("agent_turn_inputs_invalid")
+            try:
+                pinned_context = canonicalize_initial_context(run["model_task_context"])
+                pinned_schema_digest = bytes(run["model_tool_schema_sha256"])
+            except (AgentContextError, TypeError, ValueError):
+                raise AgentLoopError("agent_turn_inputs_invalid") from None
+            pinned_model = run["model_id"]
+            if (
+                pinned_model not in {OPENAI_MODEL_ID, ANTHROPIC_MODEL_ID, "scripted-v1"}
+                or len(pinned_schema_digest) != hashlib.sha256().digest_size
+            ):
+                raise AgentLoopError("agent_turn_inputs_invalid")
+            if (
+                pinned_context != initial_context
+                or pinned_model != model_id
+                or pinned_schema_digest != self._schema_digest
+            ):
+                raise AgentLoopError("agent_turn_inputs_conflict")
 
     async def __call__(self, lease: ExecutionLease, step: AgentActivityStep) -> AgentTurnInputs:
         try:

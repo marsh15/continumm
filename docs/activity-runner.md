@@ -73,19 +73,23 @@ one-use credential grants and durable reservations. Tool execution selects the
 stored invocation and ordinal; completed turns schedule candidate validation.
 
 The dispatcher requires trusted owner-scoped input, policy and next-work
-resolvers. `PersistedAgentTurnInputResolver` supplies turn inputs for runs whose
-model, task context and tool-schema digest were already pinned by a trusted
-`prepare_turn` call. It reads those
-values and the first accepted baseline artifact under the exact current lease,
-and checks the persisted activity identity. A trusted server supplies the fixed
-tool schemas; their canonical digest must match the pin. Missing pins, changed
-schemas and stale or other-owner leases fail closed. This resolver does not
-initialize a run or choose its first task/model. These are injected Python callables, not arbitrary modules or inputs
-loaded from the CLI. Current steps/jobs have no general input-reference payload;
-there is no default live admission/policy/validation composition yet. The new
-turn-input resolver supports already initialized runs; the first-run input
-pinning path remains to be composed.
-The publication CLI deliberately registers only `publish_approved`.
+resolvers. `PersistedAgentTurnInputResolver.initialize` lets trusted server code
+pin a fresh turn's task context, model and fixed tool-schema digest before
+calling the dispatcher. It requires a current lease for the exact revision-zero,
+replay-safe `agent_turn` and the run's first accepted baseline artifact. Identical
+initialization can be repeated; changed or partial pins are rejected. A run with
+existing turn history cannot be initialized from missing pins.
+
+Initialization creates no model turn, reserves no tokens and calls no provider.
+`prepare_turn` still performs the existing durable reservation and checkpoint
+verification. The resolver's read path then supplies the persisted model/context,
+checks the schema digest and activity identity, and selects the accepted baseline
+under the current owner and lease. Missing pins never fall back to task inputs.
+
+These are trusted Python APIs, not browser endpoints or arbitrary inputs loaded
+from the CLI. Admission/source preparation, trusted policy and validation
+composition still need wiring for the live workflow. The publication CLI
+registers only `publish_approved`.
 
 The Render image still starts the API, not this operator worker. The local tests
 use controlled remote adapters and do not establish hosted execution or live

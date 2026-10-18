@@ -87,9 +87,9 @@ Before the live demonstration can run:
 4. Complete the trusted admission/input-resolution/validation composition for
    model/tool turns. A [bounded activity runner and approved-publication CLI](activity-runner.md)
    now connect the publication portion, including durable continuations and
-   evidence-gated completion. The model/tool dispatcher can resolve turn inputs for already initialized
-   runs, but still needs first-run input pinning and trusted policy/validation
-   composition; the CLI registers only publication. The current Docker entrypoint still runs
+   evidence-gated completion. The model/tool dispatcher has trusted first-turn pinning and persisted input
+   resolution, but still needs admission/source preparation and trusted
+   policy/validation composition; the CLI registers only publication. The current Docker entrypoint still runs
    Uvicorn. `make eval-live PROVIDER=openai` continues to fail closed rather than
    sending an untracked model request.
 5. Run a bounded task, request and validate one revision, inspect the exact new

@@ -529,6 +529,17 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   this resumed-turn scope. Initial input pinning, policy/validation composition
   and the live demonstration remain open. No live calls were made.
 
+- T34 first-turn initialization slice: the persisted resolver now exposes a
+  trusted initialization API that atomically pins exact model/context/schema
+  inputs under a current revision-zero agent-turn lease and accepted baseline.
+  Same-value initialization is idempotent; conflicting, partial and missing
+  historical pins reject. Initialization leaves model reservations and turn
+  counts unchanged, then feeds the existing durable preparation path. Two
+  PostgreSQL integration cases passed, along with 609 Python tests (146 optional
+  database skips), formatting, lint, strict typing and package build. No live
+  calls were made. Admission/source preparation, policy and validation
+  composition and live service setup remain open; T35 has not started.
+
 Implementation is complete through T33; T34 local preparation is committed and
 its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
