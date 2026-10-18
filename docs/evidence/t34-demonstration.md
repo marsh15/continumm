@@ -80,3 +80,26 @@ OpenAI generation, server setup and the trusted admission/input-resolution/
 validation composition remain pending. The publication worker is an explicit
 operator invocation; the Render image still starts only the API.
 [Worker contract and commands](../activity-runner.md).
+
+## Subsequent persisted-input resolver proof
+
+`PersistedAgentTurnInputResolver` resolves already initialized turns from the
+run's pinned model, task context and tool-schema digest, plus its earliest
+accepted baseline artifact. It checks the exact persisted step and current lease
+under the owner boundary. Schema inputs are bounded and copied so caller
+mutation cannot change later resolutions. Missing pins never fall back to
+caller-supplied task inputs.
+
+The PostgreSQL integration test uses the real durable turn service to initialize
+and replay the pinned turn. It verifies missing pins, wrong activity, other-owner
+access, stale generation, changed revision, schema mismatch and schema mutation
+isolation. It passed on disposable PostgreSQL 17 with UTF-8 encoding. No live
+provider call or hosted service was involved.
+
+Final verification passed 609 Python tests (145 optional database skips),
+formatting, lint, strict typing and package build. Independent Luna/high review
+found no blocker within this scope.
+
+This is a resolver for previously initialized turns. First-run input pinning,
+policy/validation composition and service setup remain pending; T34 is still
+open and T35 has not started.

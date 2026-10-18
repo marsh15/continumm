@@ -2,20 +2,47 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import Engine
 
 from continuum_api.runtime import agent_activity
 from continuum_api.runtime.agent_activity import (
     AgentActivityDispatcher,
     AgentActivityStep,
     AgentTurnInputs,
+    PersistedAgentTurnInputResolver,
 )
 from continuum_api.runtime.agent_loop import AgentLoopError
 from continuum_api.runtime.persistence import Principal, ReplayPolicy, RunStatus
 from continuum_api.runtime.transitions import NextWork
 from continuum_api.tools.policy import ToolPolicyContext
+
+
+def test_persisted_input_resolver_rejects_non_json_schema() -> None:
+    with pytest.raises(ValueError, match="agent_tool_schema_invalid"):
+        PersistedAgentTurnInputResolver(
+            cast(Engine, object()),
+            Principal(uuid4()),
+            tool_schemas=({"invalid": object()},),
+        )
+
+
+def test_persisted_input_resolver_bounds_schema_count_and_size() -> None:
+    with pytest.raises(ValueError, match="agent_tool_schema_invalid"):
+        PersistedAgentTurnInputResolver(
+            cast(Engine, object()),
+            Principal(uuid4()),
+            tool_schemas=tuple({} for _ in range(17)),
+        )
+    with pytest.raises(ValueError, match="agent_tool_schema_size_limit"):
+        PersistedAgentTurnInputResolver(
+            cast(Engine, object()),
+            Principal(uuid4()),
+            tool_schemas=({"description": "x" * 98_500},),
+        )
 
 
 def _lease() -> SimpleNamespace:

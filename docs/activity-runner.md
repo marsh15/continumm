@@ -73,9 +73,18 @@ one-use credential grants and durable reservations. Tool execution selects the
 stored invocation and ordinal; completed turns schedule candidate validation.
 
 The dispatcher requires trusted owner-scoped input, policy and next-work
-resolvers. These are injected Python callables, not arbitrary modules or inputs
+resolvers. `PersistedAgentTurnInputResolver` supplies turn inputs for runs whose
+model, task context and tool-schema digest were already pinned by a trusted
+`prepare_turn` call. It reads those
+values and the first accepted baseline artifact under the exact current lease,
+and checks the persisted activity identity. A trusted server supplies the fixed
+tool schemas; their canonical digest must match the pin. Missing pins, changed
+schemas and stale or other-owner leases fail closed. This resolver does not
+initialize a run or choose its first task/model. These are injected Python callables, not arbitrary modules or inputs
 loaded from the CLI. Current steps/jobs have no general input-reference payload;
-there is no default live admission/input-resolution/validation composition yet.
+there is no default live admission/policy/validation composition yet. The new
+turn-input resolver supports already initialized runs; the first-run input
+pinning path remains to be composed.
 The publication CLI deliberately registers only `publish_approved`.
 
 The Render image still starts the API, not this operator worker. The local tests

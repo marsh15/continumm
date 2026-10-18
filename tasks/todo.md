@@ -392,7 +392,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 - [ ] Complete a real-provider patch, revision, approval and normal GitHub publication.
 - [x] Demonstrate actual worker death, stale-owner rejection and lost-response reconciliation separately (local controlled fixtures).
 - **Verify:** make test-faults; controlled live demo with recorded evidence.
-- **Status:** Local harness and recovery evidence implemented; live OpenAI/Render/GitHub demonstration remains open pending service setup and trusted admission/model-input/validation composition. The bounded publication worker is implemented. [Evidence](../docs/evidence/t34-demonstration.md).
+- **Status:** Local harness and recovery evidence implemented; live OpenAI/Render/GitHub demonstration remains open pending service setup and trusted admission/model-input/validation composition. The bounded publication worker and input resolver for already initialized agent turns are implemented; first-run input pinning, policy and validation composition remain open. [Evidence](../docs/evidence/t34-demonstration.md).
 
 ### Checkpoint K — Portfolio demonstration
 

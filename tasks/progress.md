@@ -519,6 +519,16 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   Independent Luna/high review found no blocker. No live or paid calls were made.
   [Worker scope and remaining composition](../docs/activity-runner.md).
 
+- T34 persisted-input slice: added an owner- and lease-fenced resolver for turns
+  whose model/context/schema were already pinned by a trusted `prepare_turn`.
+  It checks activity identity, revision and schema digest and uses the same
+  earliest accepted baseline artifact as the durable agent loop. Missing pins
+  reject without defaults. Verification passed 609 Python tests (145 optional
+  database skips), formatting, lint, typing and package build; the focused
+  PostgreSQL integration also passed. Luna/high review found no blocker within
+  this resumed-turn scope. Initial input pinning, policy/validation composition
+  and the live demonstration remain open. No live calls were made.
+
 Implementation is complete through T33; T34 local preparation is committed and
 its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account
