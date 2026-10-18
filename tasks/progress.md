@@ -496,6 +496,9 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   package build. Render's Blueprint now includes the runtime URL required by
   production settings. User-selected live target: Render, OpenAI and
   `marsh15/continumm`; the owner confirmed these services are not configured.
+  A clean-commit rerun at `832aa42` passed all five demonstration cases and
+  the three-case guarded fault target; its JSON report records local-only proof
+  with no live execution. [Report](../docs/evidence/t34-local.json).
   T34 remains incomplete: no live provider patch/PR or hosted recovery was
   performed, and the live activity runner is not wired. T35 has not started.
   [Local evidence and remaining gates](../docs/evidence/t34-demonstration.md).

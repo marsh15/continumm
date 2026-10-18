@@ -1,6 +1,6 @@
 # T34 demonstration evidence
 
-**Local status:** PASS in the implementation worktree; clean-commit report pending.
+**Local status:** PASS on clean commit `832aa42`.
 **Live status:** NOT RUN — services are not configured and the live activity runner is incomplete.
 **Date:** 18 October 2026.
 
@@ -12,13 +12,23 @@ created by this work.
 ## Observed local results
 
 The controlled runner passed five individually selected cases against disposable
-loopback PostgreSQL 17. The cases are actual worker SIGKILL recovery, separate
-SIGSTOP/stale-owner rejection, PR lost-response reconciliation, revision and
-approval followed by normal fixture publication, and the same journey followed
-by lost-response adoption. Initial verification used the T34 working tree based
-on commit `4eb4232`; it was explicitly marked dirty and is not a reproducible
-source identity by itself. A clean-commit report will identify the committed
-implementation separately.
+loopback PostgreSQL 17 at commit
+`832aa42fbed38c50541fa1484e1860d311948301` on
+18 October 2026 at 07:16:33 UTC. The report records `worktree_dirty: false`,
+`tested_source_reproducible: true`, `local_only: true` and `live_not_run: true`.
+[Machine-readable evidence](t34-local.json).
+
+| Case | Result |
+| --- | --- |
+| Worker SIGKILL and checkpoint recovery | PASS |
+| Separate SIGSTOP and stale-owner write rejection | PASS |
+| Accepted PR create with lost response and later reconciliation | PASS |
+| Revision, approval and normal fixture branch/PR publication | PASS |
+| Revision, approval, response loss and read-only PR adoption | PASS |
+
+`make test-faults CONFIRM_DISPOSABLE_FAULT_DATABASES=1` also passed all three
+fault cases through the guarded controller on that clean commit. Without the
+confirmation, the target failed before any test execution as intended.
 
 Backend verification passed 576 Python tests with 128 optional database cases
 skipped, strict typing, lint, formatting and package build. The runner's 19 unit
