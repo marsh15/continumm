@@ -158,3 +158,33 @@ and verified checkpoint lineage. A default run-bound resolver, admission/source
 preparation, tool policy composition and live service setup remain pending. The
 publication CLI has not gained model or validation dispatch. T34 is open and T35
 has not started.
+
+## Subsequent persisted validation-source proof
+
+Migration 21 adds an immutable, owner-scoped baseline/eligibility pin. The
+trusted pin service accepts the original T13 receipt, verifies it against the
+restored root checkpoint and real profile plan, and stores canonical receipt
+metadata and its digest under the current lease. The runtime role has only
+select/insert access to the new table. Changed pins are rejected.
+
+The concrete validation-input resolver uses that pin and the globally latest
+accepted candidate in the current revision. It restores both retained archives
+through checkpoint authorization, reconstructs their cumulative patch, calls
+the real source-preparation function and rechecks the binding after restoration.
+The original pin remains valid across owner-requested rework revisions.
+
+The focused PostgreSQL proof covers missing pins, owner isolation, stale leases,
+conflicting receipts, denied runtime updates and corrupted receipt digests. It
+then feeds the real candidate-validation handler with reconstructed inputs and
+verifies resolution again after an actual owner-requested revision. Profiles and
+allocations remain controlled adapters; this is not hosted execution.
+
+Final checks passed 609 Python tests (151 optional database skips), formatting,
+lint, strict typing across 85 source files and package build. Separate
+PostgreSQL module runs passed 26 cases across source resolution, approval, rework
+and publication. Independent Luna/high review found no blocker.
+
+Admission must still supply the actual T13 receipt to the trusted pin API; the
+pin does not independently establish receipt provenance. Current tool-policy
+composition and live service setup remain pending. No provider calls or hosted
+deployments were made. T34 remains open and T35 has not started.

@@ -554,6 +554,20 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   provider or hosted-sandbox calls were made. T34 remains open and T35 has not
   started.
 
+- T34 persisted validation-source slice: migration 21 adds immutable,
+  owner-isolated baseline/eligibility pins with runtime select/insert privileges.
+  The trusted pin API verifies the retained root checkpoint against the actual
+  profile plan; the concrete resolver reconstructs candidate authorization from
+  accepted archive bytes and rechecks its revision/binding after restoration.
+  Revision-zero pins survive owner-requested rework. Verification passed 609
+  Python tests (151 optional database skips), formatting, lint, strict typing
+  across 85 source files and package build. Separate PostgreSQL module runs
+  passed 26 cases across source resolution, approval, rework and publication,
+  including missing/conflicting/corrupt pins, owner/stale-lease guards and runtime
+  update denial. Independent Luna/high review found no blocker. Admission must
+  still supply the actual T13 receipt, current tool-policy wiring remains open,
+  and no live services were used. T34 is open; T35 has not started.
+
 Implementation is complete through T33; T34 local preparation is committed and
 its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

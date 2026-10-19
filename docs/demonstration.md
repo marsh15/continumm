@@ -89,7 +89,8 @@ Before the live demonstration can run:
    now connect the publication portion, including durable continuations and
    evidence-gated completion. The model/tool dispatcher has trusted first-turn pinning and persisted input
    resolution plus validation/freeze handlers, but still needs admission/source
-   preparation, trusted policy and the default validation-input resolver; the CLI registers only publication. The current Docker entrypoint still runs
+   preparation and trusted policy composition; the validation-input resolver now
+   reconstructs source from immutable baseline/eligibility pins; the CLI registers only publication. The current Docker entrypoint still runs
    Uvicorn. `make eval-live PROVIDER=openai` continues to fail closed rather than
    sending an untracked model request.
 5. Run a bounded task, request and validate one revision, inspect the exact new

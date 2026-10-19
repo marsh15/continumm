@@ -104,12 +104,28 @@ Passing evidence schedules a separately leased
 manifest-freezing service, which verifies immutable source and publication facts
 before entering owner review.
 
-The input resolver is a trusted server dependency. It must recover the original
-eligibility receipt and reconstruct verified candidate source from the accepted
-checkpoint lineage rooted in the baseline; a type annotation alone does not
-authorize source inputs. Committed checkpoint attachment already requires the
-previous accepted artifact as its parent. The runtime does not yet pin
-all eligibility/source-admission facts needed to provide a default resolver.
+`ValidationSourcePinService.pin` stores the trusted original eligibility receipt
+and its canonical digest against the run's first accepted baseline. It verifies
+the restored baseline's profile plan, Git tree, manifests and size before the
+lease-fenced insert. Apply migration `20261019_21` first. The source-pin table has
+forced owner isolation and grants the runtime only select/insert access.
+Identical pins can be repeated; a changed baseline or receipt is rejected.
+
+`PersistedCandidateValidationInputResolver` reads that pin and the newest
+accepted candidate in the current revision, restores both archives through the
+checkpoint authorization boundary, derives their cumulative patch and calls the
+real source-preparation function. Committed checkpoint attachment already
+requires the previous accepted artifact as its parent. The pin preserves the
+original baseline across rework revisions; each candidate still needs fresh
+validation.
+
+These remain trusted server APIs. Admission must pass the actual T13 receipt to
+the pin service; the pin does not independently establish how its caller obtained
+that receipt. A trusted policy callback supplies current tool authorization.
+There is no browser input path or fallback to a current GitHub branch/cache.
+Downgrading migration 21 removes the new pins without rewriting artifacts or
+accepted validation results. After re-upgrade, runs missing pins fail closed;
+there is no automatic reconstruction from an expired eligibility cache.
 Neither activity accepts arbitrary validation evidence from a job payload.
 Non-passing validation records bounded typed evidence in `needs_attention` and
 schedules no freeze. Unknown allocation outcomes retain the existing accounting

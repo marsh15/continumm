@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -19,6 +20,7 @@ from test_approvals import ApprovalScenario, _close_scenario, create_frozen_appr
 from continuum_api.runtime.agent_loop import DurableAgentLoopService
 from continuum_api.runtime.approvals import ApprovalError
 from continuum_api.runtime.artifact_persistence import ArtifactPersistence
+from continuum_api.runtime.leases import ExecutionLease
 from continuum_api.runtime.review import ReviewService
 
 
@@ -225,7 +227,10 @@ def test_competing_rework_and_approval_commit_one_outcome(
         _close_scenario(scenario)
 
 
-def _validate_reworked_candidate(scenario: ApprovalScenario) -> None:
+def _validate_reworked_candidate(
+    scenario: ApprovalScenario,
+    before_validation: Callable[[ExecutionLease], Awaitable[None]] | None = None,
+) -> None:
     """Create actual T21 checkpoints and new T20 evidence without a model/provider call."""
     from unittest.mock import patch
     from uuid import uuid4
@@ -308,6 +313,8 @@ def _validate_reworked_candidate(scenario: ApprovalScenario) -> None:
         )
         validation_lease = scenario.queue.claim_one(f"t28-validation-r{revision}")
         assert validation_lease is not None
+        if before_validation is not None:
+            await before_validation(validation_lease)
         allocation_ids = (uuid4(), uuid4())
         lineage = hashlib.sha256(
             f"t28-revision:{scenario.run.run_id}:{revision}".encode()
