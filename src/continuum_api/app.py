@@ -25,6 +25,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from continuum_api.api_models import ErrorResponse
 from continuum_api.auth.boundary import GitHubAuthBoundary, configured_boundary
 from continuum_api.auth.github import GitHubPublicationFactsProvider
+from continuum_api.settings import get_settings
 from continuum_api.wake import create_wake_router
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ def create_app(
     *,
     principal_resolver: Callable[[Request], Any] | None = None,
     review_service_factory: Callable[[Request, Any], Any] | None = None,
+    repository_onboarding_service_factory: Callable[[Request, Any], Any] | None = None,
     external_attention_service_factory: Callable[[Request, Any], Any] | None = None,
     csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
@@ -100,14 +102,23 @@ def create_app(
     application.state.runtime_engine = runtime_engine
     application.state.owns_runtime_engine = False
     application.state.runtime_engine_lock = threading.Lock()
+    from continuum_api.auth.github import GitHubAccessVerifier
     from continuum_api.auth.routes import create_auth_router
     from continuum_api.auth.sessions import AuthStorageError
+    from continuum_api.credentials import CredentialCipher
     from continuum_api.publication.github_pr import GitHubPRTransport
+    from continuum_api.repositories.preflight import RepositoryPreflightService
     from continuum_api.runtime.approvals import ApprovalService
     from continuum_api.runtime.external_attention import ExternalAttentionService
     from continuum_api.runtime.external_attention_routes import create_external_attention_router
     from continuum_api.runtime.external_ledger import ExternalOperationService
     from continuum_api.runtime.github_pr_publication import GitHubPullRequestService
+    from continuum_api.runtime.provider_credentials import CredentialService
+    from continuum_api.runtime.repository_preflight import RepositoryPreflightStore
+    from continuum_api.runtime.repository_routes import (
+        RepositoryOnboardingService,
+        create_repository_router,
+    )
     from continuum_api.runtime.review_routes import create_review_router
     from continuum_api.runtime.run_routes import (
         _StreamLimiter,
@@ -171,6 +182,26 @@ def create_app(
             ),
         )
 
+    def browser_repository_onboarding(request: Request, principal: Any) -> Any:
+        boundary = auth_boundary(request)
+        engine = get_runtime_engine(request)
+        authorization = boundary.authorization_factory(principal)
+        settings = get_settings()
+        try:
+            cipher = CredentialCipher.from_settings(settings)
+        except Exception:
+            cipher = None
+        return RepositoryOnboardingService(
+            engine,
+            principal,
+            authorization,
+            RepositoryPreflightService(
+                RepositoryPreflightStore(engine),
+                access_verifier=GitHubAccessVerifier(authorization),
+            ),
+            CredentialService(engine, principal, cipher),
+        )
+
     async def browser_csrf(request: Request) -> bool:
         try:
             return await auth_boundary(request).csrf(request)
@@ -179,6 +210,9 @@ def create_app(
 
     principal_resolver = principal_resolver or browser_principal
     review_service_factory = review_service_factory or browser_review
+    repository_onboarding_service_factory = (
+        repository_onboarding_service_factory or browser_repository_onboarding
+    )
     external_attention_service_factory = (
         external_attention_service_factory or browser_external_attention
     )
@@ -186,6 +220,11 @@ def create_app(
     application.include_router(create_auth_router(auth_boundary))
     application.state.sse_stream_limiter = _StreamLimiter()
     application.include_router(create_run_router(principal_resolver))
+    application.include_router(
+        create_repository_router(
+            principal_resolver, repository_onboarding_service_factory, csrf_guard
+        )
+    )
     application.include_router(
         create_review_router(principal_resolver, review_service_factory, csrf_guard)
     )

@@ -4,6 +4,7 @@ import { getLiveness, getReadiness } from "./api/client";
 import { RunDetailPage } from "./components/RunDetailPage";
 import { ReviewPage } from "./components/ReviewPage";
 import { ServiceCheck } from "./components/ServiceCheck";
+import { RepositoriesPage } from "./components/RepositoriesPage";
 
 function FoundationPage() {
   const live = useQuery({
@@ -71,10 +72,14 @@ export function App() {
         <Link to="/" className="brand">
           Continumm
         </Link>
-        <span className="not-launched">Foundation · Not launched</span>
+        <nav className="app-navigation" aria-label="Main navigation">
+          <Link to="/settings/repositories">Repositories</Link>
+          <span className="not-launched">Foundation · Not launched</span>
+        </nav>
       </header>
       <Routes>
         <Route path="/" element={<FoundationPage />} />
+        <Route path="/settings/repositories" element={<RepositoriesPage />} />
         <Route path="/runs/:runId" element={<RunDetailPage />} />
         <Route path="/runs/:runId/review" element={<ReviewPage />} />
         <Route path="*" element={<UnknownPage />} />

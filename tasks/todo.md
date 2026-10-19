@@ -387,6 +387,8 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 ### T34 — End-to-end demonstration milestone
 
+Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
+
 - **Dependencies:** T25, T28, T32, T33.
 - **Scope:** Medium; controlled demo script and end-to-end fixtures.
 - [ ] Complete a real-provider patch, revision, approval and normal GitHub publication.
@@ -406,9 +408,10 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T13, T29.
 - **Scope:** Medium; onboarding endpoints/UI and authorization tests.
-- [ ] A new user connects an eligible repository and can update explicit provider/profile defaults; comment-to-setup resumes one original submission.
-- [ ] Another account cannot list or use its registrations, keys, runs or artifacts.
+- [x] A new user connects an eligible repository and can update explicit provider/profile defaults; trusted setup handoff claims one original submission (public comment admission follows T36/T37).
+- [x] Another account cannot list or use its registrations, keys, runs or artifacts.
 - **Verify:** make test-target TARGET=tests/security/test_account_isolation.py; make test-e2e.
+- **Status:** Onboarding API/UI and trusted original-submission handoff implemented. [Contract and evidence](../docs/repository-onboarding.md).
 
 ### T36 — Public admission and quotas
 

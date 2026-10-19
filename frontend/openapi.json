@@ -177,6 +177,141 @@
         "title": "CommandEvidence",
         "type": "object"
       },
+      "CredentialListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "credentials": {
+            "items": {
+              "$ref": "#/components/schemas/SavedCredentialResponse"
+            },
+            "title": "Credentials",
+            "type": "array"
+          }
+        },
+        "required": [
+          "credentials"
+        ],
+        "title": "CredentialListResponse",
+        "type": "object"
+      },
+      "EligibilityCheckResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cache_hit": {
+            "title": "Cache Hit",
+            "type": "boolean"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "checked_sha": {
+            "title": "Checked Sha",
+            "type": "string"
+          },
+          "file_count": {
+            "title": "File Count",
+            "type": "integer"
+          },
+          "package_count": {
+            "title": "Package Count",
+            "type": "integer"
+          },
+          "profile_id": {
+            "enum": [
+              "python-pytest",
+              "node-npm"
+            ],
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "profile_version": {
+            "const": "1",
+            "title": "Profile Version",
+            "type": "string"
+          },
+          "source_bytes": {
+            "title": "Source Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "const": "eligible",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checked_sha",
+          "checked_at",
+          "profile_id",
+          "profile_version",
+          "package_count",
+          "file_count",
+          "source_bytes",
+          "cache_hit"
+        ],
+        "title": "EligibilityCheckResponse",
+        "type": "object"
+      },
+      "EligibilitySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "checked_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked Sha"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "enum": [
+              "unchecked",
+              "eligible",
+              "ineligible",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checked_sha",
+          "checked_at",
+          "error"
+        ],
+        "title": "EligibilitySummary",
+        "type": "object"
+      },
       "ErrorResponse": {
         "description": "Uniform machine-readable API error shape.",
         "properties": {
@@ -853,6 +988,105 @@
         "title": "ReconcileResponse",
         "type": "object"
       },
+      "RepositoryListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "repositories": {
+            "items": {
+              "$ref": "#/components/schemas/RepositoryRegistrationResponse"
+            },
+            "title": "Repositories",
+            "type": "array"
+          }
+        },
+        "required": [
+          "repositories"
+        ],
+        "title": "RepositoryListResponse",
+        "type": "object"
+      },
+      "RepositoryRegistrationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "credential_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "eligibility": {
+            "$ref": "#/components/schemas/EligibilitySummary"
+          },
+          "full_name": {
+            "title": "Full Name",
+            "type": "string"
+          },
+          "github_repository_id": {
+            "title": "Github Repository Id",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "profile_id": {
+            "enum": [
+              "python-pytest",
+              "node-npm"
+            ],
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "profile_version": {
+            "const": "1",
+            "title": "Profile Version",
+            "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "enum": [
+                  "openai",
+                  "anthropic"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "required": [
+          "id",
+          "github_repository_id",
+          "owner",
+          "name",
+          "full_name",
+          "profile_id",
+          "profile_version",
+          "provider",
+          "credential_id",
+          "eligibility"
+        ],
+        "title": "RepositoryRegistrationResponse",
+        "type": "object"
+      },
       "ReviewApproval": {
         "additionalProperties": false,
         "properties": {
@@ -1204,6 +1438,61 @@
         ],
         "title": "RunStatus",
         "type": "string"
+      },
+      "SavedCredentialResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_id": {
+            "format": "uuid",
+            "title": "Credential Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "scope": {
+            "const": "saved",
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "const": "active",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_id",
+          "provider",
+          "scope",
+          "status",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "SavedCredentialResponse",
+        "type": "object"
       },
       "SessionResponse": {
         "additionalProperties": false,
@@ -1817,6 +2106,292 @@
         "summary": "Current Session",
         "tags": [
           "authentication"
+        ]
+      }
+    },
+    "/api/v1/credentials": {
+      "get": {
+        "operationId": "list_credentials_api_v1_credentials_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Credentials",
+        "tags": [
+          "repositories",
+          "credentials"
+        ]
+      }
+    },
+    "/api/v1/repositories": {
+      "get": {
+        "operationId": "list_repositories_api_v1_repositories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Repositories",
+        "tags": [
+          "repositories",
+          "credentials"
+        ]
+      },
+      "post": {
+        "operationId": "register_repository_api_v1_repositories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "credential_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Credential Id"
+                  },
+                  "github_repository_id": {
+                    "exclusiveMinimum": 0.0,
+                    "maximum": 9.223372036854776e+18,
+                    "title": "Github Repository Id",
+                    "type": "integer"
+                  },
+                  "profile_id": {
+                    "maxLength": 32,
+                    "minLength": 1,
+                    "title": "Profile Id",
+                    "type": "string"
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "openai",
+                          "anthropic"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Provider"
+                  }
+                },
+                "required": [
+                  "github_repository_id",
+                  "profile_id"
+                ],
+                "title": "_RegisterBody",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Register Repository",
+        "tags": [
+          "repositories",
+          "credentials"
+        ]
+      }
+    },
+    "/api/v1/repositories/{registration_id}": {
+      "patch": {
+        "operationId": "update_repository_api_v1_repositories__registration_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "registration_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Registration Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "credential_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Credential Id"
+                  },
+                  "profile_id": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Profile Id"
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "openai",
+                          "anthropic"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Provider"
+                  }
+                },
+                "title": "_PatchBody",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryRegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Repository",
+        "tags": [
+          "repositories",
+          "credentials"
+        ]
+      }
+    },
+    "/api/v1/repositories/{registration_id}/check": {
+      "post": {
+        "operationId": "check_repository_api_v1_repositories__registration_id__check_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "registration_id",
+            "required": true,
+            "schema": {
+              "exclusiveMinimum": 0,
+              "title": "Registration Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "commit_sha": {
+                    "maxLength": 64,
+                    "minLength": 40,
+                    "title": "Commit Sha",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "commit_sha"
+                ],
+                "title": "_CheckBody",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EligibilityCheckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Repository",
+        "tags": [
+          "repositories",
+          "credentials"
         ]
       }
     },

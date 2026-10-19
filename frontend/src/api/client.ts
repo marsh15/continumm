@@ -21,6 +21,23 @@ export type ExternalEffectStatus = ExternalEffect["status"];
 export type ExternalEffectEvidence = ExternalEffect["evidence"];
 export type ExternalEffectReconcileResponse = paths["/api/v1/runs/{run_id}/external-effects/{effect_id}/reconcile"]["post"]["responses"][200]["content"]["application/json"];
 
+export type RepositoryProfileId = "python-pytest" | "node-npm";
+export type RepositoryProvider = "openai" | "anthropic";
+export type RepositoryRegistration = Omit<components["schemas"]["RepositoryRegistrationResponse"], "profile_id"> & {
+  profile_id: RepositoryProfileId;
+};
+export type RepositoryListResponse = Omit<components["schemas"]["RepositoryListResponse"], "repositories"> & {
+  repositories: RepositoryRegistration[];
+};
+export type RepositoryCredential = Omit<components["schemas"]["SavedCredentialResponse"], "scope" | "status"> & {
+  scope: "saved";
+  status: "active";
+};
+export type RepositoryCredentialListResponse = Omit<components["schemas"]["CredentialListResponse"], "credentials"> & {
+  credentials: RepositoryCredential[];
+};
+export type EligibilityCheckResponse = components["schemas"]["EligibilityCheckResponse"];
+
 export const RUN_EVENT_PAGE_SIZE = 50;
 
 const decimalSequence = /^(0|[1-9][0-9]{0,18})$/;
@@ -153,6 +170,99 @@ async function requestJson<T>(
   }
 
   return payload;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const csrfCookie = typeof document === "undefined"
+    ? undefined
+    : document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("csrf_token="))?.slice("csrf_token=".length);
+  return csrfCookie ? { "X-CSRF-Token": decodeURIComponent(csrfCookie) } : {};
+}
+
+function isRepositoryProvider(value: unknown): value is RepositoryProvider {
+  return value === "openai" || value === "anthropic";
+}
+
+function isRepositoryRegistration(value: unknown): value is RepositoryRegistration {
+  if (!isRecord(value) || !isRecord(value.eligibility)) return false;
+  return (
+    typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0 &&
+    typeof value.github_repository_id === "number" && Number.isSafeInteger(value.github_repository_id) && value.github_repository_id > 0 &&
+    typeof value.owner === "string" && typeof value.name === "string" && typeof value.full_name === "string" &&
+    (value.profile_id === "python-pytest" || value.profile_id === "node-npm") &&
+    typeof value.profile_version === "string" &&
+    (value.provider === null || isRepositoryProvider(value.provider)) &&
+    (value.credential_id === null || typeof value.credential_id === "string") &&
+    ["unchecked", "eligible", "ineligible", "error"].includes(String(value.eligibility.status)) &&
+    (value.eligibility.checked_sha === null || typeof value.eligibility.checked_sha === "string") &&
+    (value.eligibility.checked_at === null || (typeof value.eligibility.checked_at === "string" && !Number.isNaN(Date.parse(value.eligibility.checked_at)))) &&
+    (value.eligibility.error === null || typeof value.eligibility.error === "string")
+  );
+}
+
+function isRepositoryListResponse(value: unknown): value is RepositoryListResponse {
+  return isRecord(value) && Array.isArray(value.repositories) && value.repositories.every(isRepositoryRegistration);
+}
+
+function isRepositoryCredential(value: unknown): value is RepositoryCredential {
+  return isRecord(value) && typeof value.credential_id === "string" && isRepositoryProvider(value.provider) &&
+    value.scope === "saved" && value.status === "active" && typeof value.created_at === "string" &&
+    !Number.isNaN(Date.parse(value.created_at)) &&
+    (value.expires_at === null || (typeof value.expires_at === "string" && !Number.isNaN(Date.parse(value.expires_at))));
+}
+
+function isRepositoryCredentialListResponse(value: unknown): value is RepositoryCredentialListResponse {
+  return isRecord(value) && Array.isArray(value.credentials) && value.credentials.every(isRepositoryCredential);
+}
+
+function isRepositoryEligibilityCheck(value: unknown): value is EligibilityCheckResponse {
+  return isRecord(value) && value.status === "eligible" && typeof value.checked_sha === "string" &&
+    /^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(value.checked_sha) &&
+    typeof value.checked_at === "string" && !Number.isNaN(Date.parse(value.checked_at)) &&
+    typeof value.profile_id === "string" && typeof value.profile_version === "string" &&
+    typeof value.package_count === "number" && typeof value.file_count === "number" &&
+    typeof value.source_bytes === "number" && typeof value.cache_hit === "boolean";
+}
+
+export function getRepositories(signal?: AbortSignal): Promise<RepositoryListResponse> {
+  return requestJson("/api/v1/repositories", isRepositoryListResponse, signal);
+}
+
+export function getRepositoryCredentials(signal?: AbortSignal): Promise<RepositoryCredentialListResponse> {
+  return requestJson("/api/v1/credentials", isRepositoryCredentialListResponse, signal);
+}
+
+export function registerRepository(input: {
+  github_repository_id: number;
+  profile_id: RepositoryProfileId;
+  provider?: RepositoryProvider;
+  credential_id?: string;
+}): Promise<RepositoryRegistration> {
+  return requestJson("/api/v1/repositories", isRepositoryRegistration, undefined, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateRepositoryDefaults(id: number, input: {
+  profile_id?: RepositoryProfileId;
+  provider?: RepositoryProvider | null;
+  credential_id?: string | null;
+}): Promise<RepositoryRegistration> {
+  return requestJson(`/api/v1/repositories/${id}`, isRepositoryRegistration, undefined, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
+    body: JSON.stringify(input),
+  });
+}
+
+export function checkRepositoryEligibility(id: number, commit_sha: string): Promise<EligibilityCheckResponse> {
+  return requestJson(`/api/v1/repositories/${id}/check`, isRepositoryEligibilityCheck, undefined, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
+    body: JSON.stringify({ commit_sha }),
+  });
 }
 
 function isHealthBody(value: unknown): value is HealthBody {
@@ -478,18 +588,13 @@ export function reconcileRunExternalEffect(
   runId: string,
   effectId: string,
 ): Promise<ExternalEffectReconcileResponse> {
-  const csrfCookie = typeof document === "undefined"
-    ? undefined
-    : document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("csrf_token="))?.slice("csrf_token=".length);
   return requestJson<ExternalEffectReconcileResponse>(
     `/api/v1/runs/${encodeURIComponent(runId)}/external-effects/${encodeURIComponent(effectId)}/reconcile`,
     isExternalEffectReconcileResponse,
     undefined,
     {
       method: "POST",
-      headers: {
-        ...(csrfCookie ? { "X-CSRF-Token": decodeURIComponent(csrfCookie) } : {}),
-      },
+      headers: csrfHeaders(),
     },
   );
 }
@@ -506,9 +611,6 @@ export function submitApprovalDecision(
     manifest_sha256: manifestSha256,
   };
   if (feedback !== undefined) body.feedback = feedback;
-  const csrfCookie = typeof document === "undefined"
-    ? undefined
-    : document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith("csrf_token="))?.slice("csrf_token=".length);
   return requestJson<ApprovalDecisionResponse>(
     `/api/v1/approvals/${encodeURIComponent(approvalId)}/decision`,
     isApprovalDecisionResponse,
@@ -518,7 +620,7 @@ export function submitApprovalDecision(
       headers: {
         "Content-Type": "application/json",
         "Idempotency-Key": idempotencyKey,
-        ...(csrfCookie ? { "X-CSRF-Token": decodeURIComponent(csrfCookie) } : {}),
+        ...csrfHeaders(),
       },
       body: JSON.stringify(body),
     },

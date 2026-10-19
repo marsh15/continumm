@@ -568,10 +568,22 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   still supply the actual T13 receipt, current tool-policy wiring remains open,
   and no live services were used. T34 is open; T35 has not started.
 
-Implementation is complete through T33; T34 local preparation is committed and
-its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not
-prove a hosted gate. Checkpoints A and B remain open until the required account
-configuration and real hosted evidence exist.
+- T35 account-scoped repository onboarding: added registration/default/check API,
+  owner-only saved credential metadata and `/settings/repositories`. Fresh GitHub
+  actor/App checks protect mutations; defaults-version fencing rejects stale
+  eligibility results. Migration 22 enforces account isolation and protects
+  original comment setup snapshots with claim-once identity and bounded expiry
+  scrubbing. T36/T37 will attach that trusted handoff to public admission and
+  verified command ingress. Verification passed 610 Python tests (153 optional
+  database skips), three real PostgreSQL security cases, 27 component tests,
+  11 browser tests, formatting/lint/typing and backend/frontend builds. Visual
+  checks passed at desktop, 390- and 320-pixel viewports. No live account/provider
+  actions were taken. [Contract](../docs/repository-onboarding.md).
+
+Implementation is complete through T33 and T35's onboarding boundary. T34's
+live demonstration is explicitly deferred by the owner while work proceeds to
+T36 and later tasks. Public command execution and live deployment remain gated;
+local tests and controlled adapters do not establish hosted acceptance.
 
 The requested implementation workers use `gpt-6-luna` with `high` reasoning.
 

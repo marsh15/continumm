@@ -89,6 +89,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Credentials */
+        get: operations["list_credentials_api_v1_credentials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Repositories */
+        get: operations["list_repositories_api_v1_repositories_get"];
+        put?: never;
+        /** Register Repository */
+        post: operations["register_repository_api_v1_repositories_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repositories/{registration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Repository */
+        patch: operations["update_repository_api_v1_repositories__registration_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/repositories/{registration_id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check Repository */
+        post: operations["check_repository_api_v1_repositories__registration_id__check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -274,6 +343,58 @@ export interface components {
             stdout_bytes: number;
             /** Stdout Sha256 */
             stdout_sha256: string;
+        };
+        /** CredentialListResponse */
+        CredentialListResponse: {
+            /** Credentials */
+            credentials: components["schemas"]["SavedCredentialResponse"][];
+        };
+        /** EligibilityCheckResponse */
+        EligibilityCheckResponse: {
+            /** Cache Hit */
+            cache_hit: boolean;
+            /**
+             * Checked At
+             * Format: date-time
+             */
+            checked_at: string;
+            /** Checked Sha */
+            checked_sha: string;
+            /** File Count */
+            file_count: number;
+            /** Package Count */
+            package_count: number;
+            /**
+             * Profile Id
+             * @enum {string}
+             */
+            profile_id: "python-pytest" | "node-npm";
+            /**
+             * Profile Version
+             * @constant
+             */
+            profile_version: "1";
+            /** Source Bytes */
+            source_bytes: number;
+            /**
+             * Status
+             * @constant
+             */
+            status: "eligible";
+        };
+        /** EligibilitySummary */
+        EligibilitySummary: {
+            /** Checked At */
+            checked_at: string | null;
+            /** Checked Sha */
+            checked_sha: string | null;
+            /** Error */
+            error: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "unchecked" | "eligible" | "ineligible" | "error";
         };
         /**
          * ErrorResponse
@@ -467,6 +588,39 @@ export interface components {
              */
             status: "adopted" | "closed" | "merged" | "unknown" | "conflict" | "unavailable" | "not_dispatched" | "not_started" | "definitely_failed";
         };
+        /** RepositoryListResponse */
+        RepositoryListResponse: {
+            /** Repositories */
+            repositories: components["schemas"]["RepositoryRegistrationResponse"][];
+        };
+        /** RepositoryRegistrationResponse */
+        RepositoryRegistrationResponse: {
+            /** Credential Id */
+            credential_id: string | null;
+            eligibility: components["schemas"]["EligibilitySummary"];
+            /** Full Name */
+            full_name: string;
+            /** Github Repository Id */
+            github_repository_id: number;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            /**
+             * Profile Id
+             * @enum {string}
+             */
+            profile_id: "python-pytest" | "node-npm";
+            /**
+             * Profile Version
+             * @constant
+             */
+            profile_version: "1";
+            /** Provider */
+            provider: ("openai" | "anthropic") | null;
+        };
         /** ReviewApproval */
         ReviewApproval: {
             /**
@@ -607,6 +761,36 @@ export interface components {
          * @enum {string}
          */
         RunStatus: "queued" | "running" | "waiting_approval" | "waiting_credentials" | "waiting_capacity" | "needs_attention" | "succeeded" | "failed" | "cancelled" | "expired";
+        /** SavedCredentialResponse */
+        SavedCredentialResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Credential Id
+             * Format: uuid
+             */
+            credential_id: string;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic";
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "saved";
+            /**
+             * Status
+             * @constant
+             */
+            status: "active";
+        };
         /** SessionResponse */
         SessionResponse: {
             /**
@@ -1063,6 +1247,159 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_credentials_api_v1_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialListResponse"];
+                };
+            };
+        };
+    };
+    list_repositories_api_v1_repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryListResponse"];
+                };
+            };
+        };
+    };
+    register_repository_api_v1_repositories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Credential Id */
+                    credential_id?: string | null;
+                    /** Github Repository Id */
+                    github_repository_id: number;
+                    /** Profile Id */
+                    profile_id: string;
+                    /** Provider */
+                    provider?: ("openai" | "anthropic") | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRegistrationResponse"];
+                };
+            };
+        };
+    };
+    update_repository_api_v1_repositories__registration_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                registration_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Credential Id */
+                    credential_id?: string | null;
+                    /** Profile Id */
+                    profile_id?: string | null;
+                    /** Provider */
+                    provider?: ("openai" | "anthropic") | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryRegistrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_repository_api_v1_repositories__registration_id__check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                registration_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Commit Sha */
+                    commit_sha: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EligibilityCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
