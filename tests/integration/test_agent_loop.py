@@ -267,7 +267,12 @@ def _cleanup_database(engine: Engine) -> None:
                 connection.execute(text(f"DROP ROLE {role_name}"))
 
 
-def _seed_agent_run(store: T22Database, objects: Path) -> T22Run:
+def _seed_agent_run(
+    store: T22Database,
+    objects: Path,
+    *,
+    baseline_files: tuple[ArchiveFile, ...] | None = None,
+) -> T22Run:
     owner_id = uuid4()
     principal = Principal(owner_id)
     with store.admin_engine.begin() as connection:
@@ -290,7 +295,8 @@ def _seed_agent_run(store: T22Database, objects: Path) -> T22Run:
     storage, _requests = _storage_fixture(objects)
     persistence = ArtifactPersistence(store.runtime_engine)
     checkpoints = _checkpoint_service(store.runtime_engine, principal, persistence, storage)
-    baseline_bundle = create_archive(_base_source_files())
+    source_files = _base_source_files() if baseline_files is None else baseline_files
+    baseline_bundle = create_archive(source_files)
     baseline_verified = verify_archive(
         baseline_bundle.archive,
         expected_archive_sha256=baseline_bundle.archive_sha256,
@@ -312,7 +318,7 @@ def _seed_agent_run(store: T22Database, objects: Path) -> T22Run:
             principal,
             lease,
             "source:initial",
-            _base_source_files(),
+            source_files,
             result={"workspace": "initial", "source_tree_committed": True},
             target_run_status=RunStatus.RUNNING,
             next_work=NextWork(

@@ -540,6 +540,20 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   calls were made. Admission/source preparation, policy and validation
   composition and live service setup remain open; T35 has not started.
 
+- T34 validation activity slice: added lease-bound candidate-validation and
+  manifest-freeze handlers. They bind current revision and retained committed
+  artifact identities before validation, use real typed validation evidence,
+  queue freezing only for passing results, and stop failed/unknown results in
+  needs_attention. Approval recording independently checks the current revision
+  and globally latest accepted candidate. Source eligibility and checkpoint
+  lineage remain a trusted resolver obligation pending admission composition.
+  Verification passed 609 Python tests (150 optional database skips), formatting,
+  lint, strict typing across 84 source files and package build. Separate
+  PostgreSQL runs passed 25 cases across approval, rework and bounded publication; fixtures use
+  real source preparation with controlled profile/allocation adapters. No live
+  provider or hosted-sandbox calls were made. T34 remains open and T35 has not
+  started.
+
 Implementation is complete through T33; T34 local preparation is committed and
 its live milestone remains open. T35 and later tasks have not started. A local test or mocked adapter does not
 prove a hosted gate. Checkpoints A and B remain open until the required account

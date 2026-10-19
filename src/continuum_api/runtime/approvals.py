@@ -280,15 +280,26 @@ class ApprovalService:
                 raise ApprovalNotFound()
             if run["status"] != RunStatus.RUNNING.value:
                 raise ApprovalConflict("approval_run_not_running")
-            activity = connection.execute(
-                text(
-                    "SELECT activity FROM runtime_private.steps WHERE owner_id=:owner "
-                    "AND run_id=:run AND step_id=:step"
-                ),
-                {"owner": self._principal.account_id, "run": lease.run_id, "step": lease.step_id},
-            ).scalar_one_or_none()
-            if activity != "candidate_validation":
+            step = (
+                connection.execute(
+                    text(
+                        "SELECT activity, revision FROM runtime_private.steps "
+                        "WHERE owner_id=:owner "
+                        "AND run_id=:run AND step_id=:step"
+                    ),
+                    {
+                        "owner": self._principal.account_id,
+                        "run": lease.run_id,
+                        "step": lease.step_id,
+                    },
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if step is None or step["activity"] != "candidate_validation":
                 raise ApprovalConflict("approval_validation_activity_required")
+            if step["revision"] != run["revision"]:
+                raise ApprovalConflict("approval_execution_stale")
             artifact = (
                 connection.execute(
                     text(
@@ -307,11 +318,21 @@ class ApprovalService:
             )
             latest_artifact = connection.execute(
                 text(
-                    "SELECT artifact_id FROM runtime_private.accepted_results "
-                    "WHERE owner_id=:owner AND run_id=:run AND artifact_id IS NOT NULL "
-                    "ORDER BY event_sequence DESC LIMIT 1"
+                    "SELECT accepted.artifact_id FROM runtime_private.accepted_results AS accepted "
+                    "JOIN runtime_private.steps AS step ON step.owner_id=accepted.owner_id "
+                    "AND step.run_id=accepted.run_id AND step.step_id=accepted.step_id "
+                    "WHERE accepted.owner_id=:owner AND accepted.run_id=:run "
+                    "AND accepted.artifact_id IS NOT NULL AND step.revision=:revision "
+                    "AND accepted.event_sequence=(SELECT MAX(event_sequence) "
+                    "FROM runtime_private.accepted_results WHERE owner_id=:owner AND run_id=:run "
+                    "AND artifact_id IS NOT NULL) "
+                    "ORDER BY accepted.event_sequence DESC LIMIT 1"
                 ),
-                {"owner": self._principal.account_id, "run": lease.run_id},
+                {
+                    "owner": self._principal.account_id,
+                    "run": lease.run_id,
+                    "revision": run["revision"],
+                },
             ).scalar_one_or_none()
             baseline = (
                 connection.execute(

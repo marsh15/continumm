@@ -24,7 +24,11 @@ from test_agent_loop import t22_database as t22_database
 from continuum_api.approvals.manifest import digest_manifest
 from continuum_api.artifacts.archives import ArchiveFile, create_archive, verify_archive
 from continuum_api.connectivity.storage import SupabaseStorage
-from continuum_api.repositories.preflight import PYTHON_TARGET_VERSION, RepositoryAccessProof
+from continuum_api.repositories.preflight import (
+    PYTHON_TARGET_VERSION,
+    EligibilityReceipt,
+    RepositoryAccessProof,
+)
 from continuum_api.runtime.approvals import (
     ApprovalError,
     ApprovalReceipt,
@@ -35,7 +39,15 @@ from continuum_api.runtime.artifact_persistence import ArtifactPersistence
 from continuum_api.runtime.leases import ExecutionLease, QueueService
 from continuum_api.runtime.persistence import Principal, ReplayPolicy, RunStatus, RuntimeRepository
 from continuum_api.runtime.transitions import NextWork, TransitionReceipt, TransitionService
+from continuum_api.runtime.validation_activity import (
+    ApprovalFreezeActivityHandler,
+    CandidateValidationActivityHandler,
+    CandidateValidationInput,
+    ValidationActivityError,
+)
 from continuum_api.runtime.workspace_recovery import WorkspaceRecoveryService
+from continuum_api.tools.contracts import ToolCapability, ToolStage
+from continuum_api.tools.policy import ToolPolicyContext
 from continuum_api.tools.source_tools import (
     candidate_from_baseline,
     snapshot_from_verified_archive,
@@ -82,10 +94,12 @@ class ApprovalScenario:
     baseline_artifact_id: UUID
     candidate_artifact_id: UUID
     evidence: ValidationEvidence
-    validation_receipt: TransitionReceipt
+    validation_receipt: TransitionReceipt | None
     validation_lease: ExecutionLease
-    freeze_lease: ExecutionLease
+    freeze_lease: ExecutionLease | None
     allocation_ids: tuple[UUID, UUID]
+    baseline_verified: Any
+    candidate_patch: Any
     frozen_receipt: ApprovalReceipt | None = None
 
 
@@ -194,7 +208,10 @@ def _seed_allocations(
     lease: ExecutionLease,
     allocation_ids: tuple[UUID, UUID],
     evidence: ValidationEvidence,
+    *,
+    lineage_sha256: str | None = None,
 ) -> None:
+    selected_lineage = _FIXTURE_LINEAGE_SHA256 if lineage_sha256 is None else lineage_sha256
     now = datetime.now(UTC)
     with store.admin_engine.begin() as connection:
         connection.execute(
@@ -243,7 +260,7 @@ def _seed_allocations(
                     "generation": lease.generation,
                     "attempt": lease.attempt_id,
                     "lease_owner": lease.lease_owner,
-                    "logical_key": f"t20:v1:{_FIXTURE_LINEAGE_SHA256}:{phase}",
+                    "logical_key": f"t20:v1:{selected_lineage}:{phase}",
                     "request_sha": bytes.fromhex(
                         hashlib.sha256(str(allocation_id).encode()).hexdigest()
                     ),
@@ -260,10 +277,12 @@ def create_approval_scenario(
     *,
     approval_ttl: timedelta | None = None,
     second_candidate: bool = False,
+    prepare_only: bool = False,
+    baseline_files: tuple[ArchiveFile, ...] | None = None,
 ) -> ApprovalScenario:
     """Seed a real candidate checkpoint and durable T20 evidence, ready to freeze."""
     objects = tmp_path / f"approval-objects-{uuid4().hex}"
-    run = _seed_agent_run(store, objects)
+    run = _seed_agent_run(store, objects, baseline_files=baseline_files)
     with store.admin_engine.begin() as connection:
         connection.execute(
             text(
@@ -435,12 +454,17 @@ def create_approval_scenario(
         )
         if second_candidate:
             evidence = evidence.model_copy(update={"changed_path_count": 2})
-        _seed_allocations(store, run, candidate_lease, allocation_ids, evidence)
-        validation_receipt = service.record_validation(
-            validation_lease, accepted.artifact_id, evidence
-        )
-        freeze_lease = queue.claim_one("t27-freeze")
-        assert freeze_lease is not None and freeze_lease.job_id == validation_receipt.next_job_id
+        validation_receipt: TransitionReceipt | None = None
+        freeze_lease: ExecutionLease | None = None
+        if not prepare_only:
+            _seed_allocations(store, run, candidate_lease, allocation_ids, evidence)
+            validation_receipt = service.record_validation(
+                validation_lease, accepted.artifact_id, evidence
+            )
+            freeze_lease = queue.claim_one("t27-freeze")
+            assert (
+                freeze_lease is not None and freeze_lease.job_id == validation_receipt.next_job_id
+            )
         if approval_ttl is not None:
             with store.admin_engine.begin() as connection:
                 connection.execute(
@@ -467,6 +491,8 @@ def create_approval_scenario(
             validation_lease=validation_lease,
             freeze_lease=freeze_lease,
             allocation_ids=allocation_ids,
+            baseline_verified=workspace.verified,
+            candidate_patch=candidate,
         )
 
     try:
@@ -485,6 +511,208 @@ def create_frozen_approval(
     scenario = create_approval_scenario(store, tmp_path, approval_ttl=approval_ttl)
     scenario.frozen_receipt = asyncio.run(scenario.service.freeze(scenario.freeze_lease))
     return scenario
+
+
+@pytest.mark.parametrize(
+    ("candidate_exit", "result_overrides", "expected_classification", "expected_outcome"),
+    [
+        (0, {}, ValidationClassification.PASSED, PhaseOutcome.PASSED),
+        (1, {}, ValidationClassification.CANDIDATE_TEST_FAILED, PhaseOutcome.TEST_FAILED),
+        (
+            0,
+            {"candidate": {"allocation_status": "unknown"}},
+            ValidationClassification.CANDIDATE_UNKNOWN,
+            PhaseOutcome.UNKNOWN,
+        ),
+    ],
+    ids=("passed", "failed", "unknown"),
+)
+def test_candidate_validation_activity_runs_and_persists_real_service_evidence(
+    t22_database: T22Database,
+    tmp_path: Path,
+    candidate_exit: int,
+    result_overrides: dict[str, dict[str, object]],
+    expected_classification: ValidationClassification,
+    expected_outcome: PhaseOutcome,
+) -> None:
+    from test_candidate_validation import _LOCK, _Profile
+
+    from continuum_api.sandbox.python_profile import _git_blob_sha, _git_tree_sha
+    from continuum_api.sandbox.validation.preparation import prepare_validation_source
+    from continuum_api.validation.service import ValidationService
+
+    baseline_files = (
+        ArchiveFile("pyproject.toml", b"[tool.pytest.ini_options]\ntestpaths = ['tests']\n"),
+        ArchiveFile("requirements.lock", _LOCK),
+        ArchiveFile("src/app.py", b"def answer():\n    return 'base'\n"),
+        ArchiveFile(
+            "tests/test_app.py",
+            b"from src.app import answer\n\ndef test_answer():\n    assert answer() == 'base'\n",
+        ),
+    )
+    scenario = create_approval_scenario(
+        t22_database, tmp_path, prepare_only=True, baseline_files=baseline_files
+    )
+    try:
+        baseline = scenario.baseline_verified
+        candidate = scenario.candidate_patch
+        eligibility = EligibilityReceipt(
+            repository_id=_REPOSITORY_ID,
+            commit_sha=_BASE_SHA,
+            tree_sha=_git_tree_sha(baseline_files, "sha1"),
+            profile_id="python-pytest",
+            profile_version="1",
+            file_count=len(baseline.manifest.entries),
+            source_bytes=sum(item.size for item in baseline.manifest.entries),
+            manifest_blobs=(
+                (
+                    "pyproject.toml",
+                    _git_blob_sha(b"[tool.pytest.ini_options]\ntestpaths = ['tests']\n", "sha1"),
+                ),
+                ("requirements.lock", _git_blob_sha(_LOCK, "sha1")),
+            ),
+            package_count=1,
+        )
+        tool_context = ToolPolicyContext(
+            capabilities=frozenset(ToolCapability),
+            profile_id=eligibility.profile_id,
+            profile_version=eligibility.profile_version,
+            actor_can_write_repository=True,
+            app_can_access_repository=True,
+            stage=ToolStage.AGENT_WORK,
+            run_budget_available=True,
+            baseline_tree_sha256=scenario.run.baseline_tree_sha256,
+            baseline_source_paths=frozenset(scenario.run.baseline_source_paths),
+            baseline_test_paths=frozenset(scenario.run.baseline_test_paths),
+            baseline_paths_verified=True,
+            protected_paths=frozenset(),
+        )
+        source = prepare_validation_source(
+            eligibility,
+            scenario.baseline_artifact_id,
+            baseline,
+            candidate,
+            tool_context,
+        )
+        allocation_ids = (uuid4(), uuid4())
+
+        class FixedAllocator:
+            def __init__(self) -> None:
+                self.index = 0
+
+            async def create(self, *_args: Any, **_kwargs: Any) -> Any:
+                allocation_id = allocation_ids[self.index % 2]
+                self.index += 1
+                return type("Reservation", (), {"allocation_id": allocation_id})()
+
+        profile = _Profile(
+            source,
+            [],
+            candidate_exit=candidate_exit,
+            result_overrides=result_overrides,
+        )
+        allocator = FixedAllocator()
+        validation = ValidationService(profile, profile, allocator)
+        seed_evidence = _validation_evidence(
+            scenario.run,
+            scenario.baseline_artifact_id,
+            baseline.archive_sha256,
+            baseline.manifest.tree_sha256,
+            source.candidate_archive_sha256,
+            source.candidate_source_tree_sha256,
+            allocation_ids,
+        )
+        _seed_allocations(
+            t22_database,
+            scenario.run,
+            scenario.validation_lease,
+            allocation_ids,
+            seed_evidence,
+            lineage_sha256=source.lineage_sha256,
+        )
+        handler = CandidateValidationActivityHandler(
+            t22_database.runtime_engine,
+            scenario.principal,
+            lambda _lease: CandidateValidationInput(
+                scenario.baseline_artifact_id,
+                scenario.candidate_artifact_id,
+                eligibility,
+                source,
+            ),
+            validation,
+            scenario.service,
+            scenario.transitions,
+        )
+        bad_binding_handler = CandidateValidationActivityHandler(
+            t22_database.runtime_engine,
+            scenario.principal,
+            lambda _lease: CandidateValidationInput(
+                scenario.baseline_artifact_id,
+                uuid4(),
+                eligibility,
+                source,
+            ),
+            validation,
+            scenario.service,
+            scenario.transitions,
+        )
+        with pytest.raises(
+            ValidationActivityError,
+            match="candidate_validation_artifact_binding_invalid",
+        ):
+            asyncio.run(bad_binding_handler(scenario.validation_lease))
+        assert allocator.index == 0
+
+        receipt = asyncio.run(handler(scenario.validation_lease))
+        assert receipt.run_id == scenario.run.run_id
+        assert allocator.index == 2
+        assert [phase for phase, _allocation_id, _source in profile.calls] == [
+            "baseline",
+            "candidate",
+        ]
+        with t22_database.runtime_engine.begin() as connection:
+            RuntimeRepository(connection, scenario.principal)
+            stored = connection.execute(
+                text(
+                    "SELECT payload FROM runtime_private.accepted_results WHERE result_id=:result"
+                ),
+                {"result": receipt.result_id},
+            ).scalar_one()
+        if expected_classification is ValidationClassification.PASSED:
+            assert receipt.next_job_id is not None
+            assert (
+                stored["approval_validation"]["candidate_lineage_sha256"] == source.lineage_sha256
+            )
+            assert stored["approval_validation"]["classification"] == expected_classification.value
+            assert stored["approval_validation"]["candidate"]["outcome"] == expected_outcome.value
+            freeze_lease = scenario.queue.claim_one("t34-validation-test-freeze")
+            assert freeze_lease is not None and freeze_lease.job_id == receipt.next_job_id
+            frozen = asyncio.run(
+                ApprovalFreezeActivityHandler(
+                    t22_database.runtime_engine, scenario.principal, scenario.service
+                )(freeze_lease)
+            )
+            assert frozen.status == "pending"
+        else:
+            assert receipt.run_status is RunStatus.NEEDS_ATTENTION
+            assert receipt.next_job_id is None
+            assert stored["classification"] == expected_classification.value
+            assert (
+                stored["validation_evidence"]["candidate_lineage_sha256"] == source.lineage_sha256
+            )
+            assert stored["validation_evidence"]["candidate"]["outcome"] == expected_outcome.value
+            with t22_database.runtime_engine.begin() as connection:
+                RuntimeRepository(connection, scenario.principal)
+                approval_count = connection.execute(
+                    text(
+                        "SELECT count(*) FROM runtime_private.approvals "
+                        "WHERE owner_id=:owner AND run_id=:run"
+                    ),
+                    {"owner": scenario.run.owner_id, "run": scenario.run.run_id},
+                ).scalar_one()
+            assert approval_count == 0
+    finally:
+        _close_scenario(scenario)
 
 
 def _read_approval(store: T22Database, scenario: ApprovalScenario) -> dict[str, Any]:
@@ -516,9 +744,14 @@ def _close_scenario(scenario: ApprovalScenario) -> None:
 def test_candidate_evidence_freezes_exact_manifest_and_replays_stably(
     t22_database: T22Database, tmp_path: Path
 ) -> None:
-    scenario = create_frozen_approval(t22_database, tmp_path)
+    scenario = create_approval_scenario(t22_database, tmp_path)
     try:
-        receipt = scenario.frozen_receipt
+        receipt = asyncio.run(
+            ApprovalFreezeActivityHandler(
+                t22_database.runtime_engine, scenario.principal, scenario.service
+            )(scenario.freeze_lease)
+        )
+        scenario.frozen_receipt = receipt
         assert receipt is not None and receipt.status == "pending"
         row = _read_approval(t22_database, scenario)
         _encoded, digest = digest_manifest(row["manifest"])
@@ -545,6 +778,46 @@ def test_candidate_evidence_freezes_exact_manifest_and_replays_stably(
         assert adopted.expires_at == receipt.expires_at
         assert _read_approval(t22_database, scenario)["approval_id"] == receipt.approval_id
     finally:
+        _close_scenario(scenario)
+
+
+def test_freeze_activity_rejects_wrong_step(t22_database: T22Database, tmp_path: Path) -> None:
+    import pytest
+
+    scenario = create_approval_scenario(t22_database, tmp_path)
+    handler = ApprovalFreezeActivityHandler(
+        t22_database.runtime_engine, scenario.principal, scenario.service
+    )
+    try:
+        with t22_database.admin_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.steps SET activity='candidate_validation' "
+                    "WHERE step_id=:step"
+                ),
+                {"step": scenario.freeze_lease.step_id},
+            )
+        with pytest.raises(ValidationActivityError, match="approval_freeze_step_stale"):
+            asyncio.run(handler(scenario.freeze_lease))
+        with t22_database.runtime_engine.begin() as connection:
+            RuntimeRepository(connection, scenario.principal)
+            approval_count = connection.execute(
+                text(
+                    "SELECT count(*) FROM runtime_private.approvals "
+                    "WHERE owner_id=:owner AND run_id=:run"
+                ),
+                {"owner": scenario.run.owner_id, "run": scenario.run.run_id},
+            ).scalar_one()
+        assert approval_count == 0
+    finally:
+        with t22_database.admin_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.steps SET activity='approval_freeze' "
+                    "WHERE step_id=:step"
+                ),
+                {"step": scenario.freeze_lease.step_id},
+            )
         _close_scenario(scenario)
 
 

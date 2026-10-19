@@ -91,6 +91,31 @@ from the CLI. Admission/source preparation, trusted policy and validation
 composition still need wiring for the live workflow. The publication CLI
 registers only `publish_approved`.
 
+## Validation and review activities
+
+`CandidateValidationActivityHandler` connects trusted candidate inputs to the
+existing `ValidationService` and `ApprovalService.record_validation`. Before
+validation begins it checks the current owner/lease, activity and revision, and
+binds the baseline/candidate IDs and source hashes to the run's accepted,
+committed artifacts with retained content. The candidate must be a distinct
+checkpoint in the current revision, which is checked again after validation.
+Passing evidence schedules a separately leased
+`approval_freeze` activity. `ApprovalFreezeActivityHandler` calls the existing
+manifest-freezing service, which verifies immutable source and publication facts
+before entering owner review.
+
+The input resolver is a trusted server dependency. It must recover the original
+eligibility receipt and reconstruct verified candidate source from the accepted
+checkpoint lineage rooted in the baseline; a type annotation alone does not
+authorize source inputs. Committed checkpoint attachment already requires the
+previous accepted artifact as its parent. The runtime does not yet pin
+all eligibility/source-admission facts needed to provide a default resolver.
+Neither activity accepts arbitrary validation evidence from a job payload.
+Non-passing validation records bounded typed evidence in `needs_attention` and
+schedules no freeze. Unknown allocation outcomes retain the existing accounting
+and reconciliation rules. These handlers are not yet registered in the
+publication-only CLI.
+
 The Render image still starts the API, not this operator worker. The local tests
 use controlled remote adapters and do not establish hosted execution or live
 OpenAI generation. See [T34 evidence](evidence/t34-demonstration.md).

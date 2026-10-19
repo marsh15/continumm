@@ -126,3 +126,35 @@ This is a trusted server API with controlled local evidence. It adds no browser
 admission endpoint and performs no live provider call. Admission/source
 preparation, policy/validation composition and live service setup still need
 wiring. T34 remains open; T35 has not started.
+
+## Subsequent validation activity proof
+
+Candidate validation and manifest freezing now have separate lease-bound
+activity handlers. The validation handler checks the current owner, activity and
+revision, distinct baseline/candidate identities, retained committed content and
+stored source hashes before starting the real validation service. The newest
+accepted candidate must belong to the current revision; it never falls back to
+an older checkpoint. Revision and lease are checked again before recording.
+
+Passing typed evidence goes through `ApprovalService.record_validation`, which
+queues the separately leased freeze job. Non-passing and unknown results record
+bounded evidence in `needs_attention` with no approval or freeze job. The freeze
+handler checks its own activity and lease before calling the existing manifest
+service. Existing allocation accounting and unknown-effect rules are preserved.
+
+The focused PostgreSQL tests use a valid locked Python baseline, the real source
+preparation and validation services, and controlled profile/allocation adapters.
+They cover passing, failed-test and unknown outcomes, mismatched artifact IDs
+with zero allocation calls, persisted evidence, and rejection of a wrong-stage
+freeze lease. They do not perform live tests in a hosted sandbox.
+
+Final checks passed 609 Python tests (150 optional database skips), formatting,
+lint, strict typing across 84 source files and package build. Separate
+PostgreSQL module runs passed 25 cases across approval, review/rework and
+publication integration. Independent Luna/high source review found no blocker.
+
+The trusted input resolver still has to recover the original eligibility receipt
+and verified checkpoint lineage. A default run-bound resolver, admission/source
+preparation, tool policy composition and live service setup remain pending. The
+publication CLI has not gained model or validation dispatch. T34 is open and T35
+has not started.
