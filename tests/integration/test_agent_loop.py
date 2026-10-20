@@ -66,6 +66,7 @@ ROLE_NAMES = (
     "continuum_wake_issuer",
     "continuum_admission",
     "continuum_ingress",
+    "continuum_recovery",
 )
 REPOSITORY_ID = 714_022
 STORAGE_URL = "https://fixture-project.supabase.co"
@@ -208,6 +209,7 @@ def _reset_database(engine: Engine, runtime_password: str) -> None:
             ("continuum_admission", "NOLOGIN", None),
             ("continuum_wake", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_wake_receiver", "LOGIN", secrets.token_urlsafe(32)),
+            ("continuum_recovery", "LOGIN", secrets.token_urlsafe(32)),
             (RUNTIME_ROLE, "LOGIN", runtime_password),
         )
         for role_name, login_mode, password in role_definitions:
@@ -223,6 +225,7 @@ def _drop_schemas(connection: Connection) -> None:
         "runtime_private",
         "wake_private",
         "webhook_private",
+        "recovery_private",
         "continuum_migrations",
     ):
         connection.execute(text(f"DROP SCHEMA IF EXISTS {schema_name} CASCADE"))

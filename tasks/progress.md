@@ -630,3 +630,11 @@ the suite. A transient Docker Hub 502 required a build retry.
   and four mocked GitHub adapter tests passed. Public admission remains disabled;
   public inbox draining and T34 workflow composition remain deferred.
   [Contract](../docs/github-command-execution.md).
+
+- T39 failed-delivery recovery: five-minute Cron tickets drive a bounded Edge
+  scan with durable cursor/watermark overlap, per-GUID deduplication, rate-limit
+  deferral, unknown-outcome preservation and explicit history gaps. A dedicated
+  restricted login separates recovery from ingress/wake. Thirty Edge tests
+  (21 existing and nine recovery) and one PostgreSQL adapter/migration case passed;
+  no GitHub requests or hosted deployment occurred.
+  [Setup and evidence boundaries](../docs/github-delivery-recovery.md).

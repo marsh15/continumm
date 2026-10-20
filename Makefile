@@ -57,7 +57,7 @@ edge-check:
 	npm --prefix tools/edge run check
 
 edge-format-check:
-	npm --prefix tools/edge exec -- deno fmt --check --config supabase/functions/wake-dispatch/deno.json supabase/functions/github-ingress supabase/functions/wake-dispatch
+	npm --prefix tools/edge exec -- deno fmt --check --config supabase/functions/wake-dispatch/deno.json supabase/functions/github-ingress supabase/functions/wake-dispatch supabase/functions/github-delivery-recovery
 
 edge-install:
 	npm ci --prefix tools/edge

@@ -85,7 +85,7 @@ When a Continumm Supabase project and webhook fixture are available for the host
 7. To demonstrate the lost acknowledgment case, allow the receiver transaction to commit while a controlled test client discards the HTTP response, then replay the original delivery. Confirm one stored row and a duplicate success. Record a hosted result only after checking the database directly and the GitHub delivery outcome.
 8. Record plan/quota, redacted project/app identifiers, commit, UTC time, Edge invocation, database row count/digest, expected statuses, and cleanup in [T05 hosted evidence](evidence/t05-hosted.md). Keep the actual raw fixture limited to synthetic data. Leave hosted status **NOT RUN** until these observations exist.
 
-T05 does not implement the five-minute recovery scan or GitHub failed-delivery polling; those belong to [T39](../tasks/todo.md#t39--failed-delivery-recovery). Queue drain and the Render wake dispatcher belong to T06 and must follow the plan's work-triggered policy. GitHub does not automatically redeliver failed deliveries, so successful T05 ingress is necessary but not a complete recovery mechanism.
+The five-minute failed-delivery scan, overlapping watermark, and deduplicated redelivery request path are implemented in [T39 recovery](github-delivery-recovery.md). Queue drain and the Render wake dispatcher belong to T06 and must follow the plan's work-triggered policy. GitHub does not automatically redeliver failed deliveries, so successful T05 ingress is necessary but not a complete recovery mechanism.
 
 ## Official references
 

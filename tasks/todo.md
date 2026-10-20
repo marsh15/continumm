@@ -448,8 +448,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T06, T37.
 - **Scope:** Medium; delivery scanner, watermark and tests.
-- [ ] Request bounded redelivery of recoverable missing events with pagination, overlap and rate-limit handling.
-- [ ] A gap beyond inspection history is surfaced; old mutable comment text is never reconstructed into spending/approval intent.
+- [x] Request bounded redelivery of recoverable missing events with pagination, overlap and rate-limit handling.
+- [x] A gap beyond inspection history is surfaced; old mutable comment text is never reconstructed into spending/approval intent.
 - **Verify:** make test-target TARGET=tests/integration/test_delivery_recovery.py.
 
 ### T40 — Retention and account deletion

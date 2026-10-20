@@ -43,8 +43,15 @@ ROLE_NAMES = (
     "continuum_wake",
     "continuum_wake_issuer",
     "continuum_ingress",
+    "continuum_recovery",
 )
-SCHEMAS = ("runtime_private", "wake_private", "webhook_private", "continuum_migrations")
+SCHEMAS = (
+    "runtime_private",
+    "wake_private",
+    "webhook_private",
+    "recovery_private",
+    "continuum_migrations",
+)
 
 
 @pytest.mark.parametrize(

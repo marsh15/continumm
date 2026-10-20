@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.wake-dispatch]
 verify_jwt = false
+
+[functions.github-delivery-recovery]
+verify_jwt = false
