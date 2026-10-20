@@ -740,3 +740,23 @@ the suite. A transient Docker Hub 502 required a build retry.
 - T49's documentation/status package is complete locally; its signature demo
   remains deferred with T34. T48 live model evaluation and T50 deployed acceptance
   remain open. See [release gates](../docs/release-qualification.md).
+
+### T34 follow-up — admitted baseline preparation
+
+- Added `SourcePreparationActivityHandler`: reads immutable admission pins under a
+  current owner lease, verifies fetched source against the complete admitted Git
+  tree and Python/Node profile, then accepts the private baseline checkpoint and
+  atomically queues one replay-safe first agent turn. Synchronous fetch adapters
+  run outside the event loop; archive file/byte limits apply while consuming files.
+- Eight PostgreSQL 17 integration cases passed: both profiles, sync/async adapters,
+  altered source, admission-pin mismatch, owner mismatch, sanitized fetch failure,
+  and stale lease before/during fetch. Invalid cases perform no storage request.
+- This is a trusted handler primitive. Production GitHub source fetching,
+  admission-to-model/source-pin initialization, worker registration and policy
+  composition remain open. No hosted/provider proof or public admission change.
+- Added an [acceptance evidence map](../docs/acceptance-evidence.md) covering every
+  final launch criterion, with local evidence and outstanding release experiments.
+- Final `make check` passed: 678 backend tests, 189 optional database skips,
+  29 console tests and 30 Edge tests; Ruff and mypy (99 source files) passed.
+  The eight new PostgreSQL cases were run separately with no skips. Wheel and
+  source-distribution builds and local documentation link checks passed.

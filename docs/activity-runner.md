@@ -67,6 +67,16 @@ again. Downgrade never relabels or deletes successful history.
 
 ## Model/tool dispatcher and remaining wiring
 
+`SourcePreparationActivityHandler` now implements the admitted run's first
+baseline step. It reads the immutable admission receipt under the current lease,
+calls a trusted exact-commit source-fetch adapter, verifies the returned source
+against the receipt's complete Git tree and fixed Python/Node profile, and
+accepts it as the first retained checkpoint. Acceptance queues one replay-safe
+`agent_turn` at revision zero. The fetch adapter is injected; this repository
+does not yet provide a production GitHub source-archive adapter, and the
+publication-only worker does not register this handler. The next agent-turn
+lease still needs admission-to-model/source-pin initialization before dispatch.
+
 `AgentActivityDispatcher` maps persisted `agent_turn` and `agent_tool` steps to
 the existing durable model and tool services. The OpenAI adapter uses their
 one-use credential grants and durable reservations. Tool execution selects the
