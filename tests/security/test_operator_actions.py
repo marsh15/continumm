@@ -22,6 +22,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
+from continuum_api.runtime.leases import LeaseLost, QueueService
 from continuum_api.runtime.operator_actions import (
     OperatorActionError,
     OperatorActionService,
@@ -31,7 +32,7 @@ from continuum_api.runtime.operator_actions import (
     require_operator_actor,
 )
 from continuum_api.runtime.operator_routes import create_operator_router
-from continuum_api.runtime.persistence import Principal
+from continuum_api.runtime.persistence import Principal, RuntimeRepository
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_NAME = "continuum_t42_test"
@@ -142,7 +143,22 @@ def test_operator_read_api_and_audited_actions_use_separate_database_role() -> N
                 runtime.dispose()
 
             assert service.set_admission_stopped(False, 99_001, OperatorReason.DATABASE_PAUSE)
+            with runtime.begin() as connection:
+                repository = RuntimeRepository(connection, Principal(owner_id))
+                run_id = repository.create_run()
+                first_step = repository.create_step(run_id, "suspension:leased", "probe")
+                repository.create_job(run_id, first_step)
+            queue = QueueService(runtime, Principal(owner_id))
+            lease = queue.claim_one("suspension-probe")
+            assert lease is not None
+            with runtime.begin() as connection:
+                repository = RuntimeRepository(connection, Principal(owner_id))
+                queued_step = repository.create_step(run_id, "suspension:queued", "probe")
+                repository.create_job(run_id, queued_step)
             assert service.set_account_suspended(github_id, True, 99_001, OperatorReason.SECURITY)
+            assert queue.claim_one("suspended-new-work") is None
+            with pytest.raises(LeaseLost):
+                queue.persist_checkpoint(lease, "after-suspension", {"must_not_commit": True})
             with admin.begin() as connection:
                 assert (
                     connection.execute(

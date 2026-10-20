@@ -122,6 +122,16 @@ def test_expiry_deletion_and_account_revoke_are_immediate_and_idempotent(
             actor_id=str(owner),
             payload={"body": "sensitive issue text"},
         )
+    with pytest.raises(DBAPIError):
+        with store.runtime_engine.begin() as connection:
+            RuntimeRepository(connection, principal)
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.events SET payload='{}'::jsonb "
+                    "WHERE owner_id=:owner AND run_id=:run"
+                ),
+                {"owner": owner, "run": run_id},
+            )
     with store.admin_engine.begin() as connection:
         connection.execute(
             text(
@@ -440,3 +450,164 @@ def _cleanup_database(engine: Engine) -> None:
                     f"REVOKE CONNECT ON DATABASE {DATABASE_NAME} FROM {role}"
                 )
                 connection.exec_driver_sql(f"DROP ROLE {role}")
+
+
+def test_deletion_scrubs_original_setup_and_external_request_content(
+    t40_database: T40Database,
+) -> None:
+    from continuum_api.runtime.external_ledger import ExternalOperationService
+    from continuum_api.runtime.leases import QueueService
+    from continuum_api.runtime.setup_continuations import SetupContinuationService
+
+    store = t40_database
+
+    def capture(comment_id: int):
+        owner = uuid4()
+        principal = Principal(owner)
+        github_id = 1_030_000_000 + owner.int % 1_000_000
+        with store.admin_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO runtime_private.users(user_id,github_user_id) "
+                    "VALUES (:owner,:github)"
+                ),
+                {"owner": owner, "github": github_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO runtime_private.repository_registrations "
+                    "(owner_id,github_repository_id,repository_owner,repository_name,profile_id) "
+                    "VALUES (:owner,7000300,'fixture','privacy','python-pytest')"
+                ),
+                {"owner": owner},
+            )
+            created_at = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+        continuation = SetupContinuationService(store.runtime_engine, principal).capture(
+            github_repository_id=7_000_300,
+            github_comment_id=comment_id,
+            github_issue_number=11,
+            comment_author_github_id=github_id,
+            comment_created_at=created_at,
+            submission_body="private original setup task",
+        )
+        return principal, continuation
+
+    principal, continuation = capture(9_000_300)
+    with store.runtime_engine.begin() as connection:
+        repository = RuntimeRepository(connection, principal)
+        run = repository.create_run(github_repository_id=7_000_300, issue_number=11)
+        step = repository.create_step(run, "privacy:source", "probe")
+        repository.create_job(run, step)
+        connection.execute(
+            text(
+                "INSERT INTO runtime_private.admission_submissions "
+                "(submission_id,owner_id,run_id,origin_kind,origin_key,repository_id,issue_number,"
+                "continuation_id,input_digest) VALUES (:id,:owner,:run,'github_comment',"
+                "'7000300:9000300',7000300,11,:continuation,:digest)"
+            ),
+            {
+                "id": uuid4(),
+                "owner": principal.account_id,
+                "run": run,
+                "continuation": continuation.continuation_id,
+                "digest": b"d" * 32,
+            },
+        )
+    lease = QueueService(store.runtime_engine, principal).claim_one("privacy-effect")
+    assert lease is not None
+    operation = ExternalOperationService(store.runtime_engine, principal).prepare(
+        lease,
+        "fixture:privacy",
+        {
+            "method": "fixture",
+            "repository_id": 7_000_300,
+            "title": "private title",
+            "body": "private publication body",
+        },
+    )
+    with pytest.raises(DBAPIError):
+        with store.runtime_engine.begin() as connection:
+            RuntimeRepository(connection, principal)
+            connection.execute(
+                text(
+                    "UPDATE runtime_private.external_operations "
+                    "SET request_metadata='{}'::jsonb WHERE operation_id=:id"
+                ),
+                {"id": operation.operation_id},
+            )
+    RetentionService(store.runtime_engine, principal).delete_run(run)
+    with store.admin_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT submission_body FROM runtime_private.setup_continuations "
+                    "WHERE continuation_id=:id"
+                ),
+                {"id": continuation.continuation_id},
+            ).scalar_one()
+            is None
+        )
+        assert connection.execute(
+            text(
+                "SELECT request_metadata FROM runtime_private.external_operations "
+                "WHERE operation_id=:id"
+            ),
+            {"id": operation.operation_id},
+        ).scalar_one() == {"method": "fixture", "repository_id": 7_000_300}
+    unclaimed_owner, unclaimed = capture(9_000_301)
+    RetentionService(store.runtime_engine, unclaimed_owner).delete_account()
+    with store.admin_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    "SELECT submission_body FROM runtime_private.setup_continuations "
+                    "WHERE continuation_id=:id"
+                ),
+                {"id": unclaimed.continuation_id},
+            ).scalar_one()
+            is None
+        )
+
+
+def test_work_deadline_stops_execution_without_erasing_terminal_history(
+    t40_database: T40Database,
+) -> None:
+    from continuum_api.runtime.leases import QueueService
+    from continuum_api.runtime.persistence import RunStatus
+
+    store = t40_database
+    owner = uuid4()
+    principal = Principal(owner)
+    with store.admin_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO runtime_private.users(user_id,github_user_id) VALUES (:owner,:github)"
+            ),
+            {"owner": owner, "github": 1_100_000_000 + owner.int % 1_000_000},
+        )
+    with store.runtime_engine.begin() as connection:
+        repository = RuntimeRepository(connection, principal)
+        run = repository.create_run()
+        repository.append_event(
+            run,
+            1,
+            "task.accepted",
+            EventActor.ACCOUNT,
+            payload={"body": "retained terminal history"},
+        )
+    with store.admin_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE runtime_private.runs SET created_at=clock_timestamp()-interval '2 days', "
+                "deadline_at=clock_timestamp()-interval '1 second' WHERE run_id=:run"
+            ),
+            {"run": run},
+        )
+    assert RetentionService(store.runtime_engine, principal).expire_due(limit=1) == 1
+    assert QueueService(store.runtime_engine, principal).claim_one("after-deadline") is None
+    with store.runtime_engine.begin() as connection:
+        repository = RuntimeRepository(connection, principal)
+        snapshot = repository.get_run(run)
+        assert snapshot is not None and snapshot.status is RunStatus.EXPIRED
+        assert snapshot.content_expires_at > snapshot.deadline_at
+        assert repository.list_events(run)[0].payload == {"body": "retained terminal history"}

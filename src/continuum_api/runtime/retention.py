@@ -247,6 +247,13 @@ class RetentionService:
                     ),
                     {"owner": owner},
                 )
+                connection.execute(
+                    text(
+                        "UPDATE runtime_private.setup_continuations SET submission_body=NULL "
+                        "WHERE owner_id=:owner AND submission_body IS NOT NULL"
+                    ),
+                    {"owner": owner},
+                )
                 runs_pending: int = connection.execute(
                     text(
                         "SELECT count(*) FROM runtime_private.runs WHERE owner_id=:owner "
@@ -291,7 +298,9 @@ class RetentionService:
                     row = (
                         connection.execute(
                             text(
-                                "SELECT run_id, status FROM runtime_private.runs "
+                                "SELECT run_id, status, "
+                                "content_expires_at<=clock_timestamp() AS content_due "
+                                "FROM runtime_private.runs "
                                 "WHERE owner_id=:owner AND (content_expires_at<=clock_timestamp() "
                                 "OR (status IN ('queued','running','waiting_approval',"
                                 "'waiting_credentials','waiting_capacity','needs_attention') "
@@ -308,6 +317,20 @@ class RetentionService:
                     if row is None:
                         break
                     run_id = row["run_id"]
+                    if not row["content_due"]:
+                        _terminalize_locked_run(
+                            connection,
+                            RuntimeRepository(connection, self._principal),
+                            owner_id=self._principal.account_id,
+                            run_id=run_id,
+                            target_status=RunStatus.EXPIRED,
+                            event_type="run.expired",
+                            actor_type=EventActor.SYSTEM,
+                            actor_id=None,
+                            attempt_failure_class=None,
+                        )
+                        expired += 1
+                        continue
                     self._record_receipt(
                         connection, self._principal.account_id, "run", run_id, "expire"
                     )
@@ -665,6 +688,28 @@ class RetentionService:
         )
         connection.execute(
             text(
+                "UPDATE runtime_private.setup_continuations AS continuation "
+                "SET submission_body=NULL FROM runtime_private.admission_submissions AS submission "
+                "WHERE submission.owner_id=:owner AND submission.run_id=:run "
+                "AND continuation.owner_id=submission.owner_id "
+                "AND continuation.continuation_id=submission.continuation_id "
+                "AND continuation.submission_body IS NOT NULL"
+            ),
+            {"owner": owner, "run": run_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE runtime_private.external_operations SET request_metadata="
+                "(SELECT COALESCE(jsonb_object_agg(key,value),'{}'::jsonb) "
+                "FROM jsonb_each(request_metadata) WHERE key=ANY(ARRAY["
+                "'method','repository_id','github_user_id','owner','name','branch','base_branch',"
+                "'base_sha','head_sha','approval_id','manifest_sha256','marker','comment_id',"
+                "'pr_number','pr_id','url'])) WHERE owner_id=:owner AND run_id=:run"
+            ),
+            {"owner": owner, "run": run_id},
+        )
+        connection.execute(
+            text(
                 "UPDATE runtime_private.runs SET model_task_context='{}'::jsonb "
                 "WHERE owner_id=:owner AND run_id=:run"
             ),
@@ -720,10 +765,14 @@ class RetentionService:
                 "UPDATE runtime_private.github_command_payloads AS payload "
                 "SET payload=jsonb_build_object('feedback','') "
                 "FROM runtime_private.github_command_receipts AS receipt, "
-                "runtime_private.runs AS run WHERE receipt.owner_id=:owner "
+                "runtime_private.runs AS run, runtime_private.approvals AS approval "
+                "WHERE receipt.owner_id=:owner "
                 "AND run.owner_id=:owner AND run.run_id=:run "
                 "AND receipt.repository_id=run.github_repository_id "
                 "AND receipt.issue_number=run.issue_number "
+                "AND receipt.command_kind='changes' "
+                "AND approval.owner_id=run.owner_id AND approval.run_id=run.run_id "
+                "AND approval.approval_id::text=receipt.command_metadata->>'target_id' "
                 "AND payload.owner_id=receipt.owner_id "
                 "AND payload.repository_id=receipt.repository_id "
                 "AND payload.comment_id=receipt.comment_id"

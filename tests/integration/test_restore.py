@@ -177,6 +177,16 @@ def test_portable_export_is_encrypted_allowlisted_and_quarantined(
             {"session": secrets.token_bytes(32), "owner": owner, "csrf": secrets.token_bytes(32)},
         )
 
+    # Work expiry must not erase the seven-day terminal-content export window.
+    with store.admin_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE runtime_private.runs SET created_at=clock_timestamp()-interval '2 days', "
+                "deadline_at=clock_timestamp()-interval '1 second',status='failed' "
+                "WHERE run_id=:run"
+            ),
+            {"run": run_id},
+        )
     key = secrets.token_bytes(32)
     storage = MemoryObjectReader(source.archive)
     output_dir = tmp_path / "encrypted-exports"

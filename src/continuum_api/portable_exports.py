@@ -338,8 +338,7 @@ def export_owner(
                         text(
                             "SELECT run_id, content_expires_at FROM runtime_private.runs "
                             "WHERE owner_id=:owner AND content_deleted_at IS NULL "
-                            "AND content_expires_at>:now AND "
-                            "(deadline_at IS NULL OR deadline_at>:now) "
+                            "AND content_expires_at>:now "
                             "ORDER BY created_at,run_id LIMIT :limit"
                         ),
                         {"owner": owner, "now": created_at, "limit": MAX_RUNS + 1},
@@ -711,7 +710,6 @@ def _current_export_runs(connection: Connection, owner_id: UUID, now: datetime) 
             text(
                 "SELECT run_id FROM runtime_private.runs WHERE owner_id=:owner "
                 "AND content_deleted_at IS NULL AND content_expires_at>:now "
-                "AND (deadline_at IS NULL OR deadline_at>:now)"
             ),
             {"owner": owner_id, "now": now},
         )

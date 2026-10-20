@@ -94,6 +94,13 @@ def test_corrupt_or_unverifiable_context_cannot_start_inference(
                         {"turn": intent.turn_id},
                     )
                 else:
+                    # Simulate privileged storage corruption; ordinary writes remain denied.
+                    connection.execute(
+                        text(
+                            "ALTER TABLE runtime_private.agent_turns "
+                            "DISABLE TRIGGER retention_only_redaction"
+                        )
+                    )
                     connection.execute(
                         text(
                             "UPDATE runtime_private.agent_turns SET context="
@@ -101,6 +108,12 @@ def test_corrupt_or_unverifiable_context_cannot_start_inference(
                             "WHERE turn_id=:turn"
                         ),
                         {"turn": intent.turn_id},
+                    )
+                    connection.execute(
+                        text(
+                            "ALTER TABLE runtime_private.agent_turns "
+                            "ENABLE TRIGGER retention_only_redaction"
+                        )
                     )
             code = (
                 "agent_context_provenance_missing"

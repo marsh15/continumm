@@ -1149,6 +1149,13 @@ def test_corrupt_candidate_lineage_cannot_freeze(t22_database: T22Database, tmp_
     scenario = create_approval_scenario(t22_database, tmp_path)
     try:
         with t22_database.admin_engine.begin() as connection:
+            # Model physical/storage corruption through an explicit privileged fault hook.
+            connection.execute(
+                text(
+                    "ALTER TABLE runtime_private.accepted_results "
+                    "DISABLE TRIGGER retention_only_redaction"
+                )
+            )
             connection.execute(
                 text(
                     "UPDATE runtime_private.accepted_results SET payload=payload || "
@@ -1160,6 +1167,13 @@ def test_corrupt_candidate_lineage_cannot_freeze(t22_database: T22Database, tmp_
                     "corruption": '{"corrupt":true}',
                 },
             )
+            connection.execute(
+                text(
+                    "ALTER TABLE runtime_private.accepted_results "
+                    "ENABLE TRIGGER retention_only_redaction"
+                )
+            )
+
         with pytest.raises(ApprovalError, match="approval_candidate_result_hash_mismatch"):
             asyncio.run(scenario.service.freeze(scenario.freeze_lease))
     finally:

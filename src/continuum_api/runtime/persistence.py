@@ -167,12 +167,13 @@ class RuntimeRepository:
                        ), 0) AS event_watermark
                 FROM runtime_private.runs AS run
                 WHERE run.owner_id = :owner_id AND run.run_id = :run_id
+                  AND EXISTS (SELECT 1 FROM runtime_private.users AS account
+                              WHERE account.user_id=run.owner_id AND account.status='active')
                   AND (to_jsonb(run)->>'content_deleted_at') IS NULL
                   AND COALESCE(
                     (to_jsonb(run)->>'content_expires_at')::timestamptz,
                     'infinity'::timestamptz
                   ) > clock_timestamp()
-                  AND (run.deadline_at IS NULL OR run.deadline_at > clock_timestamp())
                 """
                 ),
                 {"owner_id": self._principal.account_id, "run_id": run_id},

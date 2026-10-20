@@ -392,6 +392,13 @@ def test_two_turn_native_context_is_correlated_and_digest_checked(
             tampered = dict(row["payload"])
             tampered["tool_result"] = dict(tampered["tool_result"])
             tampered["tool_result"]["content"] += " tampered"
+            # Privileged fault injection bypasses the runtime redaction guard only here.
+            connection.execute(
+                text(
+                    "ALTER TABLE runtime_private.accepted_results "
+                    "DISABLE TRIGGER retention_only_redaction"
+                )
+            )
             updated = connection.execute(
                 text(
                     "UPDATE runtime_private.accepted_results SET payload=CAST(:payload AS jsonb) "
@@ -405,6 +412,12 @@ def test_two_turn_native_context_is_correlated_and_digest_checked(
                 },
             )
             assert updated.rowcount == 1
+            connection.execute(
+                text(
+                    "ALTER TABLE runtime_private.accepted_results "
+                    "ENABLE TRIGGER retention_only_redaction"
+                )
+            )
 
         third_lease = queue.claim_one("t26-native-tampered-history")
         assert third_lease is not None and third_lease.job_id == second_transition.next_job_id

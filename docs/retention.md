@@ -1,8 +1,8 @@
 # Retention and deletion
 
-Continumm gates retained run content with PostgreSQL time. A run is readable only while its account is active, its owner has not deleted it, its active-run deadline has not elapsed, and its content deadline is still in the future. The API exposes the active-run deadline and the final content expiry on each run snapshot.
+Continumm gates retained run content with PostgreSQL time. A run is readable only while its account is active, its owner has not deleted it, and its content deadline is still in the future. The API exposes the active-run deadline and the final content expiry on each run snapshot.
 
-An admitted run has at most seven days to reach a terminal state. Its initial content expiry is fourteen days after admission, covering the longest permitted active period plus seven days of terminal retention. The first transition to a terminal state resets the content expiry to seven days after that transition. Access closes at the active deadline or content expiry even when the cleanup worker has not run yet. A bounded drain then expires due runs and scrubs their retained database content.
+An admitted run has at most seven days to reach a terminal state. Its initial content expiry is fourteen days after admission, covering the longest permitted active period plus seven days of terminal retention. The first transition to a terminal state resets the content expiry to seven days after that transition. The work deadline blocks further execution and decisions; it does not delete terminal history. A bounded drain terminalizes deadline-exhausted work and retains content for the terminal window. Content access closes at content expiry even if physical cleanup is delayed.
 
 Run deletion records an opaque receipt, blocks future work, terminalizes an active run, scrubs content, and queues external copies in one database transaction. Account deletion first marks the account deleting, revokes browser sessions and encrypted GitHub credentials, removes provider keys, and immediately blocks all owned run reads and work. A bounded worker scrubs account runs and marks the account deleted when local cleanup is finished. The receipt retains opaque IDs and a timestamp for 90 days; source, prompts, logs, and keys are excluded.
 
@@ -28,3 +28,7 @@ remain charged and queued. Without this option the worker performs DB-only
 redaction and records pending cleanup. Provider-copy deletion remains unsupported
 when no stable application-controlled remote object exists; backup erasure is
 never inferred from an active-store receipt.
+
+Migration 30 restricts redaction grants to exact scrub values after deletion or
+content expiry. Original setup snapshots and content-bearing external-request
+metadata are included; minimal remote identities/digests remain for audit.

@@ -115,6 +115,9 @@ class QueueService:
                     WHERE run.owner_id=:owner_id
                       AND (CAST(:run_id AS uuid) IS NULL OR run.run_id=CAST(:run_id AS uuid))
                       AND run.status IN ('queued', 'running')
+                      AND EXISTS (SELECT 1 FROM runtime_private.users AS owner_account
+                                  WHERE owner_account.user_id=run.owner_id
+                                    AND owner_account.status='active')
                       AND (run.deadline_at IS NULL OR run.deadline_at > clock_timestamp())
                       AND (
                         EXISTS (
@@ -498,7 +501,10 @@ def lock_current_execution(
             "COALESCE((to_jsonb(run)->>'content_expires_at')::timestamptz, "
             "'9999-12-31 23:59:59+00'::timestamptz) > clock_timestamp() "
             "AS content_active, "
-            "to_jsonb(run)->>'content_deleted_at' AS content_deleted_at "
+            "to_jsonb(run)->>'content_deleted_at' AS content_deleted_at, "
+            "EXISTS(SELECT 1 FROM runtime_private.users AS owner_account "
+            "WHERE owner_account.user_id=run.owner_id AND owner_account.status='active') "
+            "AS owner_active "
             "FROM runtime_private.runs AS run "
             "WHERE owner_id=:owner_id AND run_id=:run_id FOR UPDATE"
         ),
@@ -557,6 +563,7 @@ def lock_current_execution(
 
     if (
         run.status != RunStatus.RUNNING.value
+        or not run.owner_active
         or (run.deadline_at is not None and run.deadline_at <= database_now)
         or not run.content_active
         or run.content_deleted_at is not None

@@ -639,8 +639,8 @@ the suite. A transient Docker Hub 502 required a build retry.
   no GitHub requests or hosted deployment occurred.
   [Setup and evidence boundaries](../docs/github-delivery-recovery.md).
 
-- T40 retention/deletion: DB-time content and active-run deadline gates deny reads
-  immediately. Owner deletion revokes sessions/GitHub tokens/provider keys and
+- T40 retention/deletion: DB-time content expiry gates deny reads immediately; work deadlines
+  fence execution while preserving the seven-day terminal history window. Owner deletion revokes sessions/GitHub tokens/provider keys and
   journals bounded cleanup; terminal transitions erase per-run keys. A bounded
   worker drain redacts governed content and an explicit private-object adapter
   reconciles deletion before releasing charged bytes. Unsupported provider copies
@@ -683,3 +683,12 @@ the suite. A transient Docker Hub 502 required a build retry.
   PostgreSQL cases passed in final core verification. I01–I20 are mapped to
   named existing boundary suites; bounded generation is not an exhaustive proof.
   [Invariant ledger](../docs/runtime-invariants.md).
+
+- Final retention/security corrections: migration 30 restores immutable active
+  content despite cleanup grants, permits only exact deletion-time redactions,
+  clears setup snapshots and request bodies, and preserves terminal content
+  after the work deadline. Queue claims and lease-owned writes now deny suspended
+  accounts. The complete local failure matrix passed 190 tests without skips;
+  another 25 credential/authentication/corrupt-history tests passed. Six lifecycle
+  and export checks prove deletion plus the seven-day terminal window.
+  [Security scope](../docs/security-verification.md).
