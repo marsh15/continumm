@@ -43,3 +43,5 @@ live workflow composition remain pending; consult the progress log for verified 
 - [Fault laboratory](fault-laboratory.md)
 - [Runtime benchmarks](benchmarks.md)
 - [Evaluation limits](evaluation.md)
+
+- [Final acceptance evidence map](acceptance-evidence.md)

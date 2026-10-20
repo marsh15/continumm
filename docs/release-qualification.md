@@ -33,3 +33,6 @@ Only after all gates pass should the operator explicitly enable public admission
 The independent [status/help document](../STATUS.md) must remain reachable if
 Render sleeps or is suspended. No automatic release or admission enablement is
 part of the local test commands.
+
+Use the [final acceptance evidence map](acceptance-evidence.md) to locate local
+proof and the remaining release experiment for each plan item.
