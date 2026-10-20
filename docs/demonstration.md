@@ -92,8 +92,10 @@ Before the live demonstration can run:
    the original source receipt, model and task context. Validation/freeze handlers
    and persisted validation-input resolution are also implemented. The
    [source fetcher](source-acquisition.md) now provides bounded authenticated
-   acquisition; worker registration and trusted tool-policy composition remain
-   open. The CLI registers only publication, and the Docker entrypoint starts
+   acquisition. The [workflow registry](workflow-composition.md) connects the
+   trusted handlers and persisted tool-policy callbacks; production resource
+   construction and the full workflow CLI remain open. The existing CLI registers
+   only publication, and the Docker entrypoint starts
    Uvicorn. `make eval-live PROVIDER=openai` remains fail-closed.
 5. Run a bounded task, request and validate one revision, inspect the exact new
    manifest, approve it, and publish normally to the managed branch and PR. Record

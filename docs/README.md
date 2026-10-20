@@ -47,3 +47,5 @@ live workflow composition remain pending; consult the progress log for verified 
 - [Final acceptance evidence map](acceptance-evidence.md)
 
 - [Exact admitted source acquisition](source-acquisition.md)
+
+- [Trusted workflow composition](workflow-composition.md)

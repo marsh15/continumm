@@ -105,10 +105,12 @@ verification. The resolver's read path then supplies the persisted model/context
 checks the schema digest and activity identity, and selects the accepted baseline
 under the current owner and lease. Missing pins never fall back to task inputs.
 
-These are trusted Python APIs, not browser endpoints or arbitrary inputs loaded
-from the CLI. Admission/source preparation, trusted policy and validation
-composition still need wiring for the live workflow. The publication CLI
-registers only `publish_approved`.
+The [workflow registry](workflow-composition.md) now composes source preparation,
+admitted inputs, the model/tool dispatcher, validation, freeze and publication.
+Its persisted tool-policy resolver derives authority and baseline protections
+from server state and fresh GitHub access checks. These remain trusted Python
+APIs: production resource construction and the full workflow CLI are still open.
+The existing publication CLI registers only `publish_approved`.
 
 ## Validation and review activities
 

@@ -805,3 +805,31 @@ the suite. A transient Docker Hub 502 required a build retry.
 - [Acquisition contract](../docs/source-acquisition.md). Worker registration and
   trusted tool-policy composition remain open; T34/T48 live qualification is
   still deferred and public admission remains disabled.
+
+### T34 follow-up — trusted policy and fixed workflow registry
+
+- Added `PersistedToolPolicyContextResolver`: binds immutable admission and
+  validation-source pins to verified baseline/profile/test paths, current owner
+  and revision, fresh dual repository authority, and persisted overrun/turn/tool
+  bounds. It rechecks the lease after authorization and grants exactly five
+  source-file capabilities. Queued tools do not require another model reservation.
+- Added fixed model tool schemas derived from the argument contracts and accepted
+  by both provider normalizers. Nested edit schemas are inlined, every property
+  is required, nullable fields retain null, and returned schemas are independent.
+- Added `build_workflow_activity_runner`, which registers source preparation,
+  agent turns/tools, candidate validation, manifest freeze and approved publication
+  with revision-bound continuations. Construction performs no external work.
+- The local registry test executes three real runtime jobs with a synthetic
+  encrypted run key and fake OpenAI SDK response: baseline, model turn, patched
+  candidate. It records exactly one model reservation/dispatch/response and
+  preserves the original test bytes. This is controlled local protocol evidence,
+  not a live model result or sandbox validation.
+- Production resource construction, the full workflow CLI and deployed/provider
+  qualification remain open. Public admission stays disabled.
+  [Composition contract](../docs/workflow-composition.md).
+- Verification passed: 52 combined targeted tests with no skips, including the
+  seven policy PostgreSQL cases and the three-job registry flow. Final
+  `make check build-package` passed with 705 backend tests, 203 optional database
+  skips, 29 console tests, 30 Edge tests, Ruff and mypy (104 source files), plus
+  wheel/source builds. The registry test also passed all existing admitted-input
+  cases and migration teardown after removing its synthetic provider history.
