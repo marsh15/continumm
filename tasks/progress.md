@@ -705,3 +705,10 @@ the suite. A transient Docker Hub 502 required a build retry.
   The fault laboratory exposed the active-manifest cleanup-grant regression;
   migration 30 fixes it and its related privacy boundaries. No live qualification
   or exhaustive audit is claimed. [Evidence scope](../docs/security-verification.md).
+
+- T47 reproducible local measurements: nine trials with 12 jobs each compare
+  one/two/four worker threads and a sequential in-memory baseline. Raw timings,
+  statement counts, relation sizes, source/runtime provenance and forced lease
+  reclaim measurements are retained. All trials passed; results show variance
+  rather than guaranteed scaling. No model/sandbox or hosted performance claim
+  is made. [Report](../docs/benchmarks.md).

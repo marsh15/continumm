@@ -535,8 +535,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T45.
 - **Scope:** Medium; benchmark harness, naive baseline and report generator.
-- [ ] Compare identical scripted workloads at 1/2/4 local workers and publish raw data/configuration.
-- [ ] Separate latency/throughput experiments from managed sandbox and model measurements.
+- [x] Compare identical scripted workloads at 1/2/4 local worker threads and publish raw data/configuration.
+- [x] Separate latency/throughput experiments from managed sandbox and model measurements.
 - **Verify:** make benchmark; inspect generated report for unsupported claims.
 
 ### T48 — Coding-agent evaluation report

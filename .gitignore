@@ -18,3 +18,5 @@ node_modules/
 .artifacts/property-failures/
 
 .artifacts/fault-matrix.json
+
+.artifacts/benchmark.json
