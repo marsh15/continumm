@@ -553,7 +553,7 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T34, T43, T47, T48.
 - **Scope:** Medium; README, operations/security/profile docs and real screenshots.
-- [ ] Document supported behavior, BYOK retention/costs, beta quotas and quickstart; publish a stable external status/help document.
+- [x] Document supported behavior, BYOK retention/costs, beta quotas and quickstart; publish a stable external status/help document.
 - [ ] Publish the signature demo and trace every guarantee to implementation/test evidence.
 - **Verify:** fresh-checkout quickstart, link checks and independent documentation review.
 

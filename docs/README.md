@@ -29,11 +29,17 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 
 [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) is the historical Continuum specification from September. Its claims of prior approval do not override the new interview decisions or the current proposed plan. It is preserved unchanged as reference material.
 
-The backend and frontend foundations are implemented. Hosted feasibility and the
-durable coding workflow remain pending; consult the progress log for verified scope.
+Local runtime and console implementations are available. Hosted qualification and
+live workflow composition remain pending; consult the progress log for verified scope.
 
 - [Repository onboarding](repository-onboarding.md)
 
 - [Atomic run admission](run-admission.md)
 
 - [GitHub command intake](github-commands.md)
+
+- [Independent status and help](../STATUS.md)
+- [Release qualification gates](release-qualification.md)
+- [Fault laboratory](fault-laboratory.md)
+- [Runtime benchmarks](benchmarks.md)
+- [Evaluation limits](evaluation.md)

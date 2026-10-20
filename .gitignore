@@ -13,12 +13,14 @@ build/
 .coverage
 node_modules/
 
-.continuum-exports/
-
 .artifacts/property-failures/
-
-.artifacts/fault-matrix.json
 
 .artifacts/benchmark.json
 
 .artifacts/evaluation.json
+.continuum-exports/
+.continuum-quarantine/
+
+.artifacts/fault-matrix.json
+
+*.cpx

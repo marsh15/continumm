@@ -1,0 +1,1316 @@
+{
+  "created_at": "2026-10-20T14:36:17.805584+00:00",
+  "commit": "022405d127e80eb47a2041845a829156f1ae5afd",
+  "python": "3.13.12",
+  "groups": {
+    "leases": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_claims_heartbeat_and_fenced_results_use_database_ownership",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "a8d613bfe3148907f31ec52a07b094d8ecabdef9741d4e4e1997859dc7397b15"
+    },
+    "workspace": {
+      "outcome": "passed",
+      "tests": 10,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_local_process_restore_follows_only_the_committed_archive",
+          "properties": {}
+        },
+        {
+          "test": "test_sigkill_before_private_upload_restores_last_committed_bytes",
+          "properties": {}
+        },
+        {
+          "test": "test_sigkill_after_private_upload_before_result_commit_restores_last_committed_bytes",
+          "properties": {}
+        },
+        {
+          "test": "test_sigkill_after_result_commit_is_adopted_and_restores_new_exact_bytes",
+          "properties": {}
+        },
+        {
+          "test": "test_late_sandbox_result_cannot_replace_newer_generation",
+          "properties": {}
+        },
+        {
+          "test": "test_forged_same_identity_workspace_is_rejected_before_upload",
+          "properties": {}
+        },
+        {
+          "test": "test_other_account_cannot_restore_an_owned_workspace",
+          "properties": {}
+        },
+        {
+          "test": "test_unresolved_prior_allocation_blocks_restore_before_dispatch",
+          "properties": {}
+        },
+        {
+          "test": "test_unrecoverable_latest_checkpoint_requires_attention_without_fallback[corrupt]",
+          "properties": {}
+        },
+        {
+          "test": "test_unrecoverable_latest_checkpoint_requires_attention_without_fallback[expired]",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "83a2a72d474864e7400d90840f54556d35f3c9964bf1b9aee7955f01aaf99f9a"
+    },
+    "result": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_activity_result_commits_atomically_and_recovers_lost_ack",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "64a0a7210a78ce64829eb401c856851395618812b195de00fd6d732077c09483"
+    },
+    "process": {
+      "outcome": "passed",
+      "tests": 2,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_sigkill_keeps_checkpoint_and_only_recovered_generation_commits",
+          "properties": {
+            "intermediate_authority": "{\"generation\": 1, \"checkpoint_id\": \"cc490c7f-2176-4bd8-81c7-71165a91e827\"}",
+            "final_authority": "{\"generation\": 2, \"status\": \"waiting_credentials\", \"accepted_results\": 1, \"recovered_checkpoint_id\": \"cc490c7f-2176-4bd8-81c7-71165a91e827\"}"
+          }
+        },
+        {
+          "test": "test_sigstop_rejects_stale_intermediate_and_final_writes",
+          "properties": {
+            "intermediate_authority": "{\"generation\": 1, \"checkpoint_id\": \"25857847-30b9-4033-936d-95473443c7f7\"}",
+            "final_authority": "{\"generation\": 2, \"stale_writes\": {\"kind\": \"stale_write_results\", \"checkpoint\": \"lease_lost\", \"transition\": \"lease_lost\"}, \"accepted_results\": 1, \"status\": \"waiting_credentials\"}"
+          }
+        }
+      ],
+      "source_sha256": "1746e05fe2a516430307e2db5e5eb38f923c833224a54825eeb26b58899a7b81"
+    },
+    "model": {
+      "outcome": "passed",
+      "tests": 10,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_scripted_response_contract_is_deterministic_without_postgres",
+          "properties": {}
+        },
+        {
+          "test": "test_invalid_full_turn_never_materializes_or_executes_any_call[incomplete]",
+          "properties": {}
+        },
+        {
+          "test": "test_invalid_full_turn_never_materializes_or_executes_any_call[malformed_later_arguments]",
+          "properties": {}
+        },
+        {
+          "test": "test_invalid_full_turn_never_materializes_or_executes_any_call[truncated_later_arguments]",
+          "properties": {}
+        },
+        {
+          "test": "test_invalid_full_turn_never_materializes_or_executes_any_call[stop_reason_mismatch]",
+          "properties": {}
+        },
+        {
+          "test": "test_lost_model_response_is_fenced_and_not_regenerated",
+          "properties": {}
+        },
+        {
+          "test": "test_sigkill_reuses_persisted_response_and_runs_read_patch_read_sequentially",
+          "properties": {}
+        },
+        {
+          "test": "test_request_reservations_survive_reclaim_without_reset",
+          "properties": {}
+        },
+        {
+          "test": "test_adapter_receives_reserved_output_limit_and_overage_cannot_dispatch",
+          "properties": {}
+        },
+        {
+          "test": "test_protected_original_test_edit_is_a_durable_failure",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "971787d71fff0ad883cb6ee43891cb44212b00ba05a919b11f332c18565d2866"
+    },
+    "sandbox": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_sandbox_reservations_hold_capacity_and_charge_across_periods",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "3e12e3d02163adedab97474dedd83e4ef8891359ea48f9772cfc6ddf488ffa8b"
+    },
+    "approval": {
+      "outcome": "passed",
+      "tests": 16,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_candidate_validation_activity_runs_and_persists_real_service_evidence[passed]",
+          "properties": {}
+        },
+        {
+          "test": "test_candidate_validation_activity_runs_and_persists_real_service_evidence[failed]",
+          "properties": {}
+        },
+        {
+          "test": "test_candidate_validation_activity_runs_and_persists_real_service_evidence[unknown]",
+          "properties": {}
+        },
+        {
+          "test": "test_candidate_evidence_freezes_exact_manifest_and_replays_stably",
+          "properties": {}
+        },
+        {
+          "test": "test_freeze_activity_rejects_wrong_step",
+          "properties": {}
+        },
+        {
+          "test": "test_approval_schedules_once_and_requires_live_publication_lease",
+          "properties": {}
+        },
+        {
+          "test": "test_rejection_terminalizes_and_changes_enqueue_bounded_rework",
+          "properties": {}
+        },
+        {
+          "test": "test_stale_digest_access_and_base_cannot_authorize",
+          "properties": {}
+        },
+        {
+          "test": "test_concurrent_owner_decisions_accept_exactly_one",
+          "properties": {}
+        },
+        {
+          "test": "test_cancelled_run_rejects_pending_decision",
+          "properties": {}
+        },
+        {
+          "test": "test_freeze_recovers_prepared_manifest_after_transition_loss",
+          "properties": {}
+        },
+        {
+          "test": "test_cross_owner_denial_and_manifest_column_immutability",
+          "properties": {}
+        },
+        {
+          "test": "test_due_expiry_is_durable_and_idempotent[False]",
+          "properties": {}
+        },
+        {
+          "test": "test_due_expiry_is_durable_and_idempotent[True]",
+          "properties": {}
+        },
+        {
+          "test": "test_corrupt_candidate_lineage_cannot_freeze",
+          "properties": {}
+        },
+        {
+          "test": "test_multiple_candidate_checkpoints_freeze_cumulative_patch",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "83f037e126f45ef77d99fc2db6e2ad3fb8098b34edae84747619b209b99b0772"
+    },
+    "cancel": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_cancellation_fences_dispatch_and_preserves_unresolved_observations",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "62584379f70f8847d22d128d44d0e501e612e0c9cd35d90f15c5356ba18124b6"
+    },
+    "pr": {
+      "outcome": "passed",
+      "tests": 34,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_creates_exact_approved_pr_then_repeat_adopts_read_only",
+          "properties": {}
+        },
+        {
+          "test": "test_matching_terminal_pr_is_reported_without_replacement_or_reopen[closed-False-closed]",
+          "properties": {}
+        },
+        {
+          "test": "test_matching_terminal_pr_is_reported_without_replacement_or_reopen[closed-True-merged]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes0]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes1]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes2]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes3]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes4]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes5]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes6]",
+          "properties": {}
+        },
+        {
+          "test": "test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr[changes7]",
+          "properties": {}
+        },
+        {
+          "test": "test_lost_create_response_and_repeated_invisible_reads_never_create_twice",
+          "properties": {
+            "intermediate_authority": "{\"operation_status\": \"unknown\", \"remote_create_calls\": 1, \"remote_pr_count\": 1}",
+            "final_authority": "{\"operation_status\": \"adopted\", \"pr_number\": 17, \"remote_create_calls\": 1}"
+          }
+        },
+        {
+          "test": "test_reconciliation_after_cancel_or_expiry_is_read_only",
+          "properties": {}
+        },
+        {
+          "test": "test_cancelled_unknown_pr_is_visible_and_adopted_through_owner_scoped_api",
+          "properties": {}
+        },
+        {
+          "test": "test_changed_authorization_or_ref_facts_block_new_pr_writes[auth]",
+          "properties": {}
+        },
+        {
+          "test": "test_changed_authorization_or_ref_facts_block_new_pr_writes[repo]",
+          "properties": {}
+        },
+        {
+          "test": "test_changed_authorization_or_ref_facts_block_new_pr_writes[base]",
+          "properties": {}
+        },
+        {
+          "test": "test_changed_authorization_or_ref_facts_block_new_pr_writes[head]",
+          "properties": {}
+        },
+        {
+          "test": "test_incomplete_bounded_scan_never_proves_absence_or_creates[github_pr_list_incomplete]",
+          "properties": {}
+        },
+        {
+          "test": "test_incomplete_bounded_scan_never_proves_absence_or_creates[github_pr_pagination_invalid]",
+          "properties": {}
+        },
+        {
+          "test": "test_complete_all_state_scan_adopts_exact_match_and_duplicate_markers_conflict",
+          "properties": {}
+        },
+        {
+          "test": "test_successful_create_with_lagging_followup_scan_stays_confirmed",
+          "properties": {}
+        },
+        {
+          "test": "test_successful_create_with_second_matching_postscan_row_records_both_conflicts",
+          "properties": {}
+        },
+        {
+          "test": "test_conflict_remains_sticky_after_remote_pr_becomes_exact",
+          "properties": {}
+        },
+        {
+          "test": "test_fresh_stored_pr_that_disagrees_with_exact_list_row_conflicts",
+          "properties": {}
+        },
+        {
+          "test": "test_corrupt_stored_reference_fails_closed_with_publication_error",
+          "properties": {}
+        },
+        {
+          "test": "test_stored_reference_id_drift_conflicts_with_listed_exact_pr",
+          "properties": {}
+        },
+        {
+          "test": "test_fresh_terminal_get_state_wins_over_stale_open_list_row[closed]",
+          "properties": {}
+        },
+        {
+          "test": "test_fresh_terminal_get_state_wins_over_stale_open_list_row[merged]",
+          "properties": {}
+        },
+        {
+          "test": "test_readonly_reconciliation_seals_prepared_exact_pr_after_approval_ends[cancel]",
+          "properties": {}
+        },
+        {
+          "test": "test_readonly_reconciliation_seals_prepared_exact_pr_after_approval_ends[expire]",
+          "properties": {}
+        },
+        {
+          "test": "test_readonly_adoption_of_prepared_pr_prevents_later_create_after_scan_turns_empty",
+          "properties": {}
+        },
+        {
+          "test": "test_large_conflict_set_keeps_ledger_observation_bounded",
+          "properties": {}
+        },
+        {
+          "test": "test_concurrent_exact_confirmation_cannot_overwrite_conflict",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "15bf76483dcfd26bc3e2556c8b518aa005684b397dfde85493def3ec23254df4"
+    },
+    "branch": {
+      "outcome": "passed",
+      "tests": 7,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_publishes_frozen_candidate_and_replays_exact_branch_without_writes",
+          "properties": {}
+        },
+        {
+          "test": "test_base_move_and_diverged_managed_branch_never_create_a_replacement",
+          "properties": {}
+        },
+        {
+          "test": "test_forged_approval_pending_action_and_corrupt_source_bytes_are_denied",
+          "properties": {}
+        },
+        {
+          "test": "test_lost_branch_response_and_restart_reconcile_without_second_create",
+          "properties": {}
+        },
+        {
+          "test": "test_content_addressed_uploads_preserve_tree_shaped_blobs_modes_and_depth",
+          "properties": {}
+        },
+        {
+          "test": "test_publication_resumes_with_at_most_two_remote_mutations_per_invocation",
+          "properties": {}
+        },
+        {
+          "test": "test_cancelled_run_and_expired_approval_do_not_start_new_remote_mutations",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "a19b74df7c56a586d481da2f813b6b2c23c5bad627329687cb1d1e2bcc600e7a"
+    },
+    "cross": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_browser_approval_and_comment_rework_commit_one_authoritative_decision",
+          "properties": {
+            "final_authority": "{\"approval_status\": \"approved\", \"revision\": 0, \"competing_results\": [\"approved\", \"conflict\"]}"
+          }
+        }
+      ],
+      "source_sha256": "32f3ad3f162b136b54e483be6557055ee22651967f9b00a23ed4e332639d9f2d"
+    },
+    "commands": {
+      "outcome": "passed",
+      "tests": 25,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_exact_commands_normalize[/continumm run-expected0]",
+          "properties": {}
+        },
+        {
+          "test": "test_exact_commands_normalize[/continumm status 123e4567-e89b-12d3-a456-426614174000-expected1]",
+          "properties": {}
+        },
+        {
+          "test": "test_exact_commands_normalize[/continumm cancel 123E4567-E89B-12D3-A456-426614174000-expected2]",
+          "properties": {}
+        },
+        {
+          "test": "test_exact_commands_normalize[/continumm approve 123e4567-e89b-12d3-a456-426614174000 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-expected3]",
+          "properties": {}
+        },
+        {
+          "test": "test_exact_commands_normalize[/continumm changes 123e4567-e89b-12d3-a456-426614174000\\nPlease adjust the test.-expected4]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[Please run this: /continumm run]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[> /continumm run]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[`/continumm run`]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[```text\\n/continumm run\\n```]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[/continumm run please]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[/continumm  run]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[/continumm status not-a-uuid]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[/continumm approve 123e4567-e89b-12d3-a456-426614174000 abc]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[/continumm changes 123e4567-e89b-12d3-a456-426614174000]",
+          "properties": {}
+        },
+        {
+          "test": "test_quoted_code_or_non_exact_commands_are_inert[/continumm status 123e4567-e89b-12d3-a456-426614174000\\nextra feedback]",
+          "properties": {}
+        },
+        {
+          "test": "test_owner_command_intake_is_fresh_deduplicated_and_content_bounded",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_timestamp_comparison_includes_creation_and_update",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_rechecks_write_and_app_access_and_compares_metadata",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes0-repository_actor_write_access_required]",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes1-github_installation_user_access_required]",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes2-github_comment_identity_invalid]",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes3-github_comment_identity_invalid]",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes4-github_comment_identity_invalid]",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes5-github_comment_pull_request_rejected]",
+          "properties": {}
+        },
+        {
+          "test": "test_current_comment_adapter_fails_closed[changes6-github_api_redirect_rejected]",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "e89d13615e8b6b2b5caf56267588f0dc69e3e8d2e5f2203e7e7cfa907550f4b4"
+    },
+    "preflight": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_repository_preflight_reservations_quota_cache_and_rls",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "31409b1c606438377af1738f8a40754a0e44d4739c0bd2da126487cd3ac1a71c"
+    },
+    "inbox": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_signed_deliveries_commit_once_and_migrations_roll_back",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "ef913c609b80c09fdfc5650ddfeaa80c5aeaac94f6f3a4544e804f402af08c4b"
+    },
+    "admission": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_admission_queue_replay_continuation_and_rls",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "c03dc55676da5018be310488eb90faf20b75eb87f1c469844fa9dcd905408cc0"
+    },
+    "checkpoints": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_checkpoint_uploads_are_budgeted_fenced_and_recoverable",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "ddfeffb34757c97f568983b1328d91ff5dcdf9651b67d69c401827978c8afa00"
+    },
+    "archives": {
+      "outcome": "passed",
+      "tests": 52,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_archive_is_reproducible_and_preserves_only_executable_mode",
+          "properties": {}
+        },
+        {
+          "test": "test_tree_digest_changes_for_content_and_executable_bit",
+          "properties": {}
+        },
+        {
+          "test": "test_valid_ustar_prefix_long_path_round_trips",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[../escape.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[/absolute.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[C:/drive.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[src\\\\escape.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[./dot.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[src//empty.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[src/../escape.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[src/\\x00nul.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[e\\u0301/source.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_noncanonical_or_unsafe_paths[xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.py]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_duplicate_casefold_and_ancestor_conflicts[paths0]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_duplicate_casefold_and_ancestor_conflicts[paths1]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_duplicate_casefold_and_ancestor_conflicts[paths2]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_duplicate_casefold_and_ancestor_conflicts[paths3]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_duplicate_casefold_and_ancestor_conflicts[paths4]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_source_control_and_dependency_cache_paths[.git/config]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_source_control_and_dependency_cache_paths[.hg/store]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_source_control_and_dependency_cache_paths[node_modules/pkg/index.js]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_source_control_and_dependency_cache_paths[src/.venv/bin/python]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_source_control_and_dependency_cache_paths[tests/__pycache__/test.pyc]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_source_control_and_dependency_cache_paths[src/.pytest_cache/lastfailed]",
+          "properties": {}
+        },
+        {
+          "test": "test_create_rejects_unsupported_modes_and_lfs_pointers",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[2]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[1]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[5]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[6]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[3]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[4]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_links_directories_special_and_sparse_members[S]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_pax_headers_before_tarfile_can_expand_them",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_unaligned_zero_terminator",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_malformed_checksum_and_corrupt_gzip_footer",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_requires_one_complete_gzip_member[\\x1f\\x8b\\x08\\x00\\x00\\x00\\x00\\x00\\x02\\xff\\x03\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00-archive_gzip_trailing_data]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_requires_one_complete_gzip_member[trailing-garbage-archive_gzip_trailing_data]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_requires_one_complete_gzip_member[-archive_gzip_invalid]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_member_traversal_and_lfs_pointer_content",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_duplicate_casefold_and_ancestor_members[paths0]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_duplicate_casefold_and_ancestor_members[paths1]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_duplicate_casefold_and_ancestor_members[paths2]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_duplicate_casefold_and_ancestor_members[paths3]",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_tar_header_size_before_reading_member_data",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_rejects_noncanonical_owner_and_time_metadata",
+          "properties": {}
+        },
+        {
+          "test": "test_verify_stops_at_file_count_limit",
+          "properties": {}
+        },
+        {
+          "test": "test_source_tree_node_limit_is_enforced_for_create_and_verify",
+          "properties": {}
+        },
+        {
+          "test": "test_expected_archive_tree_and_manifest_digests_are_checked",
+          "properties": {}
+        },
+        {
+          "test": "test_source_file_and_tar_byte_limits_are_enforced",
+          "properties": {}
+        },
+        {
+          "test": "test_creator_enforces_compressed_byte_limit",
+          "properties": {}
+        },
+        {
+          "test": "test_compressed_and_decompressed_archive_limits_are_enforced",
+          "properties": {}
+        },
+        {
+          "test": "test_file_count_limit_stops_generator_without_consuming_more_inputs",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "4670b8e0299140ff40ec7f7654e683f21a7ecf192089a1d348ba3d7afdb1e525"
+    },
+    "policy": {
+      "outcome": "passed",
+      "tests": 16,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_archive_paths_cannot_escape_the_source_boundary[../outside]",
+          "properties": {}
+        },
+        {
+          "test": "test_archive_paths_cannot_escape_the_source_boundary[/etc/passwd]",
+          "properties": {}
+        },
+        {
+          "test": "test_archive_paths_cannot_escape_the_source_boundary[a/../../escape]",
+          "properties": {}
+        },
+        {
+          "test": "test_archive_paths_cannot_escape_the_source_boundary[a\\\\..\\\\escape]",
+          "properties": {}
+        },
+        {
+          "test": "test_archive_links_are_not_restored[2]",
+          "properties": {}
+        },
+        {
+          "test": "test_archive_links_are_not_restored[1]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call0]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call1]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call2]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call3]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call4]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call5]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call6]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call7]",
+          "properties": {}
+        },
+        {
+          "test": "test_injected_instructions_do_not_grant_secrets_execution_or_publication[call8]",
+          "properties": {}
+        },
+        {
+          "test": "test_browser_policy_cannot_be_relaxed_by_request_headers",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "9ff585e9aaff0e4350831267aab0a741fc041c872696e46a02960beb431298aa"
+    },
+    "isolation": {
+      "outcome": "passed",
+      "tests": 3,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_registration_defaults_are_owner_scoped_and_freshly_authorized",
+          "properties": {}
+        },
+        {
+          "test": "test_setup_continuation_is_fresh_owner_bound_and_claimed_once",
+          "properties": {}
+        },
+        {
+          "test": "test_repository_http_routes_enforce_csrf_and_bounded_strict_json",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "4d3e694587b7fdf313271508e767ebef8250fca9f8a24afee240a42d2919481e"
+    },
+    "retention": {
+      "outcome": "passed",
+      "tests": 5,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_expiry_deletion_and_account_revoke_are_immediate_and_idempotent",
+          "properties": {}
+        },
+        {
+          "test": "test_cleanup_adapter_records_unsupported_without_claiming_erasure",
+          "properties": {}
+        },
+        {
+          "test": "test_delete_routes_require_origin_csrf_and_return_durable_receipt",
+          "properties": {}
+        },
+        {
+          "test": "test_deletion_scrubs_original_setup_and_external_request_content",
+          "properties": {}
+        },
+        {
+          "test": "test_work_deadline_stops_execution_without_erasing_terminal_history",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "e8d367ee866c95ac4a9819f7765343bef902a750251e7581651a02bed68432fb"
+    },
+    "restore": {
+      "outcome": "passed",
+      "tests": 1,
+      "skipped": 0,
+      "authoritative_observations": [
+        {
+          "test": "test_portable_export_is_encrypted_allowlisted_and_quarantined",
+          "properties": {}
+        }
+      ],
+      "source_sha256": "dc30734a214c8ba2ef2053bec5b1c5c5c9c2ada8431f9a67148962703b6ef5db"
+    }
+  },
+  "matrix": [
+    {
+      "id": "F00",
+      "scenario": "Two workers claim the same logical work",
+      "required_outcome": "One current generation; no duplicate accepted result",
+      "groups": [
+        "leases"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F01",
+      "scenario": "Worker killed before checkpoint commit",
+      "required_outcome": "Restore prior committed checkpoint",
+      "groups": [
+        "workspace"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F02",
+      "scenario": "Upload succeeds, database commit fails",
+      "required_outcome": "Object is orphaned and later collected safely",
+      "groups": [
+        "workspace"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F03",
+      "scenario": "Database commit succeeds, acknowledgment disappears",
+      "required_outcome": "Recovery adopts committed result",
+      "groups": [
+        "result"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F04",
+      "scenario": "Paused worker resumes after lease takeover",
+      "required_outcome": "All stale writes rejected",
+      "groups": [
+        "process"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F05",
+      "scenario": "Heartbeat and expiry race",
+      "required_outcome": "Database-time ownership rule decides consistently",
+      "groups": [
+        "leases"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F06",
+      "scenario": "Model output is partial or malformed",
+      "required_outcome": "No tool execution; bounded repair/failure",
+      "groups": [
+        "model"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F07",
+      "scenario": "Model response is lost",
+      "required_outcome": "Unknown usage recorded; no unaccounted retries",
+      "groups": [
+        "model"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F08",
+      "scenario": "Tool call repeated after recovery",
+      "required_outcome": "Stable invocation identity prevents duplicate accepted effects",
+      "groups": [
+        "model"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F09",
+      "scenario": "Sandbox creation response disappears",
+      "required_outcome": "Unknown allocation consumes reservation; no overlapping speculative replacement",
+      "groups": [
+        "sandbox"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F10",
+      "scenario": "API dies while a sandbox command runs",
+      "required_outcome": "Server-side limit terminates it; stale result cannot commit",
+      "groups": [],
+      "deployed_procedure": "On the configured sandbox, kill the API during a bounded command; observe server-side timeout and reject its stale result.",
+      "outcome": "not_run_deployed"
+    },
+    {
+      "id": "F11",
+      "scenario": "Validation mutates files",
+      "required_outcome": "Approved tree remains the original immutable candidate",
+      "groups": [
+        "approval"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F12",
+      "scenario": "Approval and cancellation race",
+      "required_outcome": "No new dispatch authorization after cancellation; previously authorized effects remain observable",
+      "groups": [
+        "cancel"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F13",
+      "scenario": "Approval expires during partial publication",
+      "required_outcome": "No new mutation authorization; preserve partial outcome and read-only reconciliation",
+      "groups": [
+        "branch"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F14",
+      "scenario": "Approval and rework race across channels",
+      "required_outcome": "Old approval cannot authorize revised content",
+      "groups": [
+        "cross"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F15",
+      "scenario": "GitHub creates PR, response disappears",
+      "required_outcome": "Reconciliation adopts exact PR; no blind second create",
+      "groups": [
+        "pr"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F16",
+      "scenario": "GitHub hides a created PR temporarily",
+      "required_outcome": "Negative reads do not authorize another create",
+      "groups": [
+        "pr"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F17",
+      "scenario": "Branch diverges or base changes",
+      "required_outcome": "Conflict/new-run requirement; no force push or silent rebase",
+      "groups": [
+        "branch"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F18",
+      "scenario": "Installation/user permission revoked",
+      "required_outcome": "Further access and publication denied",
+      "groups": [
+        "pr"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F19",
+      "scenario": "Bot/unauthorized commenter issues commands",
+      "required_outcome": "No account spend or mutation",
+      "groups": [
+        "commands"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F20",
+      "scenario": "Authentic old webhook replayed after tombstone expiry",
+      "required_outcome": "Freshness check denies admission and spend",
+      "groups": [
+        "commands"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F21",
+      "scenario": "Repository authorization removed",
+      "required_outcome": "Owner can still cancel, revoke keys and delete content",
+      "groups": [
+        "cancel",
+        "retention"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F22",
+      "scenario": "Repeated onboarding checks",
+      "required_outcome": "No sandbox/model allocation or unbounded download",
+      "groups": [
+        "preflight"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F23",
+      "scenario": "Webhook commit succeeds, ack is lost",
+      "required_outcome": "Redelivery is a no-op at command level",
+      "groups": [
+        "inbox"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F24",
+      "scenario": "Render asleep during webhook",
+      "required_outcome": "Edge receiver commits independently; work processes after wake",
+      "groups": [],
+      "deployed_procedure": "Sleep Render, send a signed App event, verify Edge inbox commit before wake and one command/run after drain.",
+      "outcome": "not_run_deployed"
+    },
+    {
+      "id": "F25",
+      "scenario": "Supabase unavailable",
+      "required_outcome": "No false webhook acceptance; visible recovery gap",
+      "groups": [],
+      "deployed_procedure": "Make the hosted Supabase transaction unavailable; confirm no webhook acknowledgment and a visible recovery gap.",
+      "outcome": "not_run_deployed"
+    },
+    {
+      "id": "F26",
+      "scenario": "Key removed during inference",
+      "required_outcome": "No future calls; already-sent call remains accounted",
+      "groups": [],
+      "deployed_procedure": "Revoke the owner key during explicitly enabled live inference; inspect accounted sent usage and deny every later call.",
+      "outcome": "not_run_deployed"
+    },
+    {
+      "id": "F27",
+      "scenario": "Storage/quota exhausted",
+      "required_outcome": "Stop admission; preserve committed progress",
+      "groups": [
+        "admission",
+        "checkpoints"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F28",
+      "scenario": "Artifact missing/corrupt",
+      "required_outcome": "Needs attention; no silent substitution",
+      "groups": [
+        "workspace"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F29",
+      "scenario": "Archive traversal, links, zip bomb",
+      "required_outcome": "Reject before trusted filesystem use",
+      "groups": [
+        "archives",
+        "policy"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F30",
+      "scenario": "Prompt injection requests secrets/publication",
+      "required_outcome": "Deterministic policy denies access",
+      "groups": [
+        "policy"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F31",
+      "scenario": "Another account guesses IDs",
+      "required_outcome": "Run, stream, artifact, and decision access denied",
+      "groups": [
+        "isolation"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F32",
+      "scenario": "Cleanup races with active upload/review",
+      "required_outcome": "Referenced/in-flight data survives",
+      "groups": [
+        "checkpoints",
+        "retention"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F33",
+      "scenario": "Runtime version changes mid-run",
+      "required_outcome": "Unsupported work pauses; no silent semantic upgrade",
+      "groups": [
+        "leases"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F34",
+      "scenario": "Restored database predates remote publication",
+      "required_outcome": "Restore quarantine and remote reconciliation precede mutation",
+      "groups": [],
+      "deployed_procedure": "Restore the historical database in an isolated deployment, reconcile remote publication, and prove no mutation before release from quarantine.",
+      "outcome": "not_run_deployed"
+    },
+    {
+      "id": "F35",
+      "scenario": "Deleted content appears in an older export",
+      "required_outcome": "Current deletion journal/expiry prevents restored access",
+      "groups": [
+        "restore"
+      ],
+      "deployed_procedure": null,
+      "outcome": "passed_local_assertions"
+    },
+    {
+      "id": "F36",
+      "scenario": "Render suspended",
+      "required_outcome": "Independent status/help document remains reachable",
+      "groups": [],
+      "deployed_procedure": "Suspend Render and fetch the independent GitHub STATUS.md help page from an external client.",
+      "outcome": "not_run_deployed"
+    }
+  ],
+  "limitations": [
+    "Local fixtures do not establish deployed failure behavior.",
+    "Rows are backed by test assertions; properties contain measured intermediate/final states where instrumented.",
+    "No credentials, prompts, or source bodies are recorded."
+  ],
+  "provenance_note": "Measured working tree based on the original commit field; implementation and harness subsequently committed through d5c722c. Original measured commit retained."
+}

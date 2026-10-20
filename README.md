@@ -53,3 +53,24 @@ pending. Follow [hosting setup](docs/hosting-setup.md) and retain results in the
 `make smoke-hosted` refuses a normal local process.
 
 The complete product scope and ordered implementation backlog are in [tasks/plan.md](tasks/plan.md) and [tasks/todo.md](tasks/todo.md). Verified work and pending gates are recorded in [tasks/progress.md](tasks/progress.md).
+
+## Local lifecycle and release evidence
+
+The implementation includes owner-scoped repository registration and run
+admission, verified GitHub command intent, shared review decisions, failed-delivery
+recovery, retention/deletion controls, and restricted operator tools. These are
+local implementation capabilities; the hosted command drain and complete coding
+workflow still need T34 composition and live qualification.
+
+- [Command intake](docs/github-commands.md), [admission](docs/run-admission.md),
+  and [retention](docs/retention.md)
+- [Delivery recovery](docs/github-delivery-recovery.md) and [invariant evidence](docs/runtime-invariants.md)
+- [Rendered interface checks](docs/evidence/t41-ui.md) and [fixture evaluation](docs/evaluation.md)
+- [Independent service status/help](STATUS.md) and [deployed launch gates](docs/release-qualification.md)
+
+`make eval-corpus` executes trusted deterministic fixtures without model calls.
+`make benchmark CONFIRM_DISPOSABLE_BENCHMARK_DATABASE=1` requires the explicitly
+configured disposable PostgreSQL database. These commands do not substitute for
+`make eval-live` or deployed release evidence. Private content access expires
+before physical cleanup; provider backups/logs and public GitHub comments have
+separate retention. Never put model keys in issues or comments.

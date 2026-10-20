@@ -605,8 +605,10 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   and status comments remain for subsequent tasks. No external mutations occurred.
   [Contract](../docs/github-commands.md).
 
-Implementation is complete through T33 and T35–T37. T34's live demonstration
-remains deferred at the owner's request. T38 shared command execution is implemented. Public admission
+Local implementation is complete through T33 and T35–T44, with the local portions
+of T45–T47 verified and T48 partially implemented. T34's live demonstration
+remains deferred at the owner's request. T49 documentation is prepared; deployed
+qualification and provider evaluation remain open. Public admission
 remains disabled by default, and local tests do not establish hosted acceptance.
 
 The requested implementation workers use `gpt-6-luna` with `high` reasoning.
@@ -720,3 +722,21 @@ the suite. A transient Docker Hub 502 required a build retry.
   All four live provider/language smokes are NOT_RUN; the live command remains
   fail-closed pending T34's admitted-workflow composition and service setup.
   [Fixture evidence](../docs/evaluation.md).
+
+### Final local verification — 20 October 2026
+
+- `make check` passed: 678 backend tests, 181 optional database skips; Ruff,
+  mypy (98 source files), 29 console tests, and 30 Edge tests passed. Dedicated
+  PostgreSQL checks separately ran 64 security tests and the 190-test fault matrix
+  without skips. Six deployed fault scenarios remain not run.
+- A fresh local clone of `af6e85f` passed
+  `make bootstrap build-package build-frontend`; no environment secrets were copied.
+- All five local demonstration cases passed at `af6e85f` with documentation edits
+  present. [Raw local evidence](../docs/evidence/final-local-demo.json) retains its
+  dirty-worktree provenance and makes no live-provider claim.
+- [Fault report](../docs/evidence/t45-local-fault-matrix.json), benchmark and
+  evaluation reports preserve their original measurement provenance. Local
+  Markdown link checks and independent documentation review passed.
+- T49's documentation/status package is complete locally; its signature demo
+  remains deferred with T34. T48 live model evaluation and T50 deployed acceptance
+  remain open. See [release gates](../docs/release-qualification.md).

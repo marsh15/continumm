@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-faults demo-local test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live export restore-check
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-faults demo-local test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live eval-corpus benchmark export restore-check
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
