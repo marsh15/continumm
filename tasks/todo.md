@@ -479,8 +479,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T33, T36, T39, T40.
 - **Scope:** Medium; restricted operations interface and tests.
-- [ ] Inspect unknown effects/allocations, inbox lag, storage and admission state without exposing credentials.
-- [ ] Support global admission stop, account suspension and audited recovery actions without a force-complete bypass.
+- [x] Inspect unknown effects/allocations, inbox lag, storage and admission state without exposing credentials.
+- [x] Support global admission stop, account suspension and audited recovery actions without a force-complete bypass.
 - **Verify:** make test-target TARGET=tests/security/test_operator_actions.py.
 
 ### T43 — Export and quarantined restore

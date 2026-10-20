@@ -656,3 +656,12 @@ the suite. A transient Docker Hub 502 required a build retry.
   Real rendered synthetic-fixture screenshots were inspected and retained. These
   checks do not claim the deferred hosted public journey is qualified.
   [Rendered evidence](../docs/evidence/t41-ui.md).
+
+- T42 operator controls: a dedicated least-privilege database login serves an
+  immutable-ID-allowlisted, read-only operations view and audited local controls.
+  New admissions lock/check the global stop and account state in their commit
+  transaction; missing control installation fails closed. Suspension revokes
+  browser/GitHub authorization. PostgreSQL checks proved control serialization
+  and denial of credential/session/raw-body/task reads and direct audit writes.
+  Frontend typing and 29 component tests passed. No force-complete path exists.
+  [Operator procedures](../docs/operator-runbooks.md).

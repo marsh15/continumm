@@ -52,7 +52,7 @@ from continuum_api.runtime.transitions import TransitionService
 
 @pytest.fixture(scope="module")
 def t38_database() -> Any:
-    """Run against this task's schema revision while later task migrations land."""
+    """Run against the complete schema including mandatory admission controls."""
     database_url = os.environ.get("CONTINUUM_T22_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("set CONTINUUM_T22_TEST_DATABASE_URL to disposable loopback PostgreSQL 17")
@@ -72,7 +72,7 @@ def t38_database() -> Any:
     try:
         _reset_database(admin, runtime_password)
         _assert_postgres_17(admin)
-        _run_migration("upgrade", "20261020_25", database_url)
+        _run_migration("upgrade", "head", database_url)
         migrated = True
         runtime = create_engine(
             runtime_url,

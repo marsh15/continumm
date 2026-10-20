@@ -6,6 +6,7 @@ import { RunDetailPage } from "./components/RunDetailPage";
 import { ReviewPage } from "./components/ReviewPage";
 import { ServiceCheck } from "./components/ServiceCheck";
 import { RepositoriesPage } from "./components/RepositoriesPage";
+import { OperatorPage } from "./components/OperatorPage";
 
 function FoundationPage() {
   const live = useQuery({
@@ -73,6 +74,7 @@ export function App() {
     const title = pathname.endsWith("/review") ? "Candidate review"
       : pathname.startsWith("/runs/") ? "Run"
       : pathname === "/settings/repositories" ? "Repositories"
+      : pathname === "/operations" ? "Operations"
       : pathname === "/" ? "Service status" : "Page not found";
     document.title = `${title} · Continumm`;
     if (previousPath.current !== pathname) {
@@ -95,6 +97,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<FoundationPage />} />
         <Route path="/settings/repositories" element={<RepositoriesPage />} />
+        <Route path="/operations" element={<OperatorPage />} />
         <Route path="/runs/:runId" element={<RunDetailPage />} />
         <Route path="/runs/:runId/review" element={<ReviewPage />} />
         <Route path="*" element={<UnknownPage />} />

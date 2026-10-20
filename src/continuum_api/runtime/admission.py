@@ -758,6 +758,19 @@ class AdmissionService:
                 credential_ready = self._credential_ready(
                     connection, credential_id, provider, explicit=requested_credential is not None
                 )
+                operator_gate_available: bool = connection.execute(
+                    text(
+                        "SELECT to_regprocedure("
+                        "'operator_private.admission_allowed(uuid)') IS NOT NULL"
+                    )
+                ).scalar_one()
+                if not operator_gate_available:
+                    raise AdmissionError("admission_operator_controls_unavailable")
+                if not connection.execute(
+                    text("SELECT operator_private.admission_allowed(:owner)"),
+                    {"owner": owner_id},
+                ).scalar_one():
+                    raise AdmissionError("admission_operator_stop")
                 model_id = (
                     _OPENAI_MODEL if provider is CredentialProvider.OPENAI else _ANTHROPIC_MODEL
                 )

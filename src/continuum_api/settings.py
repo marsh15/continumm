@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     database_url: SecretStr | None = None
     runtime_database_url: SecretStr | None = None
+    operator_database_url: SecretStr | None = None
+    operator_github_user_ids: str | None = None
     encryption_key: SecretStr | None = None
     encryption_key_version: str = Field(default="v1", pattern=r"^[A-Za-z0-9_-]{1,32}$")
     encryption_previous_keys: SecretStr | None = None

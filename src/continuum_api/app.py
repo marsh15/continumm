@@ -47,6 +47,7 @@ def create_app(
     admission_service_factory: Callable[[Request, Any], Any] | None = None,
     retention_service_factory: Callable[[Request, Any], Any] | None = None,
     external_attention_service_factory: Callable[[Request, Any], Any] | None = None,
+    operator_service_factory: Callable[[Request, Any], Any] | None = None,
     csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
     github_auth_boundary: GitHubAuthBoundary | None = None,
@@ -71,6 +72,8 @@ def create_app(
                 await auth.aclose()
             if application.state.owns_runtime_engine:
                 application.state.runtime_engine.dispose()
+            if application.state.owns_operator_engine:
+                application.state.operator_engine.dispose()
 
     application = FastAPI(
         title="Continumm API",
@@ -104,6 +107,9 @@ def create_app(
     application.state.runtime_engine = runtime_engine
     application.state.owns_runtime_engine = False
     application.state.runtime_engine_lock = threading.Lock()
+    application.state.operator_engine = None
+    application.state.owns_operator_engine = False
+    application.state.operator_engine_lock = threading.Lock()
     from continuum_api.auth.github import GitHubAccessVerifier
     from continuum_api.auth.routes import create_auth_router
     from continuum_api.auth.sessions import AuthStorageError
@@ -117,6 +123,12 @@ def create_app(
     from continuum_api.runtime.external_attention_routes import create_external_attention_router
     from continuum_api.runtime.external_ledger import ExternalOperationService
     from continuum_api.runtime.github_pr_publication import GitHubPullRequestService
+    from continuum_api.runtime.operator_actions import OperatorActionService
+    from continuum_api.runtime.operator_routes import (
+        create_operator_router,
+        get_operator_engine,
+        settings_allowlist,
+    )
     from continuum_api.runtime.provider_credentials import CredentialService
     from continuum_api.runtime.repository_preflight import RepositoryPreflightStore
     from continuum_api.runtime.repository_routes import (
@@ -228,6 +240,9 @@ def create_app(
     def browser_retention(request: Request, principal: Any) -> Any:
         return RetentionService(get_runtime_engine(request), principal)
 
+    def browser_operator(request: Request, _principal: Any) -> Any:
+        return OperatorActionService(get_operator_engine(request))
+
     async def browser_csrf(request: Request) -> bool:
         try:
             return await auth_boundary(request).csrf(request)
@@ -241,6 +256,7 @@ def create_app(
     )
     admission_service_factory = admission_service_factory or browser_admission
     retention_service_factory = retention_service_factory or browser_retention
+    operator_service_factory = operator_service_factory or browser_operator
     external_attention_service_factory = (
         external_attention_service_factory or browser_external_attention
     )
@@ -266,6 +282,9 @@ def create_app(
         create_external_attention_router(
             principal_resolver, csrf_guard, external_attention_service_factory
         )
+    )
+    application.include_router(
+        create_operator_router(principal_resolver, operator_service_factory, settings_allowlist)
     )
     install_sse_openapi(application)
 

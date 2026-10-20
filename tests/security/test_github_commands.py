@@ -44,12 +44,14 @@ ROLE_NAMES = (
     "continuum_wake_issuer",
     "continuum_ingress",
     "continuum_recovery",
+    "continuum_operator",
 )
 SCHEMAS = (
     "runtime_private",
     "wake_private",
     "webhook_private",
     "recovery_private",
+    "operator_private",
     "continuum_migrations",
 )
 

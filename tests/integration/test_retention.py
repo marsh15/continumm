@@ -34,6 +34,7 @@ ROLE_NAMES = (
     "continuum_wake",
     "continuum_wake_receiver",
     "continuum_recovery",
+    "continuum_operator",
     RUNTIME_ROLE,
 )
 SCHEMAS = (
@@ -41,6 +42,7 @@ SCHEMAS = (
     "wake_private",
     "webhook_private",
     "recovery_private",
+    "operator_private",
     "continuum_migrations",
 )
 
@@ -410,6 +412,7 @@ def _reset_database(engine: Engine, runtime_password: str) -> None:
             ("continuum_wake", "LOGIN", secrets.token_urlsafe(24)),
             ("continuum_wake_receiver", "LOGIN", secrets.token_urlsafe(24)),
             ("continuum_recovery", "LOGIN", secrets.token_urlsafe(24)),
+            ("continuum_operator", "LOGIN", secrets.token_urlsafe(24)),
             (RUNTIME_ROLE, "LOGIN", runtime_password),
         )
         for role, mode, password in definitions:

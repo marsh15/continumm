@@ -104,6 +104,176 @@ a:focus-visible {
   margin: 0 auto;
 }
 
+.operator-page {
+  padding-bottom: 72px;
+}
+
+.operator-heading {
+  max-width: 720px;
+  padding: 48px 0 28px;
+}
+
+.operator-heading h1,
+.operator-page > h1 {
+  margin: 0;
+  font-size: clamp(30px, 4vw, 42px);
+  letter-spacing: -0.045em;
+}
+
+.operator-copy {
+  max-width: 680px;
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.operator-stop-state {
+  display: inline-flex;
+  align-items: center;
+  margin: 20px 0 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 6px 11px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.operator-stop-state.is-stopped {
+  border-color: #e7aaaa;
+  background: var(--red-wash);
+  color: var(--red);
+}
+
+.operator-stop-state.is-running {
+  border-color: #b7d9c8;
+  background: #f2faf5;
+  color: #276548;
+}
+
+.operator-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.operator-metric,
+.operator-list {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.operator-metric {
+  display: flex;
+  min-height: 114px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px 18px;
+}
+
+.operator-label,
+.operator-metric span,
+.operator-empty,
+.operator-list li span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.operator-label {
+  margin: 0 0 8px;
+}
+
+.operator-metric strong {
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+.operator-metric span {
+  margin-top: 5px;
+}
+
+.operator-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.operator-list h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.operator-list h2 span {
+  color: var(--quiet);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.operator-list ul {
+  display: grid;
+  max-height: 268px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.operator-list li {
+  display: grid;
+  gap: 5px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+}
+
+.operator-list li:last-child {
+  border-bottom: 0;
+}
+
+.operator-list li strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 620;
+  text-transform: capitalize;
+}
+
+.operator-list li span {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.operator-empty,
+.operator-refresh {
+  margin: 0;
+  padding: 16px;
+}
+
+.operator-refresh {
+  color: var(--quiet);
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .operator-metrics,
+  .operator-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-heading {
+    padding-top: 34px;
+  }
+}
+
 .intro {
   max-width: 660px;
   padding: clamp(54px, 10vh, 100px) 0 54px;

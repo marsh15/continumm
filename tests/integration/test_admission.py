@@ -44,6 +44,7 @@ ROLE_NAMES = (
     "continuum_wake_issuer",
     "continuum_ingress",
     "continuum_recovery",
+    "continuum_operator",
 )
 
 
@@ -621,6 +622,7 @@ def _reset_database(engine: Engine, runtime_password: str) -> None:
             "wake_private",
             "webhook_private",
             "recovery_private",
+            "operator_private",
             "continuum_migrations",
         ):
             connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
@@ -638,6 +640,7 @@ def _reset_database(engine: Engine, runtime_password: str) -> None:
             ("continuum_wake", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_wake_receiver", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_recovery", "LOGIN", secrets.token_urlsafe(32)),
+            ("continuum_operator", "LOGIN", secrets.token_urlsafe(32)),
             (RUNTIME_ROLE, "LOGIN", runtime_password),
         ):
             secret = "" if password is None else f"PASSWORD '{password}'"
@@ -738,6 +741,7 @@ def _cleanup_database(engine: Engine) -> None:
             "wake_private",
             "webhook_private",
             "recovery_private",
+            "operator_private",
             "continuum_migrations",
         ):
             connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
