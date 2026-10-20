@@ -74,8 +74,17 @@ against the receipt's complete Git tree and fixed Python/Node profile, and
 accepts it as the first retained checkpoint. Acceptance queues one replay-safe
 `agent_turn` at revision zero. The fetch adapter is injected; this repository
 does not yet provide a production GitHub source-archive adapter, and the
-publication-only worker does not register this handler. The next agent-turn
-lease still needs admission-to-model/source-pin initialization before dispatch.
+publication-only worker does not register this handler.
+
+`AdmittedAgentTurnInputResolver` initializes the next first-turn lease from the
+immutable admission row. It checks the accepted source result and its digest,
+exact next-job linkage, repository/profile/source identity, provider/model pair
+and bounded task context. It then pins validation eligibility against the
+verified baseline and initializes the persisted model/context/schema values.
+A retry after interruption between these writes completes with identical pins.
+The initializer creates no model turn or request reservation. Later turns only
+read the persisted inputs; missing pins fail closed and rework never resets them.
+This resolver is a trusted server API and is not registered by the CLI yet.
 
 `AgentActivityDispatcher` maps persisted `agent_turn` and `agent_tool` steps to
 the existing durable model and tool services. The OpenAI adapter uses their

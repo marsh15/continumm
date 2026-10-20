@@ -760,3 +760,25 @@ the suite. A transient Docker Hub 502 required a build retry.
   29 console tests and 30 Edge tests; Ruff and mypy (99 source files) passed.
   The eight new PostgreSQL cases were run separately with no skips. Wheel and
   source-distribution builds and local documentation link checks passed.
+
+### T34 follow-up — admission-bound agent initialization
+
+- Added `AdmittedAgentTurnInputResolver` to bind the first revision-zero agent
+  turn to immutable admitted source/profile/provider/model/task inputs and the
+  accepted source-preparation result. It checks the result digest and exact
+  next-job linkage before restoring and pinning validation source, then delegates
+  to the persisted model/context/schema initializer.
+- Four new PostgreSQL cases passed: the actual prepared-source/next-turn path,
+  recovery after interruption between source and model pins, identical replay,
+  owner/stale-lease denial, corrupt source-result and provider/model mismatch
+  rejection, retained revision-one inputs and missing later-turn pins.
+  Initializing/replaying reserves zero model requests and creates zero model turns.
+- Combined PostgreSQL source-preparation, admitted-input, existing input and
+  validation-source regression checks passed: 15 tests, no skips.
+- Production source fetching, worker registration, trusted tool-policy composition
+  and live deployment/provider qualification remain open. Public admission stays
+  disabled. No provider or GitHub network requests were made for this verification.
+- Final `make check build-package` passed: 678 backend tests with 193 optional
+  database skips, 29 console tests, 30 Edge tests, Ruff and mypy (100 source
+  files), wheel/source builds, and 184 local documentation links. The targeted
+  database regression above ran independently with no skips.
