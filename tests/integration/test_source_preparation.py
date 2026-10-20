@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gzip
 import hashlib
+import io
 import json
+import tarfile
 import threading
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import text
 from test_agent_loop import (
     T22Database,
@@ -22,8 +28,10 @@ from test_agent_loop import t22_database as t22_database
 
 from continuum_api.artifacts.archives import ArchiveFile
 from continuum_api.artifacts.checkpoints import CheckpointStorageError
-from continuum_api.repositories.preflight import EligibilityReceipt
+from continuum_api.repositories.preflight import EligibilityReceipt, RepositoryAccessProof
+from continuum_api.runtime.approvals import RepositoryPublicationFacts
 from continuum_api.runtime.artifact_persistence import ArtifactPersistence
+from continuum_api.runtime.github_source_fetcher import GitHubSourceFetcher
 from continuum_api.runtime.leases import ExecutionLease, LeaseLost, QueueService
 from continuum_api.runtime.persistence import Principal, ReplayPolicy, RuntimeRepository
 from continuum_api.runtime.source_preparation import (
@@ -35,6 +43,22 @@ from continuum_api.sandbox.node_profile import _git_blob_sha as node_blob_sha
 from continuum_api.sandbox.node_profile import _git_tree_sha as node_tree_sha
 from continuum_api.sandbox.python_profile import _git_blob_sha as python_blob_sha
 from continuum_api.sandbox.python_profile import _git_tree_sha as python_tree_sha
+
+
+def _github_tarball(files: tuple[ArchiveFile, ...]) -> bytes:
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        root = tarfile.TarInfo("fixture-root/")
+        root.type = tarfile.DIRTYPE
+        root.mode = 0o775
+        archive.addfile(root)
+        for source_file in files:
+            member = tarfile.TarInfo(f"fixture-root/{source_file.path}")
+            member.mode = 0o664 if source_file.mode == 0o644 else 0o775
+            member.size = len(source_file.content)
+            archive.addfile(member, io.BytesIO(source_file.content))
+    return gzip.compress(stream.getvalue())
+
 
 _REPOSITORY_ID = 714_022
 _NODE_INTEGRITY = "sha512-" + base64.b64encode(bytes(64)).decode("ascii")
@@ -441,3 +465,191 @@ def test_fetch_error_is_sanitized_and_never_uploads(
         assert requests == []
     finally:
         asyncio.run(storage.aclose())
+
+
+def test_github_source_fetcher_reads_only_the_exact_live_admission(
+    t22_database: T22Database,
+) -> None:
+    receipt = _receipt(_PYTHON_FILES, "python-pytest")
+    principal, lease = _start_source_run(t22_database, _PYTHON_FILES, "python-pytest", receipt)
+    github_user_id = 990_000_000 + principal.account_id.int % 1_000_000
+    authorizations: list[tuple[int, int]] = []
+
+    class StubAuthorization:
+        async def repository_read_authorization(
+            self, repository_id: int, user_id: int
+        ) -> tuple[RepositoryPublicationFacts, SecretStr]:
+            authorizations.append((repository_id, user_id))
+            proof = RepositoryAccessProof(repository_id, user_id, True, True)
+            return (
+                RepositoryPublicationFacts(
+                    repository_id=repository_id,
+                    github_user_id=user_id,
+                    owner="fixture-owner",
+                    name="fixture-repository",
+                    default_branch="main",
+                    base_commit_sha=receipt.commit_sha,
+                    access_proof=proof,
+                ),
+                SecretStr("fixture-installation-token"),
+            )
+
+    requests: list[httpx.Request] = []
+
+    def api_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            302,
+            headers={
+                "location": (
+                    "https://codeload.github.com/fixture-owner/fixture-repository/"
+                    f"legacy.tar.gz/{receipt.commit_sha}"
+                )
+            },
+            request=request,
+        )
+
+    def archive_handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(503, request=request)
+
+    fetcher = GitHubSourceFetcher(
+        t22_database.runtime_engine,
+        principal,
+        StubAuthorization(),  # type: ignore[arg-type]
+        api_transport=httpx.MockTransport(api_handler),
+        archive_transport=httpx.MockTransport(archive_handler),
+    )
+    changed_receipt = EligibilityReceipt(
+        repository_id=receipt.repository_id,
+        commit_sha="d" * 40,
+        tree_sha=receipt.tree_sha,
+        profile_id=receipt.profile_id,
+        profile_version=receipt.profile_version,
+        file_count=receipt.file_count,
+        source_bytes=receipt.source_bytes,
+        manifest_blobs=receipt.manifest_blobs,
+        package_count=receipt.package_count,
+    )
+
+    async def exercise() -> None:
+        stale_lease = replace(lease, generation=lease.generation + 1)
+        with pytest.raises(LeaseLost):
+            await fetcher(stale_lease, _REPOSITORY_ID, receipt)
+        assert authorizations == []
+        with pytest.raises(
+            SourcePreparationError,
+            match="source_preparation_admission_pin_invalid",
+        ):
+            await fetcher(lease, _REPOSITORY_ID, changed_receipt)
+        assert authorizations == []
+        with pytest.raises(
+            SourcePreparationError,
+            match="source_fetch_download_failed",
+        ):
+            await fetcher(lease, _REPOSITORY_ID, receipt)
+        assert authorizations == [(_REPOSITORY_ID, github_user_id)]
+
+    asyncio.run(exercise())
+    assert len(requests) == 2
+    assert requests[0].url.host == "api.github.com"
+    assert requests[0].headers["authorization"] == "Bearer fixture-installation-token"
+    assert requests[1].url.host == "codeload.github.com"
+    assert "authorization" not in requests[1].headers
+
+
+def test_github_source_fetcher_completes_admitted_source_preparation(
+    t22_database: T22Database, tmp_path: Path
+) -> None:
+    receipt = _receipt(_PYTHON_FILES, "python-pytest")
+    principal, lease = _start_source_run(t22_database, _PYTHON_FILES, "python-pytest", receipt)
+
+    class StubAuthorization:
+        async def repository_read_authorization(
+            self, repository_id: int, user_id: int
+        ) -> tuple[RepositoryPublicationFacts, SecretStr]:
+            proof = RepositoryAccessProof(repository_id, user_id, True, True)
+            return (
+                RepositoryPublicationFacts(
+                    repository_id=repository_id,
+                    github_user_id=user_id,
+                    owner="fixture-owner",
+                    name="fixture-repository",
+                    default_branch="main",
+                    base_commit_sha=receipt.commit_sha,
+                    access_proof=proof,
+                ),
+                SecretStr("fixture-installation-token"),
+            )
+
+    def api_handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(f"/tarball/{receipt.commit_sha}")
+        assert request.headers["authorization"] == "Bearer fixture-installation-token"
+        return httpx.Response(
+            302,
+            headers={
+                "location": (
+                    "https://codeload.github.com/fixture-owner/fixture-repository/"
+                    f"legacy.tar.gz/{receipt.commit_sha}"
+                )
+            },
+            request=request,
+        )
+
+    def archive_handler(request: httpx.Request) -> httpx.Response:
+        assert "authorization" not in request.headers
+        return httpx.Response(
+            200, stream=_IntegrationBytesStream(_github_tarball(_PYTHON_FILES)), request=request
+        )
+
+    fetcher = GitHubSourceFetcher(
+        t22_database.runtime_engine,
+        principal,
+        StubAuthorization(),  # type: ignore[arg-type]
+        api_transport=httpx.MockTransport(api_handler),
+        archive_transport=httpx.MockTransport(archive_handler),
+    )
+    storage, requests = _storage_fixture(tmp_path / str(lease.run_id))
+    checkpoints = _checkpoint_service(
+        t22_database.runtime_engine,
+        principal,
+        ArtifactPersistence(t22_database.runtime_engine),
+        storage,
+    )
+
+    try:
+        result = asyncio.run(
+            SourcePreparationActivityHandler(
+                t22_database.runtime_engine, principal, checkpoints, fetcher
+            )(lease)
+        )
+        assert result.artifact_id is not None
+        with t22_database.runtime_engine.begin() as connection:
+            RuntimeRepository(connection, principal)
+            accepted = connection.execute(
+                text(
+                    "SELECT artifact_id FROM runtime_private.accepted_results "
+                    "WHERE owner_id=:owner AND run_id=:run AND artifact_id IS NOT NULL"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id},
+            ).scalar_one()
+            agent_turns = connection.execute(
+                text(
+                    "SELECT count(*) FROM runtime_private.steps "
+                    "WHERE owner_id=:owner AND run_id=:run AND activity='agent_turn'"
+                ),
+                {"owner": lease.owner_id, "run": lease.run_id},
+            ).scalar_one()
+        assert accepted == result.artifact_id
+        assert agent_turns == 1
+        assert len([request for request in requests if request.method == "POST"]) == 1
+    finally:
+        asyncio.run(storage.aclose())
+
+
+class _IntegrationBytesStream(httpx.AsyncByteStream):
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+
+    async def __aiter__(self):
+        yield self._content

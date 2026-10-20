@@ -90,8 +90,9 @@ Before the live demonstration can run:
    Source preparation verifies the admitted Git tree/profile and accepts the
    baseline. The admitted first-turn resolver binds that accepted baseline to
    the original source receipt, model and task context. Validation/freeze handlers
-   and persisted validation-input resolution are also implemented. A production
-   source fetcher, worker registration and trusted tool-policy composition remain
+   and persisted validation-input resolution are also implemented. The
+   [source fetcher](source-acquisition.md) now provides bounded authenticated
+   acquisition; worker registration and trusted tool-policy composition remain
    open. The CLI registers only publication, and the Docker entrypoint starts
    Uvicorn. `make eval-live PROVIDER=openai` remains fail-closed.
 5. Run a bounded task, request and validate one revision, inspect the exact new

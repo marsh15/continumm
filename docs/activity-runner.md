@@ -72,8 +72,8 @@ baseline step. It reads the immutable admission receipt under the current lease,
 calls a trusted exact-commit source-fetch adapter, verifies the returned source
 against the receipt's complete Git tree and fixed Python/Node profile, and
 accepts it as the first retained checkpoint. Acceptance queues one replay-safe
-`agent_turn` at revision zero. The fetch adapter is injected; this repository
-does not yet provide a production GitHub source-archive adapter, and the
+`agent_turn` at revision zero. The fetch adapter is injected. The [GitHub source adapter](source-acquisition.md)
+provides bounded exact-commit acquisition using fresh authorization. The
 publication-only worker does not register this handler.
 
 `AdmittedAgentTurnInputResolver` initializes the next first-turn lease from the

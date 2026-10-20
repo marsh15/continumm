@@ -782,3 +782,26 @@ the suite. A transient Docker Hub 502 required a build retry.
   database skips, 29 console tests, 30 Edge tests, Ruff and mypy (100 source
   files), wheel/source builds, and 184 local documentation links. The targeted
   database regression above ran independently with no skips.
+
+### T34 follow-up — exact admitted GitHub source acquisition
+
+- Added `GitHubSourceFetcher`: checks the live owner lease, repository and
+  immutable admission pins before obtaining fresh user/App read authorization.
+  Only the exact full admitted SHA is requested. The API redirect must match a
+  fixed HTTPS codeload path; the separate download client sends no credentials
+  or cookies, follows no redirects and ignores environment proxy configuration.
+- Compressed bytes, gzip expansion, tar entries/files/source bytes and remote
+  duration are bounded. Parsing runs off the event loop, never extracts to disk,
+  rejects unsafe archive types/paths and normalizes Git executable permissions.
+  Complete Git-tree/profile verification remains in source preparation.
+- Local verification: 24 HTTP/archive fixture tests, 10 source-preparation
+  PostgreSQL tests, plus existing admitted-input/validation-source regressions
+  passed together (41 tests, zero skips). The initial combined database run had
+  fixture setup errors from overlapping role resets; the final run was serial.
+  A locally generated `git archive` also preserved exact README bytes and mode.
+- Final `make check build-package` passed: 702 backend tests with 195 optional
+  database skips, 29 console tests, 30 Edge tests, Ruff, mypy (101 source files),
+  and wheel/source builds. No live GitHub/provider requests were made.
+- [Acquisition contract](../docs/source-acquisition.md). Worker registration and
+  trusted tool-policy composition remain open; T34/T48 live qualification is
+  still deferred and public admission remains disabled.

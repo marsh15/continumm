@@ -45,3 +45,5 @@ live workflow composition remain pending; consult the progress log for verified 
 - [Evaluation limits](evaluation.md)
 
 - [Final acceptance evidence map](acceptance-evidence.md)
+
+- [Exact admitted source acquisition](source-acquisition.md)
