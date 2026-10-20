@@ -544,6 +544,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 - **Dependencies:** T24, T25, T26, T46.
 - **Scope:** Medium; 12-task corpus and evaluation runner/report.
 - [ ] Run the 12-task deterministic corpus and four live release smokes, one language task per provider; report additional live cases only when measured.
+  Local trusted-fixture pipeline: 12 repairs and 13 harness tests passed, zero model calls.
+  Controlled coding-agent/live smokes remain blocked by deferred T34 composition and setup.
 - [ ] Retain hidden checks outside writable workspaces and keep paid/hosted execution explicitly enabled within the owner's model and operator-sandbox allowances.
 - **Verify:** deterministic corpus tests; explicit make eval-live PROVIDER=openai and PROVIDER=anthropic.
 

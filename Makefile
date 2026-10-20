@@ -115,6 +115,9 @@ benchmark:
 	@test "$(CONFIRM_DISPOSABLE_BENCHMARK_DATABASE)" = "1" || (echo "Set CONFIRM_DISPOSABLE_BENCHMARK_DATABASE=1 for a disposable continuum_t22_test database." >&2; exit 2)
 	CONTINUUM_RUN_BENCHMARK=1 uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q tests/benchmarks/test_queue_benchmark.py
 
+eval-corpus:
+	uv run --locked --python $(PYTHON_VERSION) python scripts/eval_corpus.py
+
 export:
 	@test -n "$(OWNER_ID)" || (echo "Usage: make export OWNER_ID=<account-uuid>" >&2; exit 2)
 	uv run --locked --python $(PYTHON_VERSION) python scripts/export_restore.py export --owner-id "$(OWNER_ID)"

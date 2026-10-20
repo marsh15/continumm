@@ -20,3 +20,5 @@ node_modules/
 .artifacts/fault-matrix.json
 
 .artifacts/benchmark.json
+
+.artifacts/evaluation.json

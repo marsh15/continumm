@@ -712,3 +712,11 @@ the suite. A transient Docker Hub 502 required a build retry.
   reclaim measurements are retained. All trials passed; results show variance
   rather than guaranteed scaling. No model/sandbox or hosted performance claim
   is made. [Report](../docs/benchmarks.md).
+
+- T48 partial: a bounded twelve-case Python/Node trusted-fixture pipeline uses
+  production archive/edit boundaries and hidden checks outside the writable
+  fixture workspace. Twelve repairs and thirteen tests passed, with raw source
+  provenance retained. This measures harness behavior, not model coding ability.
+  All four live provider/language smokes are NOT_RUN; the live command remains
+  fail-closed pending T34's admitted-workflow composition and service setup.
+  [Fixture evidence](../docs/evaluation.md).
