@@ -675,3 +675,11 @@ the suite. A transient Docker Hub 502 required a build retry.
   implemented. The combined retention/export PostgreSQL target passed four
   cases; final core verification passed 22 tests including current head and
   legacy-schema teardown. [Recovery scope](../docs/backup-restore.md).
+
+- T44 generated invariants: eight fixed seeds exercise sixteen production-service
+  operations each, plus competing result/cancel transactions. Every step checks
+  state/event authority, checkpoint replay and stale-generation denial; failing
+  traces are retained and deletion-minimized against fresh runs. All eight
+  PostgreSQL cases passed in final core verification. I01–I20 are mapped to
+  named existing boundary suites; bounded generation is not an exhaustive proof.
+  [Invariant ledger](../docs/runtime-invariants.md).

@@ -504,8 +504,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T10, T11, T27, T30, T36, T40.
 - **Scope:** Medium; state-machine generators and invariant assertions.
-- [ ] Map I01–I20 to test cases and generate competing transition sequences.
-- [ ] Persist failing seeds and minimize reproducible counterexamples.
+- [x] Map I01–I20 to test cases and generate competing transition sequences.
+- [x] Persist failing seeds and minimize reproducible counterexamples.
 - **Verify:** make test-target TARGET=tests/properties/test_runtime_invariants.py.
 
 ### T45 — Process and network fault laboratory
