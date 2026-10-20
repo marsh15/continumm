@@ -364,7 +364,12 @@ class ReviewService:
                         "AND baseline.run_id=approval.run_id "
                         "AND baseline.upload_id=CAST(evidence.payload->'approval_validation' "
                         "->>'baseline_artifact_id' AS uuid) "
-                        "WHERE run.owner_id=:owner AND run.run_id=:run"
+                        "WHERE run.owner_id=:owner AND run.run_id=:run "
+                        "AND (to_jsonb(run)->>'content_deleted_at') IS NULL "
+                        "AND COALESCE((to_jsonb(run)->>'content_expires_at')::timestamptz, "
+                        "'infinity'::timestamptz)>clock_timestamp() "
+                        "AND (run.deadline_at IS NULL OR run.deadline_at>clock_timestamp()) "
+                        "AND users.status='active'"
                     ),
                     {"owner": self._principal.account_id, "run": run_id},
                 )

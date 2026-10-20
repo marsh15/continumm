@@ -81,6 +81,7 @@ class RunRecord:
     created_at: datetime
     deadline_at: datetime | None
     event_watermark: int
+    content_expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,8 +156,9 @@ class RuntimeRepository:
             self._connection.execute(
                 text(
                     """
-                SELECT run_id, owner_id, github_repository_id, issue_number,
-                       status, revision, created_at, deadline_at,
+                SELECT run.run_id, run.owner_id, run.github_repository_id, run.issue_number,
+                       run.status, run.revision, run.created_at, run.deadline_at,
+                       (to_jsonb(run)->>'content_expires_at')::timestamptz AS content_expires_at,
                        coalesce((
                            SELECT max(event.sequence)
                            FROM runtime_private.events AS event
@@ -165,6 +167,12 @@ class RuntimeRepository:
                        ), 0) AS event_watermark
                 FROM runtime_private.runs AS run
                 WHERE run.owner_id = :owner_id AND run.run_id = :run_id
+                  AND (to_jsonb(run)->>'content_deleted_at') IS NULL
+                  AND COALESCE(
+                    (to_jsonb(run)->>'content_expires_at')::timestamptz,
+                    'infinity'::timestamptz
+                  ) > clock_timestamp()
+                  AND (run.deadline_at IS NULL OR run.deadline_at > clock_timestamp())
                 """
                 ),
                 {"owner_id": self._principal.account_id, "run_id": run_id},
@@ -183,6 +191,7 @@ class RuntimeRepository:
             revision=row["revision"],
             created_at=row["created_at"],
             deadline_at=row["deadline_at"],
+            content_expires_at=row["content_expires_at"],
             event_watermark=row["event_watermark"],
         )
 

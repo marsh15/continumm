@@ -442,12 +442,18 @@ class ArtifactPersistence:
                         text(
                             "SELECT artifact.*, app_user.github_user_id "
                             "FROM runtime_private.artifact_uploads AS artifact "
+                            "JOIN runtime_private.runs AS run ON run.owner_id=artifact.owner_id "
+                            "AND run.run_id=artifact.run_id "
                             "JOIN runtime_private.users AS app_user "
                             "ON app_user.user_id = artifact.owner_id "
                             "WHERE artifact.owner_id = :owner_id "
                             "AND artifact.run_id = :run_id AND artifact.upload_id = :upload_id "
                             "AND artifact.status = 'committed' "
                             "AND artifact.content_expires_at > clock_timestamp() "
+                            "AND (to_jsonb(run)->>'content_deleted_at') IS NULL "
+                            "AND COALESCE((to_jsonb(run)->>'content_expires_at')::timestamptz, "
+                            "'infinity'::timestamptz) > clock_timestamp() "
+                            "AND (run.deadline_at IS NULL OR run.deadline_at>clock_timestamp()) "
                             "AND app_user.status = 'active'"
                         ),
                         {

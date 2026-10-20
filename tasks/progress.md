@@ -638,3 +638,13 @@ the suite. A transient Docker Hub 502 required a build retry.
   (21 existing and nine recovery) and one PostgreSQL adapter/migration case passed;
   no GitHub requests or hosted deployment occurred.
   [Setup and evidence boundaries](../docs/github-delivery-recovery.md).
+
+- T40 retention/deletion: DB-time content and active-run deadline gates deny reads
+  immediately. Owner deletion revokes sessions/GitHub tokens/provider keys and
+  journals bounded cleanup; terminal transitions erase per-run keys. A bounded
+  worker drain redacts governed content and an explicit private-object adapter
+  reconciles deletion before releasing charged bytes. Unsupported provider copies
+  remain visible. Three PostgreSQL lifecycle/API cases, four object-adapter tests,
+  and the eight generated transition cases including legacy-schema teardown
+  passed. The latest combined retention/export run passed four cases.
+  [Retention contract](../docs/retention.md).

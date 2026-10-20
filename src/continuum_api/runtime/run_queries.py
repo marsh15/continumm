@@ -63,6 +63,7 @@ class RunSnapshotResponse(BaseModel):
     created_at: datetime
     deadline_at: datetime | None
     event_watermark: str
+    content_expires_at: datetime | None = None
 
 
 class EventData(BaseModel):
@@ -165,6 +166,7 @@ def run_snapshot_response(run: RunRecord) -> RunSnapshotResponse:
         revision=run.revision,
         created_at=run.created_at,
         deadline_at=run.deadline_at,
+        content_expires_at=run.content_expires_at,
         event_watermark=str(run.event_watermark),
     )
 

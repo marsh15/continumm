@@ -45,6 +45,7 @@ def create_app(
     review_service_factory: Callable[[Request, Any], Any] | None = None,
     repository_onboarding_service_factory: Callable[[Request, Any], Any] | None = None,
     admission_service_factory: Callable[[Request, Any], Any] | None = None,
+    retention_service_factory: Callable[[Request, Any], Any] | None = None,
     external_attention_service_factory: Callable[[Request, Any], Any] | None = None,
     csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
@@ -122,6 +123,8 @@ def create_app(
         RepositoryOnboardingService,
         create_repository_router,
     )
+    from continuum_api.runtime.retention import RetentionService
+    from continuum_api.runtime.retention_routes import create_retention_router
     from continuum_api.runtime.review_routes import create_review_router
     from continuum_api.runtime.run_routes import (
         _StreamLimiter,
@@ -222,6 +225,9 @@ def create_app(
             enabled=settings.enable_public_admission,
         )
 
+    def browser_retention(request: Request, principal: Any) -> Any:
+        return RetentionService(get_runtime_engine(request), principal)
+
     async def browser_csrf(request: Request) -> bool:
         try:
             return await auth_boundary(request).csrf(request)
@@ -234,6 +240,7 @@ def create_app(
         repository_onboarding_service_factory or browser_repository_onboarding
     )
     admission_service_factory = admission_service_factory or browser_admission
+    retention_service_factory = retention_service_factory or browser_retention
     external_attention_service_factory = (
         external_attention_service_factory or browser_external_attention
     )
@@ -241,6 +248,9 @@ def create_app(
     application.include_router(create_auth_router(auth_boundary))
     application.state.sse_stream_limiter = _StreamLimiter()
     application.include_router(create_run_router(principal_resolver))
+    application.include_router(
+        create_retention_router(principal_resolver, retention_service_factory, csrf_guard)
+    )
     application.include_router(
         create_admission_router(principal_resolver, admission_service_factory, csrf_guard)
     )

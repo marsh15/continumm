@@ -494,7 +494,12 @@ def lock_current_execution(
         raise LeaseLost("runtime_lease_owner_mismatch")
     run = connection.execute(
         text(
-            "SELECT status, deadline_at FROM runtime_private.runs "
+            "SELECT run.status, run.deadline_at, "
+            "COALESCE((to_jsonb(run)->>'content_expires_at')::timestamptz, "
+            "'9999-12-31 23:59:59+00'::timestamptz) > clock_timestamp() "
+            "AS content_active, "
+            "to_jsonb(run)->>'content_deleted_at' AS content_deleted_at "
+            "FROM runtime_private.runs AS run "
             "WHERE owner_id=:owner_id AND run_id=:run_id FOR UPDATE"
         ),
         {"owner_id": lease.owner_id, "run_id": lease.run_id},
@@ -553,6 +558,8 @@ def lock_current_execution(
     if (
         run.status != RunStatus.RUNNING.value
         or (run.deadline_at is not None and run.deadline_at <= database_now)
+        or not run.content_active
+        or run.content_deleted_at is not None
         or step.status != StepStatus.RUNNING.value
         or job.status != "leased"
         or job.generation != lease.generation

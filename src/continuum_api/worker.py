@@ -11,7 +11,7 @@ import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 from uuid import UUID
 
 _ERROR_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -46,9 +46,13 @@ def main(
     resources_factory: Callable[[Any, UUID], Any] | None = None,
     stdout: TextIO | None = None,
 ) -> int:
-    """Run one bounded publication drain after explicit operator consent."""
+    """Run one bounded publication or retention drain after explicit selection."""
     args = _parser().parse_args(argv)
     output = stdout or sys.stdout
+    if args.retention:
+        return _run_retention_drain(args, settings_loader=settings_loader, stdout=output)
+    if args.account_id is None or args.run_id is None:
+        _parser().error("--account-id and --run-id are required for publication work")
     if not args.execute_publication:
         _write_json(
             output,
@@ -81,6 +85,70 @@ def main(
         )
         return 1
     _write_json(output, record)
+    return 0
+
+
+def _run_retention_drain(
+    args: argparse.Namespace,
+    *,
+    settings_loader: Callable[[], Any] | None,
+    stdout: TextIO,
+) -> int:
+    try:
+        if settings_loader is None:
+            from continuum_api.settings import get_settings
+
+            settings_loader = get_settings
+        settings = settings_loader()
+        database_url = getattr(settings, "runtime_database_url", None)
+        if not _has_secret(database_url):
+            raise WorkerConfigurationError("runtime_database_unavailable")
+        from continuum_api.runtime.database import create_runtime_engine
+        from continuum_api.runtime.retention import RetentionService
+
+        engine = create_runtime_engine(cast(Any, database_url).get_secret_value())
+        try:
+            adapter = None
+            if args.delete_objects:
+                from continuum_api.connectivity.storage import SupabaseStorage
+                from continuum_api.runtime.retention_storage import StorageDeletionAdapter
+
+                if not settings.supabase_url or not _has_secret(settings.supabase_secret_key):
+                    raise WorkerConfigurationError("retention_storage_unavailable")
+                storage_url = cast(str, settings.supabase_url)
+                storage_secret = cast(Any, settings.supabase_secret_key).get_secret_value()
+                storage_bucket = settings.supabase_bucket
+                adapter = StorageDeletionAdapter(
+                    lambda: SupabaseStorage(storage_url, storage_secret, storage_bucket)
+                )
+            receipt = RetentionService.drain_due(
+                engine, limit=args.max_jobs, deletion_adapter=adapter
+            )
+        finally:
+            engine.dispose()
+    except Exception as error:
+        _write_json(
+            stdout,
+            {
+                "owners_processed": None,
+                "stop_reason": "error",
+                "error_code": _error_code(error),
+            },
+        )
+        return 1
+    _write_json(
+        stdout,
+        {
+            "owners_processed": receipt.owners,
+            "expired_runs": receipt.expired_runs,
+            "scrubbed_runs": receipt.scrubbed_runs,
+            "webhook_bodies_scrubbed": receipt.webhook_bodies_scrubbed,
+            "external_cleanup_attempted": receipt.cleanup.attempted,
+            "external_cleanup_pending": receipt.cleanup.pending,
+            "external_cleanup_unsupported": receipt.cleanup.unsupported,
+            "stop_reason": "drained",
+        },
+    )
     return 0
 
 
@@ -226,14 +294,25 @@ def _parser() -> argparse.ArgumentParser:
             "Exit status 0 means only that the bounded drain ended."
         ),
     )
-    parser.add_argument("--account-id", required=True, type=UUID)
-    parser.add_argument("--run-id", required=True, type=UUID)
+    parser.add_argument("--account-id", type=UUID)
+    parser.add_argument("--run-id", type=UUID)
     parser.add_argument("--max-jobs", type=_max_jobs, default=1)
-    parser.add_argument("--max-seconds", type=_max_seconds, default=30.0)
     parser.add_argument(
+        "--delete-objects",
+        action="store_true",
+        help="Explicitly delete due private objects during --retention",
+    )
+    parser.add_argument("--max-seconds", type=_max_seconds, default=30.0)
+    execution = parser.add_mutually_exclusive_group()
+    execution.add_argument(
         "--execute-publication",
         action="store_true",
         help="explicitly authorize this bounded publication worker invocation",
+    )
+    execution.add_argument(
+        "--retention",
+        action="store_true",
+        help="explicitly authorize one bounded expiry and deletion cleanup drain",
     )
     return parser
 

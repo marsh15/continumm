@@ -315,6 +315,41 @@
         "title": "CredentialListResponse",
         "type": "object"
       },
+      "DeletionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "cleanup_pending": {
+            "title": "Cleanup Pending",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "subject_id": {
+            "format": "uuid",
+            "title": "Subject Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "subject_id",
+          "accepted",
+          "state",
+          "cleanup_pending"
+        ],
+        "title": "DeletionResponse",
+        "type": "object"
+      },
       "EligibilityCheckResponse": {
         "additionalProperties": false,
         "properties": {
@@ -822,6 +857,32 @@
           "high_watermark"
         ],
         "title": "HistoryResetPayload",
+        "type": "object"
+      },
+      "PendingInboxResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "delivery_id": {
+            "format": "uuid",
+            "title": "Delivery Id",
+            "type": "string"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "title": "Received At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "event_type",
+          "received_at"
+        ],
+        "title": "PendingInboxResponse",
         "type": "object"
       },
       "PhaseEvidence": {
@@ -1499,6 +1560,18 @@
       "RunSnapshotResponse": {
         "additionalProperties": false,
         "properties": {
+          "content_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Expires At"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1646,6 +1719,32 @@
         "title": "SessionResponse",
         "type": "object"
       },
+      "SuspendedAccountResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "github_user_id": {
+            "title": "Github User Id",
+            "type": "integer"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "github_user_id",
+          "created_at"
+        ],
+        "title": "SuspendedAccountResponse",
+        "type": "object"
+      },
       "TimelineEventResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1685,6 +1784,106 @@
           "data"
         ],
         "title": "TimelineEventResponse",
+        "type": "object"
+      },
+      "UncertainAllocationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allocation_id": {
+            "format": "uuid",
+            "title": "Allocation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "last_observed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Observed At"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "provider_name": {
+            "title": "Provider Name",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "allocation_id",
+          "owner_id",
+          "run_id",
+          "status",
+          "provider_name",
+          "created_at",
+          "last_observed_at"
+        ],
+        "title": "UncertainAllocationResponse",
+        "type": "object"
+      },
+      "UnknownEffectResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "effect_id": {
+            "format": "uuid",
+            "title": "Effect Id",
+            "type": "string"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "effect_id",
+          "owner_id",
+          "run_id",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UnknownEffectResponse",
         "type": "object"
       },
       "ValidationClassification": {
@@ -2252,6 +2451,67 @@
         ]
       }
     },
+    "/api/v1/me": {
+      "delete": {
+        "operationId": "delete_account_api_v1_me_delete",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Delete Account",
+        "tags": [
+          "retention"
+        ]
+      }
+    },
     "/api/v1/repositories": {
       "get": {
         "operationId": "list_repositories_api_v1_repositories_get",
@@ -2763,6 +3023,87 @@
       }
     },
     "/api/v1/runs/{run_id}": {
+      "delete": {
+        "operationId": "delete_run_api_v1_runs__run_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Delete Run",
+        "tags": [
+          "retention"
+        ]
+      },
       "get": {
         "operationId": "get_run_snapshot_api_v1_runs__run_id__get",
         "parameters": [

@@ -456,8 +456,9 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T15, T23, T36.
 - **Scope:** Medium; cleanup service, deletion commands and races.
-- [ ] Expired content becomes inaccessible immediately; bounded upload/GC references are safe and deletion deadlines override content pins.
-- [ ] Revoke keys/sessions, journal deletions, remove provider copies, retain minimal tombstones, and remove temporary keys at terminal states.
+- [x] Expired content becomes inaccessible immediately; bounded upload/GC references are safe and deletion deadlines override content pins.
+- [x] Revoke keys/sessions, journal deletions, remove supported provider copies, retain minimal tombstones, and remove temporary keys at terminal states.
+  - Unsupported remote-copy deletion is recorded explicitly; no provider backup/log erasure is claimed.
 - **Verify:** make test-target TARGET=tests/integration/test_retention.py.
 
 ### Checkpoint M — Complete public lifecycle
