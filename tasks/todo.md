@@ -426,8 +426,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T05, T29, T36.
 - **Scope:** Medium; command parser/normalizer and tests.
-- [ ] Accept only specified newly created issue-comment commands from the authorized account owner.
-- [ ] Ignore edits/bots/quotes, enforce the 72-hour/pre-registration freshness rule, compare current comments, and deduplicate logical commands.
+- [x] Accept only specified newly created issue-comment commands from the authorized account owner.
+- [x] Ignore edits/bots/quotes, enforce the 72-hour/pre-registration freshness rule, compare current comments, and deduplicate logical commands.
 - **Verify:** make test-target TARGET=tests/security/test_github_commands.py.
 
 ### Checkpoint L — Public command safety

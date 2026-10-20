@@ -35,3 +35,5 @@ durable coding workflow remain pending; consult the progress log for verified sc
 - [Repository onboarding](repository-onboarding.md)
 
 - [Atomic run admission](run-admission.md)
+
+- [GitHub command intake](github-commands.md)

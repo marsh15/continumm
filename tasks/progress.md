@@ -593,11 +593,21 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   credential-revocation race passed after fixing lock order. No live dispatch or
   hosted bootstrap was performed. [Contract and bootstrap](../docs/run-admission.md).
 
-Implementation is complete through T33, T35 onboarding and T36 admission.
-T34's live demonstration is deferred at the owner's request. On 20 October 2026,
-the owner requested finishing the half-done work and stopping; T36 is committed
-and T37/later tasks remain unstarted. Public admission remains disabled by default,
-and local tests do not establish hosted acceptance.
+- T37 GitHub command intake: exact first-line parser, current owner write/App
+  access and live-comment comparison, registration/account-age checks and atomic
+  logical deduplication. Migration 24 separates 90-day metadata receipts from
+  72-hour feedback; pending reads enforce expiry before cleanup. Verification
+  passed 641 Python tests (155 optional database skips), 25 targeted
+  command/parser/adapter tests including PostgreSQL migration/concurrency/RLS,
+  the existing PostgreSQL admission regression,
+  formatting/lint/typing across 90 source files, and wheel/source builds. T37
+  provides an injectable trusted intake boundary; inbox draining, command effects
+  and status comments remain for subsequent tasks. No external mutations occurred.
+  [Contract](../docs/github-commands.md).
+
+Implementation is complete through T33 and T35–T37. T34's live demonstration
+remains deferred at the owner's request. T38 is unstarted. Public admission
+remains disabled by default, and local tests do not establish hosted acceptance.
 
 The requested implementation workers use `gpt-6-luna` with `high` reasoning.
 

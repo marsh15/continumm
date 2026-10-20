@@ -87,6 +87,22 @@ class GitHubIssueSnapshot:
     sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class GitHubIssueCommentSnapshot:
+    """Current immutable identity and mutable text for one ordinary issue comment."""
+
+    repository_id: int
+    issue_id: int
+    issue_number: int
+    comment_id: int
+    author_github_id: int
+    author_type: str
+    created_at: datetime
+    updated_at: datetime
+    body: str = field(repr=False)
+    is_pull_request: bool = False
+
+
 class GitHubAuthorizationClient:
     """Recheck user write rights and App installation access for public repositories.
 
@@ -289,6 +305,107 @@ class GitHubAuthorizationClient:
                     state=state,
                     updated_at=updated.isoformat(),
                     sha256=digest,
+                )
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+
+    async def current_issue_comment(
+        self,
+        *,
+        repository_id: int,
+        github_user_id: int,
+        comment_id: int,
+        issue_number: int,
+    ) -> GitHubIssueCommentSnapshot:
+        """Recheck owner write rights and App issue-read access, then fetch live comment."""
+        if type(comment_id) is not int or comment_id <= 0:
+            raise GitHubAuthorizationError("github_comment_id_invalid")
+        if type(issue_number) is not int or not 1 <= issue_number <= 2_147_483_647:
+            raise GitHubAuthorizationError("github_issue_number_invalid")
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                authorized = await self._current(
+                    repository_id,
+                    github_user_id,
+                    return_installation_token=True,
+                    issues_permission="read",
+                )
+                if not isinstance(authorized, tuple):
+                    raise GitHubAuthorizationError("github_installation_token_unavailable")
+                facts, token = authorized
+                assert isinstance(facts, RepositoryPublicationFacts)
+                assert isinstance(token, SecretStr)
+                budget = _RequestBudget()
+                async with httpx.AsyncClient(
+                    base_url=GITHUB_API_ORIGIN,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                        "User-Agent": "Continuumm",
+                    },
+                    timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
+                    follow_redirects=False,
+                    trust_env=False,
+                    transport=self._transport,
+                ) as client:
+                    headers = {"Authorization": f"Bearer {token.get_secret_value()}"}
+                    prefix = f"/repos/{quote(facts.owner, safe='')}/{quote(facts.name, safe='')}"
+                    comment = await _request_json(
+                        client,
+                        budget,
+                        "GET",
+                        f"{prefix}/issues/comments/{comment_id}",
+                        headers=headers,
+                    )
+                    issue_url = comment.get("issue_url")
+                    expected_issue_path = f"{GITHUB_API_ORIGIN}{prefix}/issues/{issue_number}"
+                    if issue_url != expected_issue_path:
+                        raise GitHubAuthorizationError("github_comment_identity_invalid")
+                    issue = await _request_json(
+                        client,
+                        budget,
+                        "GET",
+                        f"{prefix}/issues/{issue_number}",
+                        headers=headers,
+                    )
+                if "pull_request" in issue:
+                    raise GitHubAuthorizationError("github_comment_pull_request_rejected")
+                comment_user = comment.get("user")
+                body = comment.get("body")
+                created_value = comment.get("created_at")
+                updated_value = comment.get("updated_at")
+                if (
+                    _positive_id(comment.get("id"), "github_comment_identity_invalid") != comment_id
+                    or _positive_id(issue.get("number"), "github_issue_identity_invalid")
+                    != issue_number
+                    or not isinstance(comment_user, dict)
+                    or _positive_id(comment_user.get("id"), "github_comment_author_invalid")
+                    != github_user_id
+                    or not isinstance(comment_user.get("type"), str)
+                    or comment_user.get("type") != "User"
+                    or not isinstance(body, str)
+                    or len(body.encode("utf-8")) > 16_384
+                ):
+                    raise GitHubAuthorizationError("github_comment_identity_invalid")
+                try:
+                    if not isinstance(created_value, str) or not isinstance(updated_value, str):
+                        raise ValueError
+                    created_at = datetime.fromisoformat(created_value.replace("Z", "+00:00"))
+                    updated_at = datetime.fromisoformat(updated_value.replace("Z", "+00:00"))
+                    if created_at.tzinfo is None or updated_at.tzinfo is None:
+                        raise ValueError
+                except ValueError:
+                    raise GitHubAuthorizationError("github_comment_timestamp_invalid") from None
+                return GitHubIssueCommentSnapshot(
+                    repository_id=repository_id,
+                    issue_id=_positive_id(issue.get("id"), "github_issue_identity_invalid"),
+                    issue_number=issue_number,
+                    comment_id=comment_id,
+                    author_github_id=github_user_id,
+                    author_type=comment_user["type"],
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    body=body,
                 )
         except TimeoutError:
             raise GitHubAuthorizationError("github_authorization_timeout") from None
