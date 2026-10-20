@@ -240,6 +240,7 @@ def checkpoint_d_workers() -> Any:
 def test_sigkill_keeps_checkpoint_and_only_recovered_generation_commits(
     checkpoint_d_database: CheckpointDDatabase,
     checkpoint_d_workers: list[subprocess.Popen[str]],
+    record_property: Any,
 ) -> None:
     store = checkpoint_d_database
     admin_engine, runtime_engine, runtime_url = (
@@ -255,6 +256,15 @@ def test_sigkill_keeps_checkpoint_and_only_recovered_generation_commits(
     killed_ready = _read_worker_message(killed_worker)
     _assert_ready_message(killed_ready, run, generation=1)
 
+    record_property(
+        "intermediate_authority",
+        json.dumps(
+            {
+                "generation": killed_ready["generation"],
+                "checkpoint_id": killed_ready["checkpoint_id"],
+            }
+        ),
+    )
     killed_worker.send_signal(signal.SIGKILL)
     assert killed_worker.wait(timeout=5) == -signal.SIGKILL
     _assert_checkpoint(runtime_engine, run, killed_ready, marker="sigkill")
@@ -270,11 +280,23 @@ def test_sigkill_keeps_checkpoint_and_only_recovered_generation_commits(
     _commit_generation_two(runtime_engine, run, replacement, recovered_checkpoint)
     _assert_only_generation_two_result(runtime_engine, run, replacement, recovered_checkpoint)
     _assert_timeline_api(runtime_engine, [run], stale_write_runs=set())
+    record_property(
+        "final_authority",
+        json.dumps(
+            {
+                "generation": replacement.generation,
+                "status": "waiting_credentials",
+                "accepted_results": 1,
+                "recovered_checkpoint_id": str(recovered_checkpoint.checkpoint_id),
+            }
+        ),
+    )
 
 
 def test_sigstop_rejects_stale_intermediate_and_final_writes(
     checkpoint_d_database: CheckpointDDatabase,
     checkpoint_d_workers: list[subprocess.Popen[str]],
+    record_property: Any,
 ) -> None:
     store = checkpoint_d_database
     admin_engine, runtime_engine, runtime_url = (
@@ -292,6 +314,15 @@ def test_sigstop_rejects_stale_intermediate_and_final_writes(
     _assert_checkpoint(runtime_engine, run, paused_ready, marker="sigstop")
     _append_observed_checkpoint_event(runtime_engine, run, paused_ready)
 
+    record_property(
+        "intermediate_authority",
+        json.dumps(
+            {
+                "generation": paused_ready["generation"],
+                "checkpoint_id": paused_ready["checkpoint_id"],
+            }
+        ),
+    )
     paused_worker.send_signal(signal.SIGSTOP)
     _wait_for_stopped_process(paused_worker.pid)
     _assert_backend_has_no_transaction_or_locks(admin_engine, paused_ready["backend_pid"])
@@ -346,6 +377,17 @@ def test_sigstop_rejects_stale_intermediate_and_final_writes(
     _commit_generation_two(runtime_engine, run, replacement, recovered_checkpoint)
     _assert_only_generation_two_result(runtime_engine, run, replacement, recovered_checkpoint)
     _assert_timeline_api(runtime_engine, [run], stale_write_runs={run.run_id})
+    record_property(
+        "final_authority",
+        json.dumps(
+            {
+                "generation": replacement.generation,
+                "stale_writes": stale_results,
+                "accepted_results": 1,
+                "status": "waiting_credentials",
+            }
+        ),
+    )
 
 
 def _role_url(url: URL, password: str) -> URL:

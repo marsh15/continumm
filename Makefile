@@ -39,10 +39,8 @@ test-integration:
 	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q tests/integration
 
 test-faults:
-	@test "$(CONFIRM_DISPOSABLE_FAULT_DATABASES)" = "1" || (echo "This target resets and drops its local PostgreSQL test databases. Set CONFIRM_DISPOSABLE_FAULT_DATABASES=1 only when both configured databases are disposable." >&2; exit 2)
-	@test -n "$$CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL" || (echo "Set CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL to loopback PostgreSQL database continuum_checkpoint_d_test." >&2; exit 2)
-	@test -n "$$CONTINUUM_T22_TEST_DATABASE_URL" || (echo "Set CONTINUUM_T22_TEST_DATABASE_URL to loopback PostgreSQL database continuum_t22_test." >&2; exit 2)
-	uv run --locked --python $(PYTHON_VERSION) python scripts/demo_local.py --faults-only
+	@test "$(CONFIRM_DISPOSABLE_FAULT_DATABASES)" = "1" || (echo "Set CONFIRM_DISPOSABLE_FAULT_DATABASES=1 only for a dedicated disposable PostgreSQL cluster." >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python scripts/fault_matrix.py
 
 demo-local:
 	@test "$(CONFIRM_DISPOSABLE_FAULT_DATABASES)" = "1" || (echo "This target resets and drops its local PostgreSQL test databases. Set CONFIRM_DISPOSABLE_FAULT_DATABASES=1 only when both configured databases are disposable." >&2; exit 2)

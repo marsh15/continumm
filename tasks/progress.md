@@ -692,3 +692,16 @@ the suite. A transient Docker Hub 502 required a build retry.
   another 25 credential/authentication/corrupt-history tests passed. Six lifecycle
   and export checks prove deletion plus the seven-day terminal window.
   [Security scope](../docs/security-verification.md).
+
+- T45 local failure laboratory: all 37 plan rows have a named local test or an
+  explicit deployment procedure. Twenty-one serial local groups passed 190 tests
+  with zero skips, proving 31 rows. Process death, paused stale writes, lost PR
+  responses and cross-channel races retain authoritative JUnit observations. Six
+  deployment-only rows are explicitly NOT_RUN and remain release blockers.
+  [Runner and scope](../docs/fault-laboratory.md).
+
+- T46 local adversarial verification: account/command isolation, credential and
+  authentication proofs, archive/tool denial and browser security checks passed.
+  The fault laboratory exposed the active-manifest cleanup-grant regression;
+  migration 30 fixes it and its related privacy boundaries. No live qualification
+  or exhaustive audit is claimed. [Evidence scope](../docs/security-verification.md).

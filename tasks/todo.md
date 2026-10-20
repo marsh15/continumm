@@ -513,15 +513,16 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 - **Dependencies:** T21, T32, T38, T39, T44.
 - **Scope:** Medium; fault controller and scenario fixtures, split by adapter where necessary.
 - [ ] Cover every required matrix row with deterministic barriers or a documented deployed test.
-- [ ] Report intermediate and final authoritative state, not merely eventual green status.
+  - Local matrix: 31 rows passed across 190 tests; six deployed procedures remain NOT_RUN.
+- [x] Report intermediate and final authoritative state, not merely eventual green status.
 - **Verify:** make test-faults.
 
 ### T46 — Security adversarial suite
 
 - **Dependencies:** T35, T37, T40, T42.
 - **Scope:** Medium; account, archive, prompt-injection and browser security tests.
-- [ ] Verify cross-account denial, path protection, secret boundaries, webhook replay and CSRF/CSP behavior.
-- [ ] Resolve high-severity findings before public access.
+- [x] Verify cross-account denial, path protection, secret boundaries, webhook replay and CSRF/CSP behavior.
+- [x] Resolve identified high-severity findings before public access; public admission remains disabled.
 - **Verify:** make test-target TARGET=tests/security; make test-e2e.
 
 ### Checkpoint O — Release safety

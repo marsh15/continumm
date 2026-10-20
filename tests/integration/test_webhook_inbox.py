@@ -236,7 +236,7 @@ def _assert_ingress_privileges(engine: Engine, ingress_url: str) -> None:
                         :role_name, 'webhook_private.github_delivery_inbox', 'DELETE'
                     ),
                     has_database_privilege(:role_name, current_database(), 'CREATE'),
-                    pg_has_role(:role_name, 'postgres', 'MEMBER'),
+                    pg_has_role(:role_name, current_user, 'MEMBER'),
                     has_schema_privilege(:role_name, 'continuum_migrations', 'USAGE'),
                     pg_get_userbyid((SELECT relowner FROM pg_class WHERE
                         oid = 'webhook_private.github_delivery_inbox'::regclass)) <> :role_name

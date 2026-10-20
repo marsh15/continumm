@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -322,7 +323,7 @@ def test_marker_match_with_foreign_pr_facts_conflicts_without_second_pr(
 
 
 def test_lost_create_response_and_repeated_invisible_reads_never_create_twice(
-    t22_database: T22Database, tmp_path: Path
+    t22_database: T22Database, tmp_path: Path, record_property: Any
 ) -> None:
     scenario = create_frozen_approval(t22_database, tmp_path)
     try:
@@ -337,6 +338,16 @@ def test_lost_create_response_and_repeated_invisible_reads_never_create_twice(
         assert first.status == "unknown"
         assert remote.create_calls == 1
         assert len(remote.pull_requests) == 1
+        record_property(
+            "intermediate_authority",
+            json.dumps(
+                {
+                    "operation_status": first.status,
+                    "remote_create_calls": remote.create_calls,
+                    "remote_pr_count": len(remote.pull_requests),
+                }
+            ),
+        )
 
         # The source archive is needed for a new write but never for recovery.
         with t22_database.runtime_engine.begin() as connection:
@@ -370,6 +381,16 @@ def test_lost_create_response_and_repeated_invisible_reads_never_create_twice(
             assert recovered.status in {"adopted", "already_confirmed"}
             assert recovered.pr_number == 17
             assert remote.create_calls == 1
+            record_property(
+                "final_authority",
+                json.dumps(
+                    {
+                        "operation_status": recovered.status,
+                        "pr_number": recovered.pr_number,
+                        "remote_create_calls": remote.create_calls,
+                    }
+                ),
+            )
         finally:
             source_path.write_bytes(frozen_source)
     finally:

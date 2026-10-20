@@ -1,0 +1,436 @@
+{
+  "groups": {
+    "leases": {
+      "node": "tests/integration/test_leases.py",
+      "database_env": "CONTINUUM_T09_TEST_DATABASE_URL",
+      "database_name": "continuum_t09_test"
+    },
+    "workspace": {
+      "node": "tests/faults/test_workspace_recovery.py",
+      "database_env": "CONTINUUM_T21_TEST_DATABASE_URL",
+      "database_name": "continuum_t21_test"
+    },
+    "result": {
+      "node": "tests/integration/test_transitions.py",
+      "database_env": "CONTINUUM_T08_TEST_DATABASE_URL",
+      "database_name": "continuum_t08_test"
+    },
+    "process": {
+      "node": "tests/integration/test_runtime_demonstration.py",
+      "database_env": "CONTINUUM_CHECKPOINT_D_TEST_DATABASE_URL",
+      "database_name": "continuum_checkpoint_d_test"
+    },
+    "model": {
+      "node": "tests/integration/test_agent_loop.py",
+      "database_env": "CONTINUUM_T22_TEST_DATABASE_URL",
+      "database_name": "continuum_t22_test"
+    },
+    "sandbox": {
+      "node": "tests/integration/test_sandbox_allocations.py",
+      "database_env": "CONTINUUM_T16_TEST_DATABASE_URL",
+      "database_name": "continuum_t16_test"
+    },
+    "approval": {
+      "node": "tests/integration/test_approvals.py",
+      "database_env": "CONTINUUM_T22_TEST_DATABASE_URL",
+      "database_name": "continuum_t22_test"
+    },
+    "cancel": {
+      "node": "tests/integration/test_cancellation.py",
+      "database_env": "CONTINUUM_T11_TEST_DATABASE_URL",
+      "database_name": "continuum_t11_test"
+    },
+    "pr": {
+      "node": "tests/faults/test_pr_reconciliation.py",
+      "database_env": "CONTINUUM_T22_TEST_DATABASE_URL",
+      "database_name": "continuum_t22_test"
+    },
+    "branch": {
+      "node": "tests/integration/test_github_publication.py",
+      "database_env": "CONTINUUM_T22_TEST_DATABASE_URL",
+      "database_name": "continuum_t22_test"
+    },
+    "cross": {
+      "node": "tests/faults/test_cross_channel_race.py",
+      "database_env": "CONTINUUM_T22_TEST_DATABASE_URL",
+      "database_name": "continuum_t22_test"
+    },
+    "commands": {
+      "node": "tests/security/test_github_commands.py",
+      "database_env": "CONTINUUM_T37_TEST_DATABASE_URL",
+      "database_name": "continuum_t37_test"
+    },
+    "preflight": {
+      "node": "tests/integration/test_repository_preflight.py",
+      "database_env": "CONTINUUM_T13_TEST_DATABASE_URL",
+      "database_name": "continuum_t13_test"
+    },
+    "inbox": {
+      "node": "tests/integration/test_webhook_inbox.py",
+      "database_env": "CONTINUUM_T05_TEST_DATABASE_URL",
+      "database_name": "continuum_t05_test"
+    },
+    "admission": {
+      "node": "tests/integration/test_admission.py",
+      "database_env": "CONTINUUM_T36_TEST_DATABASE_URL",
+      "database_name": "continuum_t36_test"
+    },
+    "checkpoints": {
+      "node": "tests/integration/test_checkpoints.py",
+      "database_env": "CONTINUUM_T15_TEST_DATABASE_URL",
+      "database_name": "continuum_t15_test"
+    },
+    "archives": {
+      "node": "tests/unit/test_archives.py",
+      "database_env": null,
+      "database_name": null
+    },
+    "policy": {
+      "node": "tests/security/test_adversarial_boundaries.py",
+      "database_env": null,
+      "database_name": null
+    },
+    "isolation": {
+      "node": "tests/security/test_account_isolation.py",
+      "database_env": "CONTINUUM_T35_TEST_DATABASE_URL",
+      "database_name": "continuum_t22_test"
+    },
+    "retention": {
+      "node": "tests/integration/test_retention.py",
+      "database_env": "CONTINUUM_T40_TEST_DATABASE_URL",
+      "database_name": "continuum_t40_test"
+    },
+    "restore": {
+      "node": "tests/integration/test_restore.py",
+      "database_env": "CONTINUUM_T40_TEST_DATABASE_URL",
+      "database_name": "continuum_t40_test"
+    }
+  },
+  "rows": [
+    {
+      "id": "F00",
+      "scenario": "Two workers claim the same logical work",
+      "required_outcome": "One current generation; no duplicate accepted result",
+      "groups": [
+        "leases"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F01",
+      "scenario": "Worker killed before checkpoint commit",
+      "required_outcome": "Restore prior committed checkpoint",
+      "groups": [
+        "workspace"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F02",
+      "scenario": "Upload succeeds, database commit fails",
+      "required_outcome": "Object is orphaned and later collected safely",
+      "groups": [
+        "workspace"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F03",
+      "scenario": "Database commit succeeds, acknowledgment disappears",
+      "required_outcome": "Recovery adopts committed result",
+      "groups": [
+        "result"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F04",
+      "scenario": "Paused worker resumes after lease takeover",
+      "required_outcome": "All stale writes rejected",
+      "groups": [
+        "process"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F05",
+      "scenario": "Heartbeat and expiry race",
+      "required_outcome": "Database-time ownership rule decides consistently",
+      "groups": [
+        "leases"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F06",
+      "scenario": "Model output is partial or malformed",
+      "required_outcome": "No tool execution; bounded repair/failure",
+      "groups": [
+        "model"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F07",
+      "scenario": "Model response is lost",
+      "required_outcome": "Unknown usage recorded; no unaccounted retries",
+      "groups": [
+        "model"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F08",
+      "scenario": "Tool call repeated after recovery",
+      "required_outcome": "Stable invocation identity prevents duplicate accepted effects",
+      "groups": [
+        "model"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F09",
+      "scenario": "Sandbox creation response disappears",
+      "required_outcome": "Unknown allocation consumes reservation; no overlapping speculative replacement",
+      "groups": [
+        "sandbox"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F10",
+      "scenario": "API dies while a sandbox command runs",
+      "required_outcome": "Server-side limit terminates it; stale result cannot commit",
+      "groups": [],
+      "deployed_procedure": "On the configured sandbox, kill the API during a bounded command; observe server-side timeout and reject its stale result."
+    },
+    {
+      "id": "F11",
+      "scenario": "Validation mutates files",
+      "required_outcome": "Approved tree remains the original immutable candidate",
+      "groups": [
+        "approval"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F12",
+      "scenario": "Approval and cancellation race",
+      "required_outcome": "No new dispatch authorization after cancellation; previously authorized effects remain observable",
+      "groups": [
+        "cancel"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F13",
+      "scenario": "Approval expires during partial publication",
+      "required_outcome": "No new mutation authorization; preserve partial outcome and read-only reconciliation",
+      "groups": [
+        "branch"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F14",
+      "scenario": "Approval and rework race across channels",
+      "required_outcome": "Old approval cannot authorize revised content",
+      "groups": [
+        "cross"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F15",
+      "scenario": "GitHub creates PR, response disappears",
+      "required_outcome": "Reconciliation adopts exact PR; no blind second create",
+      "groups": [
+        "pr"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F16",
+      "scenario": "GitHub hides a created PR temporarily",
+      "required_outcome": "Negative reads do not authorize another create",
+      "groups": [
+        "pr"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F17",
+      "scenario": "Branch diverges or base changes",
+      "required_outcome": "Conflict/new-run requirement; no force push or silent rebase",
+      "groups": [
+        "branch"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F18",
+      "scenario": "Installation/user permission revoked",
+      "required_outcome": "Further access and publication denied",
+      "groups": [
+        "pr"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F19",
+      "scenario": "Bot/unauthorized commenter issues commands",
+      "required_outcome": "No account spend or mutation",
+      "groups": [
+        "commands"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F20",
+      "scenario": "Authentic old webhook replayed after tombstone expiry",
+      "required_outcome": "Freshness check denies admission and spend",
+      "groups": [
+        "commands"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F21",
+      "scenario": "Repository authorization removed",
+      "required_outcome": "Owner can still cancel, revoke keys and delete content",
+      "groups": [
+        "cancel",
+        "retention"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F22",
+      "scenario": "Repeated onboarding checks",
+      "required_outcome": "No sandbox/model allocation or unbounded download",
+      "groups": [
+        "preflight"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F23",
+      "scenario": "Webhook commit succeeds, ack is lost",
+      "required_outcome": "Redelivery is a no-op at command level",
+      "groups": [
+        "inbox"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F24",
+      "scenario": "Render asleep during webhook",
+      "required_outcome": "Edge receiver commits independently; work processes after wake",
+      "groups": [],
+      "deployed_procedure": "Sleep Render, send a signed App event, verify Edge inbox commit before wake and one command/run after drain."
+    },
+    {
+      "id": "F25",
+      "scenario": "Supabase unavailable",
+      "required_outcome": "No false webhook acceptance; visible recovery gap",
+      "groups": [],
+      "deployed_procedure": "Make the hosted Supabase transaction unavailable; confirm no webhook acknowledgment and a visible recovery gap."
+    },
+    {
+      "id": "F26",
+      "scenario": "Key removed during inference",
+      "required_outcome": "No future calls; already-sent call remains accounted",
+      "groups": [],
+      "deployed_procedure": "Revoke the owner key during explicitly enabled live inference; inspect accounted sent usage and deny every later call."
+    },
+    {
+      "id": "F27",
+      "scenario": "Storage/quota exhausted",
+      "required_outcome": "Stop admission; preserve committed progress",
+      "groups": [
+        "admission",
+        "checkpoints"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F28",
+      "scenario": "Artifact missing/corrupt",
+      "required_outcome": "Needs attention; no silent substitution",
+      "groups": [
+        "workspace"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F29",
+      "scenario": "Archive traversal, links, zip bomb",
+      "required_outcome": "Reject before trusted filesystem use",
+      "groups": [
+        "archives",
+        "policy"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F30",
+      "scenario": "Prompt injection requests secrets/publication",
+      "required_outcome": "Deterministic policy denies access",
+      "groups": [
+        "policy"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F31",
+      "scenario": "Another account guesses IDs",
+      "required_outcome": "Run, stream, artifact, and decision access denied",
+      "groups": [
+        "isolation"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F32",
+      "scenario": "Cleanup races with active upload/review",
+      "required_outcome": "Referenced/in-flight data survives",
+      "groups": [
+        "checkpoints",
+        "retention"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F33",
+      "scenario": "Runtime version changes mid-run",
+      "required_outcome": "Unsupported work pauses; no silent semantic upgrade",
+      "groups": [
+        "leases"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F34",
+      "scenario": "Restored database predates remote publication",
+      "required_outcome": "Restore quarantine and remote reconciliation precede mutation",
+      "groups": [],
+      "deployed_procedure": "Restore the historical database in an isolated deployment, reconcile remote publication, and prove no mutation before release from quarantine."
+    },
+    {
+      "id": "F35",
+      "scenario": "Deleted content appears in an older export",
+      "required_outcome": "Current deletion journal/expiry prevents restored access",
+      "groups": [
+        "restore"
+      ],
+      "deployed_procedure": null
+    },
+    {
+      "id": "F36",
+      "scenario": "Render suspended",
+      "required_outcome": "Independent status/help document remains reachable",
+      "groups": [],
+      "deployed_procedure": "Suspend Render and fetch the independent GitHub STATUS.md help page from an external client."
+    }
+  ]
+}

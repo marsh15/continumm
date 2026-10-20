@@ -16,3 +16,5 @@ node_modules/
 .continuum-exports/
 
 .artifacts/property-failures/
+
+.artifacts/fault-matrix.json
