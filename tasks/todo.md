@@ -417,9 +417,10 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T16, T26, T35.
 - **Scope:** Medium; quota/admission service and race tests.
-- [ ] Enforce active-account/global queue limits and reserve before sandbox/model dispatch.
-- [ ] Rejected work does not spend; unknown work remains charged; operator/public pools and cross-period reservations remain conservative.
+- [x] Enforce active-account/global queue limits and reserve before sandbox/model dispatch.
+- [x] Rejected work does not spend; unknown work remains charged; operator/public pools and cross-period reservations remain conservative.
 - **Verify:** make test-target TARGET=tests/integration/test_admission.py.
+- **Status:** Atomic admission and default-off API implemented; no live dispatch enabled. [Contract and bootstrap](../docs/run-admission.md).
 
 ### T37 — GitHub command parsing and actor policy
 

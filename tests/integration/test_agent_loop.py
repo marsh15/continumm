@@ -64,6 +64,7 @@ ROLE_NAMES = (
     "continuum_wake_receiver",
     "continuum_wake",
     "continuum_wake_issuer",
+    "continuum_admission",
     "continuum_ingress",
 )
 REPOSITORY_ID = 714_022
@@ -204,6 +205,7 @@ def _reset_database(engine: Engine, runtime_password: str) -> None:
         role_definitions = (
             ("continuum_ingress", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_wake_issuer", "NOLOGIN", None),
+            ("continuum_admission", "NOLOGIN", None),
             ("continuum_wake", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_wake_receiver", "LOGIN", secrets.token_urlsafe(32)),
             (RUNTIME_ROLE, "LOGIN", runtime_password),

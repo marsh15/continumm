@@ -150,51 +150,81 @@ class CredentialService:
         }:
             raise CredentialError("credential_provider_invalid")
         with self._connection() as connection:
-            self._lock_user(connection, active=True)
-            run = self._lock_run(connection, run_id)
-            self._require_open_run(connection, run)
-            credential = self._lock_credential(connection, credential_id)
-            self._require_usable(connection, credential, provider, run_id)
-            existing = connection.execute(
-                text(
-                    "SELECT provider, credential_id FROM runtime_private.run_credentials "
-                    "WHERE owner_id=:owner AND run_id=:run FOR UPDATE"
-                ),
-                {"owner": self._principal.account_id, "run": run_id},
-            ).one_or_none()
-            if existing is not None and existing.provider != provider.value:
-                raise CredentialError("credential_provider_pinned")
-            if (
-                existing is not None
-                and existing.credential_id == credential_id
-                and run["status"] != "waiting_credentials"
-            ):
-                return
+            self.bind_run_in_transaction(connection, run_id, provider, credential_id)
+
+    def bind_run_in_transaction(
+        self,
+        connection: Connection,
+        run_id: UUID,
+        provider: CredentialProvider,
+        credential_id: UUID,
+    ) -> None:
+        """Bind an owned saved key inside a caller's transaction.
+
+        Admission uses this to commit the new run, credential binding and the
+        established credential event together. The same checks as ``bind_run``
+        apply; no credential bytes enter this method.
+        """
+        if not connection.in_transaction():
+            raise CredentialError("credential_transaction_required")
+        if not isinstance(provider, CredentialProvider) or provider not in {
+            CredentialProvider.OPENAI,
+            CredentialProvider.ANTHROPIC,
+        }:
+            raise CredentialError("credential_provider_invalid")
+        RuntimeRepository(connection, self._principal)
+        self.lock_owner_in_transaction(connection, active=True)
+        run = self._lock_run(connection, run_id)
+        self._require_open_run(connection, run)
+        credential = self._lock_credential(connection, credential_id)
+        self._require_usable(connection, credential, provider, run_id)
+        existing = connection.execute(
+            text(
+                "SELECT provider, credential_id FROM runtime_private.run_credentials "
+                "WHERE owner_id=:owner AND run_id=:run FOR UPDATE"
+            ),
+            {"owner": self._principal.account_id, "run": run_id},
+        ).one_or_none()
+        if existing is not None and existing.provider != provider.value:
+            raise CredentialError("credential_provider_pinned")
+        if (
+            existing is not None
+            and existing.credential_id == credential_id
+            and run["status"] != "waiting_credentials"
+        ):
+            return
+        connection.execute(
+            text(
+                "INSERT INTO runtime_private.run_credentials "
+                "(owner_id, run_id, provider, credential_id) VALUES "
+                "(:owner, :run, :provider, :credential) ON CONFLICT (owner_id, run_id) "
+                "DO UPDATE SET credential_id=EXCLUDED.credential_id, "
+                "revision=run_credentials.revision + 1 "
+                "WHERE run_credentials.credential_id<>EXCLUDED.credential_id"
+            ),
+            {
+                "owner": self._principal.account_id,
+                "run": run_id,
+                "provider": provider.value,
+                "credential": credential_id,
+            },
+        )
+        if run["status"] == "waiting_credentials":
             connection.execute(
                 text(
-                    "INSERT INTO runtime_private.run_credentials "
-                    "(owner_id, run_id, provider, credential_id) VALUES "
-                    "(:owner, :run, :provider, :credential) ON CONFLICT (owner_id, run_id) "
-                    "DO UPDATE SET credential_id=EXCLUDED.credential_id, "
-                    "revision=run_credentials.revision + 1 "
-                    "WHERE run_credentials.credential_id<>EXCLUDED.credential_id"
+                    "UPDATE runtime_private.runs SET status='queued' "
+                    "WHERE owner_id=:owner AND run_id=:run AND status='waiting_credentials'"
                 ),
-                {
-                    "owner": self._principal.account_id,
-                    "run": run_id,
-                    "provider": provider.value,
-                    "credential": credential_id,
-                },
+                {"owner": self._principal.account_id, "run": run_id},
             )
-            if run["status"] == "waiting_credentials":
-                connection.execute(
-                    text(
-                        "UPDATE runtime_private.runs SET status='queued' "
-                        "WHERE owner_id=:owner AND run_id=:run AND status='waiting_credentials'"
-                    ),
-                    {"owner": self._principal.account_id, "run": run_id},
-                )
-            self._event(connection, run_id, "credential.bound", credential_id)
+        self._event(connection, run_id, "credential.bound", credential_id)
+
+    def lock_owner_in_transaction(self, connection: Connection, *, active: bool) -> None:
+        """Take the shared owner credential lock before credential rows are locked."""
+        if not connection.in_transaction():
+            raise CredentialError("credential_transaction_required")
+        RuntimeRepository(connection, self._principal)
+        self._lock_user(connection, active=active)
 
     def revoke(self, credential_id: UUID) -> bool:
         """Protective owner action; no GitHub permission or decryption is required."""

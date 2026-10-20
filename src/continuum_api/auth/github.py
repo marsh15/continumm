@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib.parse import quote
@@ -71,6 +72,19 @@ class _RequestBudget:
         self.response_bytes += count
         if self.response_bytes > MAX_TOTAL_RESPONSE_BYTES:
             raise GitHubAuthorizationError("github_authorization_response_limit")
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubIssueSnapshot:
+    repository_id: int
+    github_user_id: int
+    issue_id: int
+    issue_number: int
+    title: str = field(repr=False)
+    body: str | None = field(repr=False)
+    state: str
+    updated_at: str
+    sha256: str
 
 
 class GitHubAuthorizationClient:
@@ -180,6 +194,105 @@ class GitHubAuthorizationClient:
         except GitHubAuthorizationError:
             raise
 
+    async def current_issue(
+        self, repository_id: int, github_user_id: int, issue_number: int
+    ) -> tuple[RepositoryPublicationFacts, GitHubIssueSnapshot]:
+        """Return a fresh public-repository proof and a verified ordinary issue snapshot."""
+        if type(issue_number) is not int or not 1 <= issue_number <= 2_147_483_647:
+            raise GitHubAuthorizationError("github_issue_number_invalid")
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                authorized = await self._current(
+                    repository_id,
+                    github_user_id,
+                    return_installation_token=True,
+                    issues_permission="read",
+                )
+                if not isinstance(authorized, tuple):
+                    raise GitHubAuthorizationError("github_installation_token_unavailable")
+                facts, token = authorized
+                assert isinstance(facts, RepositoryPublicationFacts)
+                assert isinstance(token, SecretStr)
+                budget = _RequestBudget()
+                async with httpx.AsyncClient(
+                    base_url=GITHUB_API_ORIGIN,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                        "User-Agent": "Continuumm",
+                    },
+                    timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
+                    follow_redirects=False,
+                    trust_env=False,
+                    transport=self._transport,
+                ) as client:
+                    path = (
+                        f"/repos/{quote(facts.owner, safe='')}/{quote(facts.name, safe='')}"
+                        f"/issues/{issue_number}"
+                    )
+                    payload = await _request_json(
+                        client,
+                        budget,
+                        "GET",
+                        path,
+                        headers={"Authorization": f"Bearer {token.get_secret_value()}"},
+                    )
+                if "pull_request" in payload:
+                    raise GitHubAuthorizationError("github_issue_is_pull_request")
+                issue_id = _positive_id(payload.get("id"), "github_issue_identity_invalid")
+                if (
+                    _positive_id(payload.get("number"), "github_issue_identity_invalid")
+                    != issue_number
+                ):
+                    raise GitHubAuthorizationError("github_issue_identity_invalid")
+                title = payload.get("title")
+                body = payload.get("body")
+                state = payload.get("state")
+                updated_at = payload.get("updated_at")
+                if (
+                    not isinstance(title, str)
+                    or not title.strip()
+                    or len(title.encode("utf-8")) > 1024
+                    or (body is not None and not isinstance(body, str))
+                    or (isinstance(body, str) and len(body.encode("utf-8")) > 16_384)
+                    or state not in {"open", "closed"}
+                    or not isinstance(updated_at, str)
+                    or len(updated_at) > 40
+                ):
+                    raise GitHubAuthorizationError("github_issue_snapshot_invalid")
+                try:
+                    updated = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                    if updated.tzinfo is None:
+                        raise ValueError
+                except ValueError:
+                    raise GitHubAuthorizationError("github_issue_snapshot_invalid") from None
+                snapshot_value = {
+                    "id": issue_id,
+                    "number": issue_number,
+                    "title": title,
+                    "body": body,
+                    "state": state,
+                    "updated_at": updated.isoformat(),
+                }
+                digest = hashlib.sha256(
+                    json.dumps(
+                        snapshot_value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                ).hexdigest()
+                return facts, GitHubIssueSnapshot(
+                    repository_id=repository_id,
+                    github_user_id=github_user_id,
+                    issue_id=issue_id,
+                    issue_number=issue_number,
+                    title=title,
+                    body=body,
+                    state=state,
+                    updated_at=updated.isoformat(),
+                    sha256=digest,
+                )
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+
     async def _current(
         self,
         repository_id: int,
@@ -188,6 +301,7 @@ class GitHubAuthorizationClient:
         contents_permission: str = "read",
         return_installation_token: bool = False,
         pull_requests_permission: str | None = None,
+        issues_permission: str | None = None,
     ) -> RepositoryPublicationFacts | tuple[RepositoryPublicationFacts, SecretStr]:
         if type(repository_id) is not int or repository_id <= 0:
             raise GitHubAuthorizationError("repository_id_invalid")
@@ -265,6 +379,8 @@ class GitHubAuthorizationClient:
             requested_permissions = {"contents": contents_permission, "metadata": "read"}
             if pull_requests_permission is not None:
                 requested_permissions["pull_requests"] = pull_requests_permission
+            if issues_permission is not None:
+                requested_permissions["issues"] = issues_permission
             token_payload = await _request_json(
                 client,
                 budget,
@@ -408,6 +524,11 @@ class GitHubPublicationFactsProvider(PublicationFactsProvider):
 
     async def current(self, repository_id: int, github_user_id: int) -> RepositoryPublicationFacts:
         return await self._client.current(repository_id, github_user_id)
+
+    async def current_issue(
+        self, repository_id: int, github_user_id: int, issue_number: int
+    ) -> tuple[RepositoryPublicationFacts, GitHubIssueSnapshot]:
+        return await self._client.current_issue(repository_id, github_user_id, issue_number)
 
 
 async def _request_json(

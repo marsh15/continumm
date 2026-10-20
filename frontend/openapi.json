@@ -1,6 +1,127 @@
 {
   "components": {
     "schemas": {
+      "AdmissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "deadline_at": {
+            "format": "date-time",
+            "title": "Deadline At",
+            "type": "string"
+          },
+          "issue_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Id"
+          },
+          "issue_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Sha"
+          },
+          "model_id": {
+            "enum": [
+              "gpt-5.4-mini-2026-03-17",
+              "claude-sonnet-5-5"
+            ],
+            "title": "Model Id",
+            "type": "string"
+          },
+          "profile_id": {
+            "enum": [
+              "python-pytest",
+              "node-npm"
+            ],
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "profile_version": {
+            "const": "1",
+            "title": "Profile Version",
+            "type": "string"
+          },
+          "provider": {
+            "enum": [
+              "openai",
+              "anthropic"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "source_sha": {
+            "title": "Source Sha",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "waiting_credentials",
+              "waiting_capacity",
+              "needs_attention",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "created_at",
+          "deadline_at",
+          "profile_id",
+          "profile_version",
+          "provider",
+          "model_id",
+          "source_sha",
+          "replayed"
+        ],
+        "title": "AdmissionResponse",
+        "type": "object"
+      },
       "AttentionEffect": {
         "additionalProperties": false,
         "properties": {
@@ -2392,6 +2513,252 @@
         "tags": [
           "repositories",
           "credentials"
+        ]
+      }
+    },
+    "/api/v1/runs": {
+      "post": {
+        "operationId": "create_run_api_v1_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "source": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "credential_id": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "title": "Credential Id"
+                          },
+                          "issue_number": {
+                            "exclusiveMinimum": 0,
+                            "maximum": 2147483647,
+                            "title": "Issue Number",
+                            "type": "integer"
+                          },
+                          "kind": {
+                            "const": "issue",
+                            "title": "Kind",
+                            "type": "string"
+                          },
+                          "registration_id": {
+                            "exclusiveMinimum": 0,
+                            "maximum": 9223372036854775807,
+                            "title": "Registration Id",
+                            "type": "integer"
+                          },
+                          "request_id": {
+                            "format": "uuid",
+                            "title": "Request Id",
+                            "type": "string"
+                          },
+                          "task": {
+                            "maxLength": 16384,
+                            "minLength": 1,
+                            "title": "Task",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "registration_id",
+                          "issue_number",
+                          "request_id",
+                          "task"
+                        ],
+                        "title": "IssueSource",
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "credential_id": {
+                            "anyOf": [
+                              {
+                                "format": "uuid",
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "title": "Credential Id"
+                          },
+                          "kind": {
+                            "const": "free_text",
+                            "title": "Kind",
+                            "type": "string"
+                          },
+                          "registration_id": {
+                            "exclusiveMinimum": 0,
+                            "maximum": 9223372036854775807,
+                            "title": "Registration Id",
+                            "type": "integer"
+                          },
+                          "request_id": {
+                            "format": "uuid",
+                            "title": "Request Id",
+                            "type": "string"
+                          },
+                          "task": {
+                            "maxLength": 16384,
+                            "minLength": 1,
+                            "title": "Task",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "registration_id",
+                          "request_id",
+                          "task"
+                        ],
+                        "title": "FreeTextSource",
+                        "type": "object"
+                      }
+                    ],
+                    "title": "Source"
+                  }
+                },
+                "required": [
+                  "source"
+                ],
+                "title": "_RequestModel",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmissionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Create Run",
+        "tags": [
+          "runs"
         ]
       }
     },

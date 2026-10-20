@@ -44,6 +44,7 @@ def create_app(
     principal_resolver: Callable[[Request], Any] | None = None,
     review_service_factory: Callable[[Request, Any], Any] | None = None,
     repository_onboarding_service_factory: Callable[[Request, Any], Any] | None = None,
+    admission_service_factory: Callable[[Request, Any], Any] | None = None,
     external_attention_service_factory: Callable[[Request, Any], Any] | None = None,
     csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
@@ -108,6 +109,8 @@ def create_app(
     from continuum_api.credentials import CredentialCipher
     from continuum_api.publication.github_pr import GitHubPRTransport
     from continuum_api.repositories.preflight import RepositoryPreflightService
+    from continuum_api.runtime.admission import AdmissionService
+    from continuum_api.runtime.admission_routes import create_admission_router
     from continuum_api.runtime.approvals import ApprovalService
     from continuum_api.runtime.external_attention import ExternalAttentionService
     from continuum_api.runtime.external_attention_routes import create_external_attention_router
@@ -202,6 +205,23 @@ def create_app(
             CredentialService(engine, principal, cipher),
         )
 
+    def browser_admission(request: Request, principal: Any) -> Any:
+        boundary = auth_boundary(request)
+        engine = get_runtime_engine(request)
+        authorization = boundary.authorization_factory(principal)
+        settings = get_settings()
+        try:
+            cipher = CredentialCipher.from_settings(settings)
+        except Exception:
+            cipher = None
+        return AdmissionService(
+            engine,
+            principal,
+            GitHubPublicationFactsProvider(authorization),
+            CredentialService(engine, principal, cipher),
+            enabled=settings.enable_public_admission,
+        )
+
     async def browser_csrf(request: Request) -> bool:
         try:
             return await auth_boundary(request).csrf(request)
@@ -213,6 +233,7 @@ def create_app(
     repository_onboarding_service_factory = (
         repository_onboarding_service_factory or browser_repository_onboarding
     )
+    admission_service_factory = admission_service_factory or browser_admission
     external_attention_service_factory = (
         external_attention_service_factory or browser_external_attention
     )
@@ -220,6 +241,9 @@ def create_app(
     application.include_router(create_auth_router(auth_boundary))
     application.state.sse_stream_limiter = _StreamLimiter()
     application.include_router(create_run_router(principal_resolver))
+    application.include_router(
+        create_admission_router(principal_resolver, admission_service_factory, csrf_guard)
+    )
     application.include_router(
         create_repository_router(
             principal_resolver, repository_onboarding_service_factory, csrf_guard

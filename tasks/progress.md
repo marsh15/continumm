@@ -580,10 +580,24 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   checks passed at desktop, 390- and 320-pixel viewports. No live account/provider
   actions were taken. [Contract](../docs/repository-onboarding.md).
 
-Implementation is complete through T33 and T35's onboarding boundary. T34's
-live demonstration is explicitly deferred by the owner while work proceeds to
-T36 and later tasks. Public command execution and live deployment remain gated;
-local tests and controlled adapters do not establish hosted acceptance.
+- T36 atomic admission: added a default-off owner API with strict source schemas,
+  fresh numeric GitHub issue/actor/App checks, immutable selections and atomic
+  queue/run/credential/idempotency/original-comment handoff. Ten admission seats
+  include waiting-credential runs; terminal transitions release them while
+  sandbox/model accounting remains at existing dispatch boundaries. Migration
+  23 uses a preprovisioned narrow NOLOGIN function-owner role and preserves
+  repo-only free-text history on downgrade. Final checks passed 617 Python tests
+  (154 optional database skips), 19 PostgreSQL cases across admission and affected
+  lifecycle paths, 27 component tests, 11 browser tests, lint/format/typing across
+  89 source files, OpenAPI export and backend/frontend builds. The coordinated
+  credential-revocation race passed after fixing lock order. No live dispatch or
+  hosted bootstrap was performed. [Contract and bootstrap](../docs/run-admission.md).
+
+Implementation is complete through T33, T35 onboarding and T36 admission.
+T34's live demonstration is deferred at the owner's request. On 20 October 2026,
+the owner requested finishing the half-done work and stopping; T36 is committed
+and T37/later tasks remain unstarted. Public admission remains disabled by default,
+and local tests do not establish hosted acceptance.
 
 The requested implementation workers use `gpt-6-luna` with `high` reasoning.
 

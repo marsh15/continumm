@@ -33,3 +33,5 @@ The backend and frontend foundations are implemented. Hosted feasibility and the
 durable coding workflow remain pending; consult the progress log for verified scope.
 
 - [Repository onboarding](repository-onboarding.md)
+
+- [Atomic run admission](run-admission.md)
