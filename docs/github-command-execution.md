@@ -1,0 +1,13 @@
+# GitHub command execution
+
+GitHub comment intake and command execution are separate steps. Intake accepts only a newly created, ordinary issue comment after the current-comment adapter verifies the owner, repository, issue, creation time, and unchanged exact command. It stores normalized command fields and the bounded `changes` feedback payload. After that receipt is committed, later edits or deletion do not revoke the accepted intent.
+
+`GitHubCommandProcessor` loads that durable receipt and feedback, verifies its repository and issue binding, checks the account and registration, and rechecks the owner's current repository write access. It then delegates approval and cancellation to the same services used by the browser. Approval commands must match the exact frozen manifest digest; cancellation rechecks both the accepted timestamp and the live run deadline under the run lock. Status replies expose only run state and revision.
+
+The `/continumm run` command calls `AdmissionService.admit_current_issue_comment`, which uses the provider's verified current issue title and body. The original repository and comment identity maps atomically to the admitted run, so retries after a lost response return that pinned run without rereading changed issue content. The service keeps public admission disabled by default; a caller must inject an enabled `AdmissionService` to admit a run.
+
+Public status comments use a separate, narrow effect ledger because they may be posted while a run waits for approval or credentials, or after it reaches a terminal state. Each entry binds one run snapshot to its repository, issue, status, revision, and latest domain event sequence. The dispatch token permits one create attempt. An ambiguous result triggers a lookup for the exact marker authored by the configured GitHub App bot; a missing lookup never authorizes a second create. New comments are blocked after owner suspension, registration removal, content deletion, or content expiry.
+
+Status comments contain a concise state, a console link, and the current approval ID, manifest digest, and expiry when approval is pending. They never include issue text, task details, patches, logs, or other run-private content. The GitHub adapter rechecks user write access and installation access, requests only the `issues:write` installation permission for comment operations, and has no repository-content or pull-request write path.
+
+The command processor remains an injectable trusted service. This task does not drain the public webhook inbox or enable the public admission feature flag. Integration and adapter tests use local PostgreSQL fixtures and mock GitHub transports; they make no live provider requests.

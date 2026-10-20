@@ -42,6 +42,11 @@ AUTHORIZATION_DEADLINE_SECONDS = 20.0
 HTTP_TIMEOUT_SECONDS = 6.0
 _SHA_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _COMPONENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_STATUS_MARKER_PATTERN = re.compile(
+    r"^<!-- continuum:status:"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:"
+    r"[0-9]{1,19} -->$"
+)
 
 
 class GitHubAuthorizationError(RuntimeError):
@@ -107,8 +112,9 @@ class GitHubAuthorizationClient:
     """Recheck user write rights and App installation access for public repositories.
 
     The user token is obtained from the encrypted session-token store on each call.
-    The App private key is used only to mint a short-lived JWT and a repository-scoped,
-    read-only installation token. This adapter intentionally exposes no Git write API.
+    The App private key is used only to mint a short-lived JWT and repository-scoped
+    installation tokens. The only write it exposes is a bounded issue-status comment;
+    it has no contents, branch, or pull-request write API.
     """
 
     def __init__(
@@ -410,6 +416,171 @@ class GitHubAuthorizationClient:
         except TimeoutError:
             raise GitHubAuthorizationError("github_authorization_timeout") from None
 
+    async def find_status_comment(
+        self,
+        repository_id: int,
+        github_user_id: int,
+        issue_number: int,
+        marker: str,
+    ) -> str | None:
+        """Find one bot status comment after current owner and issue-write checks."""
+        _validate_status_comment_target(issue_number, marker)
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                facts, token = await self._current_installation_for_issue_write(
+                    repository_id, github_user_id
+                )
+                budget = _RequestBudget()
+                async with httpx.AsyncClient(
+                    base_url=GITHUB_API_ORIGIN,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                        "User-Agent": "Continuum",
+                    },
+                    timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
+                    follow_redirects=False,
+                    trust_env=False,
+                    transport=self._transport,
+                ) as client:
+                    headers = {"Authorization": f"Bearer {token.get_secret_value()}"}
+                    prefix = f"/repos/{quote(facts.owner, safe='')}/{quote(facts.name, safe='')}"
+                    bot_login = await self._current_app_bot_login(client, budget)
+                    await _require_ordinary_issue(client, budget, prefix, issue_number, headers)
+                    matches: list[str] = []
+                    for page in range(1, MAX_PAGES + 1):
+                        comments = await _request_json_array(
+                            client,
+                            budget,
+                            "GET",
+                            f"{prefix}/issues/{issue_number}/comments",
+                            headers=headers,
+                            params={"per_page": PAGE_SIZE, "page": page},
+                        )
+                        for item in comments:
+                            if not isinstance(item, dict):
+                                raise GitHubAuthorizationError("github_status_comment_invalid")
+                            body = item.get("body")
+                            user = item.get("user")
+                            if not isinstance(body, str) or len(body.encode("utf-8")) > 16_384:
+                                raise GitHubAuthorizationError("github_status_comment_invalid")
+                            if (
+                                isinstance(user, dict)
+                                and user.get("type") == "Bot"
+                                and user.get("login") == bot_login
+                                and marker in body.splitlines()
+                            ):
+                                matches.append(
+                                    str(
+                                        _positive_id(
+                                            item.get("id"), "github_status_comment_invalid"
+                                        )
+                                    )
+                                )
+                        if len(comments) < PAGE_SIZE:
+                            break
+                    else:
+                        raise GitHubAuthorizationError("github_status_comment_page_limit")
+                    if len(matches) > 1:
+                        raise GitHubAuthorizationError("github_status_comment_duplicate")
+                    return matches[0] if matches else None
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+
+    async def create_status_comment(
+        self,
+        repository_id: int,
+        github_user_id: int,
+        issue_number: int,
+        body: str,
+    ) -> str:
+        """Create a minimal public status comment using an issues-write token."""
+        marker = _status_comment_marker(body)
+        _validate_status_comment_target(issue_number, marker)
+        if len(body.encode("utf-8")) > 2_048:
+            raise GitHubAuthorizationError("github_status_comment_size_limit")
+        try:
+            async with asyncio.timeout(AUTHORIZATION_DEADLINE_SECONDS):
+                facts, token = await self._current_installation_for_issue_write(
+                    repository_id, github_user_id
+                )
+                budget = _RequestBudget()
+                async with httpx.AsyncClient(
+                    base_url=GITHUB_API_ORIGIN,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+                        "User-Agent": "Continuum",
+                    },
+                    timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
+                    follow_redirects=False,
+                    trust_env=False,
+                    transport=self._transport,
+                ) as client:
+                    headers = {"Authorization": f"Bearer {token.get_secret_value()}"}
+                    prefix = f"/repos/{quote(facts.owner, safe='')}/{quote(facts.name, safe='')}"
+                    bot_login = await self._current_app_bot_login(client, budget)
+                    await _require_ordinary_issue(client, budget, prefix, issue_number, headers)
+                    comment = await _request_json(
+                        client,
+                        budget,
+                        "POST",
+                        f"{prefix}/issues/{issue_number}/comments",
+                        headers=headers,
+                        json_body={"body": body},
+                    )
+                actor = comment.get("user")
+                if (
+                    comment.get("body") != body
+                    or not isinstance(actor, dict)
+                    or actor.get("type") != "Bot"
+                    or actor.get("login") != bot_login
+                ):
+                    raise GitHubAuthorizationError("github_status_comment_identity_invalid")
+                return str(
+                    _positive_id(comment.get("id"), "github_status_comment_identity_invalid")
+                )
+        except TimeoutError:
+            raise GitHubAuthorizationError("github_authorization_timeout") from None
+
+    async def _current_installation_for_issue_write(
+        self, repository_id: int, github_user_id: int
+    ) -> tuple[RepositoryPublicationFacts, SecretStr]:
+        authorized = await self._current(
+            repository_id,
+            github_user_id,
+            return_installation_token=True,
+            issues_permission="write",
+        )
+        if not isinstance(authorized, tuple):
+            raise GitHubAuthorizationError("github_installation_token_unavailable")
+        facts, token = authorized
+        assert isinstance(facts, RepositoryPublicationFacts)
+        assert isinstance(token, SecretStr)
+        return facts, token
+
+    async def _current_app_bot_login(
+        self, client: httpx.AsyncClient, budget: _RequestBudget
+    ) -> str:
+        app = await _request_json(
+            client,
+            budget,
+            "GET",
+            "/app",
+            headers={
+                "Authorization": (f"Bearer {_create_app_jwt(self._app_id, self._app_private_key)}")
+            },
+        )
+        slug = app.get("slug")
+        if (
+            type(app.get("id")) is not int
+            or app.get("id") != self._app_id
+            or not isinstance(slug, str)
+            or _COMPONENT_PATTERN.fullmatch(slug) is None
+        ):
+            raise GitHubAuthorizationError("github_app_identity_invalid")
+        return f"{slug}[bot]"
+
     async def _current(
         self,
         repository_id: int,
@@ -697,6 +868,96 @@ async def _request_json(
     if not isinstance(payload, dict):
         raise GitHubAuthorizationError("github_api_response_invalid")
     return payload
+
+
+async def _request_json_array(
+    client: httpx.AsyncClient,
+    budget: _RequestBudget,
+    method: str,
+    path: str,
+    *,
+    headers: Mapping[str, str],
+    params: Mapping[str, str | int] | None = None,
+) -> list[Any]:
+    """Bounded JSON-array variant used for issue-comment pagination."""
+    if not path.startswith("/") or path.startswith("//"):
+        raise GitHubAuthorizationError("github_api_path_invalid")
+    budget.start()
+    try:
+        async with client.stream(
+            method,
+            path,
+            headers=dict(headers),
+            params=params,
+        ) as response:
+            if 300 <= response.status_code < 400:
+                raise GitHubAuthorizationError("github_api_redirect_rejected")
+            if response.status_code < 200 or response.status_code >= 300:
+                raise GitHubAuthorizationError("github_api_request_failed")
+            content_length = response.headers.get("content-length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_RESPONSE_BYTES:
+                        raise GitHubAuthorizationError("github_authorization_response_limit")
+                except ValueError:
+                    raise GitHubAuthorizationError("github_api_response_invalid") from None
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > MAX_RESPONSE_BYTES:
+                    raise GitHubAuthorizationError("github_authorization_response_limit")
+                budget.consume(len(chunk))
+                body.extend(chunk)
+    except GitHubAuthorizationError:
+        raise
+    except (httpx.HTTPError, OSError, TimeoutError):
+        raise GitHubAuthorizationError("github_api_unavailable") from None
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise GitHubAuthorizationError("github_api_response_invalid") from None
+    if not isinstance(payload, list):
+        raise GitHubAuthorizationError("github_api_response_invalid")
+    return payload
+
+
+async def _require_ordinary_issue(
+    client: httpx.AsyncClient,
+    budget: _RequestBudget,
+    repository_prefix: str,
+    issue_number: int,
+    headers: Mapping[str, str],
+) -> None:
+    issue = await _request_json(
+        client,
+        budget,
+        "GET",
+        f"{repository_prefix}/issues/{issue_number}",
+        headers=headers,
+    )
+    if (
+        "pull_request" in issue
+        or _positive_id(issue.get("number"), "github_issue_identity_invalid") != issue_number
+    ):
+        raise GitHubAuthorizationError("github_issue_identity_invalid")
+
+
+def _validate_status_comment_target(issue_number: int, marker: str) -> None:
+    if (
+        type(issue_number) is not int
+        or not 1 <= issue_number <= 2_147_483_647
+        or not isinstance(marker, str)
+        or _STATUS_MARKER_PATTERN.fullmatch(marker) is None
+    ):
+        raise GitHubAuthorizationError("github_status_comment_target_invalid")
+
+
+def _status_comment_marker(body: str) -> str:
+    if not isinstance(body, str) or len(body.encode("utf-8")) > 2_048:
+        raise GitHubAuthorizationError("github_status_comment_size_limit")
+    markers = [line for line in body.splitlines() if _STATUS_MARKER_PATTERN.fullmatch(line)]
+    if len(markers) != 1:
+        raise GitHubAuthorizationError("github_status_comment_identity_invalid")
+    return markers[0]
 
 
 def _create_app_jwt(app_id: int, private_key: SecretStr) -> str:

@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection, Engine, text
@@ -180,6 +180,128 @@ class AdmissionService:
                 issue_snapshot=issue_snapshot,
                 continuation=None,
             )
+        except AdmissionError:
+            raise
+        except SQLAlchemyError as error:
+            raise _database_error(error) from None
+
+    async def admit_current_issue_comment(
+        self, *, repository_id: int, issue_number: int, comment_id: int
+    ) -> AdmissionResult:
+        """Admit one trusted ``/run`` command from its current verified issue.
+
+        The issue title and body are fetched through the same current-source
+        provider used by normal issue admission. The original comment ID becomes
+        the stable submission identity, so webhook retries cannot create another
+        run. This method keeps the ordinary disabled-by-default admission gate.
+        """
+        if self._enabled is not True:
+            raise AdmissionError("public_admission_disabled")
+        if any(
+            type(value) is not int or value <= 0
+            for value in (repository_id, issue_number, comment_id)
+        ):
+            raise AdmissionError("admission_source_invalid")
+        request_id = uuid5(
+            NAMESPACE_URL, f"continuumm:github-issue-comment:{repository_id}:{comment_id}"
+        )
+        prior_command = await asyncio.to_thread(
+            self._existing_github_command_admission,
+            repository_id,
+            issue_number,
+            comment_id,
+        )
+        if prior_command is not None:
+            return prior_command
+        registration_id = await asyncio.to_thread(
+            self._registration_id_for_repository, repository_id
+        )
+        snapshot = await asyncio.to_thread(self._registration, registration_id)
+        facts, issue_snapshot = await self._current_source(snapshot, issue_number)
+        if issue_snapshot is None:
+            raise AdmissionError("github_issue_verification_unavailable")
+        title = issue_snapshot["title"].strip()
+        body = (issue_snapshot["body"] or "").strip()
+        task = f"{title}\n\n{body}".strip()
+        try:
+            encoded_task = task.encode("utf-8")
+        except UnicodeEncodeError:
+            raise AdmissionError("admission_task_invalid") from None
+        if len(encoded_task) > _MAX_TASK_BYTES or not task:
+            raise AdmissionError("admission_task_invalid")
+        try:
+            canonicalize_initial_context({"task": task})
+        except AgentContextError:
+            raise AdmissionError("admission_task_invalid") from None
+        source = IssueSource(
+            kind="issue",
+            registration_id=registration_id,
+            issue_number=issue_number,
+            request_id=request_id,
+            task=task,
+            credential_id=snapshot.credential_id,
+        )
+        key_hash = _key_hash(f"github:{repository_id}:{comment_id}")
+        request_digest = _request_digest(source)
+        early = await asyncio.to_thread(
+            self._early_replay, source, key_hash, request_digest, _ROUTE
+        )
+        if early is not None:
+            return early
+        receipt = _validate_receipt(snapshot, facts)
+        try:
+            return await asyncio.to_thread(
+                self._commit,
+                source=source,
+                idempotency_hash=key_hash,
+                request_digest=request_digest,
+                content_digest=_content_digest(source),
+                route=_ROUTE,
+                snapshot=snapshot,
+                facts=facts,
+                receipt=receipt,
+                issue_snapshot=issue_snapshot,
+                continuation=None,
+                github_command_identity=(repository_id, issue_number, comment_id),
+            )
+        except AdmissionError:
+            raise
+        except SQLAlchemyError as error:
+            raise _database_error(error) from None
+
+    def _registration_id_for_repository(self, repository_id: int) -> int:
+        try:
+            with self._engine.begin() as connection:
+                RuntimeRepository(connection, self._principal)
+                registration_id = connection.execute(
+                    text(
+                        "SELECT registration_id FROM runtime_private.repository_registrations "
+                        "WHERE owner_id=:owner AND github_repository_id=:repo"
+                    ),
+                    {"owner": self._principal.account_id, "repo": repository_id},
+                ).scalar_one_or_none()
+            if registration_id is None:
+                raise AdmissionError("repository_not_found")
+            return registration_id
+        except AdmissionError:
+            raise
+        except SQLAlchemyError as error:
+            raise _database_error(error) from None
+
+    def _existing_github_command_admission(
+        self, repository_id: int, issue_number: int, comment_id: int
+    ) -> AdmissionResult | None:
+        try:
+            with self._engine.begin() as connection:
+                RuntimeRepository(connection, self._principal)
+                result = _github_command_admission_result(
+                    connection,
+                    self._principal.account_id,
+                    repository_id,
+                    issue_number,
+                    comment_id,
+                )
+            return result
         except AdmissionError:
             raise
         except SQLAlchemyError as error:
@@ -523,6 +645,7 @@ class AdmissionService:
         receipt: EligibilityReceipt,
         issue_snapshot: dict[str, Any] | None,
         continuation: Mapping[str, Any] | None,
+        github_command_identity: tuple[int, int, int] | None = None,
     ) -> AdmissionResult:
         owner_id = self._principal.account_id
         try:
@@ -552,6 +675,26 @@ class AdmissionService:
                     raise AdmissionError("account_unavailable")
                 if account["github_user_id"] != snapshot.github_user_id:
                     raise AdmissionError("github_identity_changed")
+                if github_command_identity is not None:
+                    repository_id, issue_number, comment_id = github_command_identity
+                    connection.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+                        {
+                            "identity": (
+                                f"continuum:github-command-admission:{owner_id}:"
+                                f"{repository_id}:{comment_id}"
+                            )
+                        },
+                    )
+                    prior_command = _github_command_admission_result(
+                        connection,
+                        owner_id,
+                        repository_id,
+                        issue_number,
+                        comment_id,
+                    )
+                    if prior_command is not None:
+                        return prior_command
                 if continuation is not None:
                     self._lock_continuation(connection, continuation)
                 credential_locks = {
@@ -693,6 +836,22 @@ class AdmissionService:
                         "digest": content_digest,
                     },
                 )
+                if github_command_identity is not None:
+                    repository_id, issue_number, comment_id = github_command_identity
+                    connection.execute(
+                        text(
+                            "INSERT INTO runtime_private.github_command_admissions "
+                            "(owner_id, repository_id, comment_id, issue_number, run_id) "
+                            "VALUES (:owner, :repo, :comment, :issue, :run)"
+                        ),
+                        {
+                            "owner": owner_id,
+                            "repo": repository_id,
+                            "comment": comment_id,
+                            "issue": issue_number,
+                            "run": run_id,
+                        },
+                    )
                 origin_kind, origin_key, request_id = _origin(source)
                 connection.execute(
                     text(
@@ -1148,6 +1307,40 @@ def _origin(source: _Source) -> tuple[str, str, UUID | None]:
         return "github_comment", f"{source.repository_id}:{source.comment_id}", None
     kind = "web_issue" if isinstance(source, IssueSource) else "free_text"
     return kind, str(source.request_id), source.request_id
+
+
+def _github_command_admission_result(
+    connection: Connection,
+    owner_id: UUID,
+    repository_id: int,
+    issue_number: int,
+    comment_id: int,
+) -> AdmissionResult | None:
+    command = (
+        connection.execute(
+            text(
+                "SELECT admission.issue_number, run.run_id, run.status, run.created_at, "
+                "run.deadline_at, pins.profile_id, pins.profile_version, pins.provider, "
+                "pins.model_id, pins.source_sha, pins.issue_snapshot, "
+                "(SELECT binding.credential_id FROM runtime_private.run_credentials AS binding "
+                "WHERE binding.owner_id=run.owner_id AND binding.run_id=run.run_id) "
+                "AS credential_id "
+                "FROM runtime_private.github_command_admissions AS admission "
+                "JOIN runtime_private.runs AS run USING (owner_id, run_id) "
+                "JOIN runtime_private.run_admission_pins AS pins USING (owner_id, run_id) "
+                "WHERE admission.owner_id=:owner AND admission.repository_id=:repo "
+                "AND admission.comment_id=:comment"
+            ),
+            {"owner": owner_id, "repo": repository_id, "comment": comment_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if command is None:
+        return None
+    if command["issue_number"] != issue_number:
+        raise AdmissionError("submission_request_id_conflict")
+    return _admission_result(command, replayed=True)
 
 
 def _validate_continuation_row(row: Mapping[Any, Any]) -> None:

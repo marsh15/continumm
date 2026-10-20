@@ -77,19 +77,34 @@ class CancellationService:
     def cancel(self, run_id: UUID) -> CancellationReceipt:
         return _retry_database_only(lambda: self._cancel_once(run_id))
 
-    def _cancel_once(self, run_id: UUID) -> CancellationReceipt:
+    def cancel_accepted_command(self, run_id: UUID, accepted_at: datetime) -> CancellationReceipt:
+        """Cancel from a fresh accepted command before its run deadline."""
+        if accepted_at.tzinfo is None:
+            raise CancellationError("github_command_acceptance_invalid")
+        return _retry_database_only(lambda: self._cancel_once(run_id, accepted_at=accepted_at))
+
+    def _cancel_once(
+        self, run_id: UUID, *, accepted_at: datetime | None = None
+    ) -> CancellationReceipt:
         with self._engine.begin() as connection:
             repository = RuntimeRepository(connection, self._principal)
             owner_id = self._principal.account_id
             run = connection.execute(
                 text(
-                    "SELECT status, deadline_at FROM runtime_private.runs "
+                    "SELECT status, deadline_at, clock_timestamp() AS database_now "
+                    "FROM runtime_private.runs "
                     "WHERE owner_id=:owner_id AND run_id=:run_id FOR UPDATE"
                 ),
                 {"owner_id": owner_id, "run_id": run_id},
             ).one_or_none()
             if run is None:
                 raise RuntimeRunNotFound("runtime_run_not_found")
+            if accepted_at is not None and (
+                run.deadline_at is None
+                or accepted_at >= run.deadline_at
+                or run.database_now >= run.deadline_at
+            ):
+                raise CancellationError("github_command_run_deadline_elapsed")
 
             # A repeated cancel and a cancel against another terminal outcome
             # are read-only. Terminal run state is never rewritten.

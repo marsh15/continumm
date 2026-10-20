@@ -606,7 +606,7 @@ The canonical scope is [plan.md](plan.md); acceptance criteria remain in
   [Contract](../docs/github-commands.md).
 
 Implementation is complete through T33 and T35–T37. T34's live demonstration
-remains deferred at the owner's request. T38 is unstarted. Public admission
+remains deferred at the owner's request. T38 shared command execution is implemented. Public admission
 remains disabled by default, and local tests do not establish hosted acceptance.
 
 The requested implementation workers use `gpt-6-luna` with `high` reasoning.
@@ -621,3 +621,12 @@ object-key checks, end-to-end HTTP deadlines and byte caps, conservative unknown
 mutation outcomes, verified cleanup, and preservation of reports after teardown
 failure. The one existing Starlette TestClient deprecation warning does not fail
 the suite. A transient Docker Hub 502 required a build retry.
+
+- T38 shared command execution and comment-only outbox: browser and GitHub
+  commands share transactional approval/rework/cancellation services. Durable
+  comment-to-run mappings recover lost acknowledgments before mutable issue reads.
+  Status effects support waiting and terminal states, one fenced send, App-bot
+  marker reconciliation and content/account expiry checks. Nine PostgreSQL cases
+  and four mocked GitHub adapter tests passed. Public admission remains disabled;
+  public inbox draining and T34 workflow composition remain deferred.
+  [Contract](../docs/github-command-execution.md).

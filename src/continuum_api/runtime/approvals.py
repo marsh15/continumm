@@ -233,6 +233,19 @@ class ApprovalService:
             candidate_object_key=row["object_key"],
         )
 
+    async def assert_current_repository_write_access(
+        self, repository_id: int, github_user_id: int
+    ) -> RepositoryPublicationFacts:
+        """Freshly prove owner write rights for trusted cross-channel commands."""
+        try:
+            facts = await self._publication_facts.current(repository_id, github_user_id)
+        except ApprovalError:
+            raise
+        except Exception:
+            raise ApprovalError("repository_authorization_pending") from None
+        _validate_publication_facts(facts, repository_id, github_user_id)
+        return facts
+
     async def download_publication_candidate(
         self, approval_id: UUID, manifest_sha256: str
     ) -> bytes:

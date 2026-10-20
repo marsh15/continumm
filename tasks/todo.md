@@ -440,8 +440,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T27, T30, T37.
 - **Scope:** Medium; shared command handlers, comment adapter and tests.
-- [ ] Approve/reject/changes/cancel follow the exact same transitions in browser and comments.
-- [ ] Status-comment creation has stable identity/reconciliation and never exposes private run content.
+- [x] Approve/reject/changes/cancel follow the exact same transitions in browser and comments.
+- [x] Status-comment creation has stable identity/reconciliation and never exposes private run content.
 - **Verify:** make test-target TARGET=tests/integration/test_cross_channel_decisions.py.
 
 ### T39 — Failed-delivery recovery
