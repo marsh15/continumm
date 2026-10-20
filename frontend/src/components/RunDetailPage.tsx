@@ -359,7 +359,7 @@ function RunDetailForRun({ runId }: { runId: string }) {
 
   if (snapshotQuery.isPending || !snapshotQuery.isFetchedAfterMount) {
     return (
-      <main className="page-shell run-page">
+      <main id="main-content" tabIndex={-1} className="page-shell run-page">
         <p className="eyebrow">Run detail</p>
         <h1>Loading run</h1>
         <p className="run-loading" role="status">Loading the current run snapshot…</p>
@@ -369,7 +369,7 @@ function RunDetailForRun({ runId }: { runId: string }) {
 
   if (snapshotQuery.isError || !snapshot) {
     return (
-      <main className="page-shell run-page">
+      <main id="main-content" tabIndex={-1} className="page-shell run-page">
         <p className="eyebrow">Run detail</p>
         <h1>Run unavailable</h1>
         <ErrorDisplay error={snapshotQuery.error} title="Could not load this run" />
@@ -381,7 +381,7 @@ function RunDetailForRun({ runId }: { runId: string }) {
   }
 
   return (
-    <main className="page-shell run-page">
+    <main id="main-content" tabIndex={-1} className="page-shell run-page">
       <div className="run-page-heading">
         <div>
           <p className="eyebrow">Run detail</p>
@@ -436,6 +436,12 @@ function RunDetailForRun({ runId }: { runId: string }) {
                 <time dateTime={snapshot.deadline_at}>{formatTimestamp(snapshot.deadline_at)}</time>
               ) : "No deadline recorded"}
             </dd>
+          </div>
+          <div>
+            <dt>Content access expires</dt>
+            <dd>{snapshot.content_expires_at ? (
+              <time dateTime={snapshot.content_expires_at}>{formatTimestamp(snapshot.content_expires_at)}</time>
+            ) : "Not recorded for this run"}</dd>
           </div>
           <div><dt>Latest event sequence</dt><dd><code>{snapshot.event_watermark}</code></dd></div>
         </dl>
@@ -519,7 +525,7 @@ export function RunDetailPage() {
   const { runId } = useParams();
   if (!runId) {
     return (
-      <main className="page-shell run-page">
+      <main id="main-content" tabIndex={-1} className="page-shell run-page">
         <p className="eyebrow">Run detail</p>
         <h1>Run unavailable</h1>
         <p className="timeline-message">A run ID is required to open this page.</p>

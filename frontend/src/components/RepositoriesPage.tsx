@@ -299,7 +299,7 @@ export function RepositoriesPage() {
   const loadError = repositoriesQuery.isError || credentialsQuery.isError;
 
   return (
-    <main className="page-shell repositories-page">
+    <main id="main-content" tabIndex={-1} className="page-shell repositories-page">
       <section className="repositories-intro" aria-labelledby="repositories-title">
         <p className="eyebrow">Settings</p>
         <h1 id="repositories-title">Repositories</h1>

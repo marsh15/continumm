@@ -471,8 +471,8 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T28, T33, T35, T38, T40.
 - **Scope:** Medium; targeted screen polish and browser checks, split by screen if needed.
-- [ ] Complete responsive layouts, keyboard/focus behavior, form errors and all specified failure states.
-- [ ] Inspect the rendered run/review pages against the documented visual direction; do not substitute decorative screens for functional evidence.
+- [x] Complete responsive layouts, keyboard/focus behavior, form errors and the implemented screens' specified failure states.
+- [x] Inspect the rendered run/review pages against the documented visual direction; do not substitute decorative screens for functional evidence.
 - **Verify:** make test-ui; make test-e2e; keyboard and narrow-screen review.
 
 ### T42 — Operator diagnostics and emergency controls

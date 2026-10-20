@@ -648,3 +648,11 @@ the suite. A transient Docker Hub 502 required a build retry.
   and the eight generated transition cases including legacy-schema teardown
   passed. The latest combined retention/export run passed four cases.
   [Retention contract](../docs/retention.md).
+
+- T41 interface quality: existing visual direction retained; added keyboard skip
+  navigation, route focus, descriptive titles, forced-color focus treatment and
+  content-access expiry next to the run deadline. Twenty-seven component tests
+  and thirteen Chromium tests passed, including 320/390/1280-pixel containment.
+  Real rendered synthetic-fixture screenshots were inspected and retained. These
+  checks do not claim the deferred hosted public journey is qualified.
+  [Rendered evidence](../docs/evidence/t41-ui.md).

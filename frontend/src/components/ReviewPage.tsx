@@ -170,11 +170,11 @@ function ReviewForRun({ runId }: { runId: string }) {
   }, [paths, selectedPath]);
 
   if (reviewQuery.isPending || snapshotQuery.isPending) {
-    return <main className="page-shell review-page"><p className="eyebrow">Candidate review</p><h1>Loading review</h1><p role="status">Loading the current review and run state…</p></main>;
+    return <main id="main-content" tabIndex={-1} className="page-shell review-page"><p className="eyebrow">Candidate review</p><h1>Loading review</h1><p role="status">Loading the current review and run state…</p></main>;
   }
   if (reviewQuery.isError || !review || snapshotQuery.isError || !snapshotQuery.data) {
     return (
-      <main className="page-shell review-page">
+      <main id="main-content" tabIndex={-1} className="page-shell review-page">
         <p className="eyebrow">Candidate review</p><h1>Review unavailable</h1>
         {notice ? <p className="review-notice" role="status">{notice}</p> : null}
         <ErrorDisplay error={reviewQuery.error ?? snapshotQuery.error} title="Could not load the current review" />
@@ -228,7 +228,7 @@ function ReviewForRun({ runId }: { runId: string }) {
   else if (!review.decision_eligible) blockedMessage = "A decision is not available for the current run state.";
 
   return (
-    <main className="page-shell review-page">
+    <main id="main-content" tabIndex={-1} className="page-shell review-page">
       <div className="review-page-heading">
         <div><p className="eyebrow">Candidate review · {revisionLabel}</p><h1>Review the proposed changes</h1></div>
         <div className="review-heading-links">
@@ -325,6 +325,6 @@ function ReviewForRun({ runId }: { runId: string }) {
 
 export function ReviewPage() {
   const { runId } = useParams();
-  if (!runId) return <main className="page-shell review-page"><p className="eyebrow">Candidate review</p><h1>Review unavailable</h1><p>A run ID is required to open this page.</p></main>;
+  if (!runId) return <main id="main-content" tabIndex={-1} className="page-shell review-page"><p className="eyebrow">Candidate review</p><h1>Review unavailable</h1><p>A run ID is required to open this page.</p></main>;
   return <ReviewForRun key={runId} runId={runId} />;
 }

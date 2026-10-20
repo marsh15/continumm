@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, Route, Routes } from "react-router";
+import { Link, Route, Routes, useLocation } from "react-router";
+import { useEffect, useRef } from "react";
 import { getLiveness, getReadiness } from "./api/client";
 import { RunDetailPage } from "./components/RunDetailPage";
 import { ReviewPage } from "./components/ReviewPage";
@@ -21,7 +22,7 @@ function FoundationPage() {
   });
 
   return (
-    <main className="page-shell">
+    <main id="main-content" tabIndex={-1} className="page-shell">
       <section className="intro" aria-labelledby="page-title">
         <p className="eyebrow">Developer service</p>
         <h1 id="page-title">The foundation is taking shape.</h1>
@@ -55,7 +56,7 @@ function FoundationPage() {
 
 function UnknownPage() {
   return (
-    <main className="page-shell not-found">
+    <main id="main-content" tabIndex={-1} className="page-shell not-found">
       <p className="eyebrow">Page not found</p>
       <h1>This page is not part of the current foundation.</h1>
       <Link to="/" className="text-link">
@@ -66,8 +67,22 @@ function UnknownPage() {
 }
 
 export function App() {
+  const { pathname } = useLocation();
+  const previousPath = useRef(pathname);
+  useEffect(() => {
+    const title = pathname.endsWith("/review") ? "Candidate review"
+      : pathname.startsWith("/runs/") ? "Run"
+      : pathname === "/settings/repositories" ? "Repositories"
+      : pathname === "/" ? "Service status" : "Page not found";
+    document.title = `${title} · Continumm`;
+    if (previousPath.current !== pathname) {
+      document.getElementById("main-content")?.focus();
+      previousPath.current = pathname;
+    }
+  }, [pathname]);
   return (
     <div className="app-frame">
+      <a className="skip-link" href="#main-content">Skip to main content</a>
       <header className="app-header">
         <Link to="/" className="brand">
           Continumm

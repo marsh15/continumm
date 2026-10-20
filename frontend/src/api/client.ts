@@ -464,6 +464,8 @@ function isRunSnapshot(value: unknown): value is RunSnapshot {
     Number.isInteger(value.revision) &&
     typeof value.created_at === "string" &&
     (value.deadline_at === null || typeof value.deadline_at === "string") &&
+    (value.content_expires_at === undefined || value.content_expires_at === null ||
+      (typeof value.content_expires_at === "string" && Number.isFinite(Date.parse(value.content_expires_at)))) &&
     isDecimalSequence(value.event_watermark)
   );
 }

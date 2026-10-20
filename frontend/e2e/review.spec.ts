@@ -209,3 +209,21 @@ test("renders repository diff and manifest content as inert text", async ({ page
   expect(await page.locator("[onerror]").count()).toBe(0);
   expect(await page.evaluate(() => (window as Window & { pwned?: boolean }).pwned)).toBeUndefined();
 });
+
+test("review remains keyboard reachable and contained at narrow widths", async ({ page }) => {
+  await installReviewRoutes(page);
+  await page.goto(`/runs/${runId}/review`);
+  await expect(page.getByRole("heading", { name: "Review the proposed changes" })).toBeVisible();
+  await expect(page).toHaveTitle("Candidate review · Continumm");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("main")).toBeFocused();
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(page.getByRole("heading", { name: "Review the proposed changes" })).toBeVisible();
+  }
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: "/tmp/continuum-t41-review.png", fullPage: true });
+});
