@@ -665,3 +665,13 @@ the suite. A transient Docker Hub 502 required a build retry.
   and denial of credential/session/raw-body/task reads and direct audit writes.
   Frontend typing and 29 component tests passed. No force-complete path exists.
   [Operator procedures](../docs/operator-runbooks.md).
+
+- T43 portable recovery: owner-scoped allowlisted state and verified archives
+  are encrypted with a separate AES-256-GCM key, journaled, limited to two local
+  exports and bounded by content expiry. Deletion invalidates exports. Restore
+  checks apply the current journal before content parsing, strip reusable
+  identity/ownership, expire approvals and stage only in an automatically removed
+  private quarantine. No production database import or mutation enablement is
+  implemented. The combined retention/export PostgreSQL target passed four
+  cases; final core verification passed 22 tests including current head and
+  legacy-schema teardown. [Recovery scope](../docs/backup-restore.md).

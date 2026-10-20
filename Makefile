@@ -1,6 +1,6 @@
 PYTHON_VERSION ?= 3.13
 
-.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-faults demo-local test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live
+.PHONY: bootstrap dev dev-web check format-check lint typecheck test test-target test-integration test-faults demo-local test-edge edge-check edge-format-check migrate-up migrate-down smoke-hosted smoke-sandbox sandbox-crash-fixture sandbox-observe sandbox-cleanup test-ui test-e2e openapi frontend-install frontend-openapi-check edge-install build build-package build-frontend build-container eval-live export restore-check
 
 bootstrap:
 	uv sync --locked --python $(PYTHON_VERSION)
@@ -112,3 +112,11 @@ build-frontend: frontend-openapi-check
 
 build-container:
 	docker build --tag continuum-api:local .
+
+export:
+	@test -n "$(OWNER_ID)" || (echo "Usage: make export OWNER_ID=<account-uuid>" >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python scripts/export_restore.py export --owner-id "$(OWNER_ID)"
+
+restore-check:
+	@test -n "$(FILE)" || (echo "Usage: make restore-check FILE=<encrypted-export.cpx>" >&2; exit 2)
+	uv run --locked --python $(PYTHON_VERSION) python scripts/export_restore.py restore-check --file "$(FILE)"

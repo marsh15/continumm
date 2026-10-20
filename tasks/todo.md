@@ -487,8 +487,9 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 
 - **Dependencies:** T40, T42.
 - **Scope:** Medium; export/restore commands and integrity tests.
-- [ ] Export verified references/content without any credentials/session secrets; enforce export expiry and deletion-journal invalidation.
-- [ ] In quarantine, apply the current deletion journal/expiry before reads, invalidate sessions/ownership and reconcile effects before writes.
+- [x] Export verified references/content without any credentials/session secrets; enforce export expiry and deletion-journal invalidation.
+- [x] In quarantine, apply the current deletion journal/expiry before reads, invalidate sessions/ownership and block writes pending effect reconciliation.
+  - Restore-check is offline validation; it performs no production database import.
 - **Verify:** make export; make restore-check using a disposable environment.
 
 ### Checkpoint N — Operability
