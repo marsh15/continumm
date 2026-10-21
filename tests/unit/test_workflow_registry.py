@@ -27,6 +27,7 @@ from continuum_api.runtime.workflow_registry import (
 )
 from continuum_api.tools.contracts import parse_tool_call
 from continuum_api.tools.schemas import fixed_model_tool_schemas
+from continuum_api.validation.managed_hidden_checks import ManagedHiddenCheckService
 from continuum_api.validation.service import ValidationService
 
 
@@ -136,3 +137,32 @@ def test_evaluation_refuses_publication_before_claim_even_if_approval_arrives(mo
     monkeypatch.setattr(runner, "_next_due_activity", lambda _run: ("publish_approved", False))
     with pytest.raises(UnknownActivity, match="runtime_activity_unregistered:publish_approved"):
         asyncio.run(runner.run_admitted(uuid4(), max_jobs=1, max_seconds=1))
+
+
+def test_hidden_check_dependencies_are_evaluation_only_and_paired() -> None:
+    hidden = cast(ManagedHiddenCheckService, object())
+    base = {
+        "engine": cast(Engine, object()),
+        "principal": Principal(uuid4()),
+        "checkpoints": cast(CheckpointStorageService, object()),
+        "fetch_source": cast(SourceFetcher, lambda *_: ()),
+        "agent_service": cast(DurableAgentLoopService, object()),
+        "model_adapter": object(),
+        "resolve_tool_policy_context": cast(PolicyResolver, lambda *_: None),
+        "resolve_validation_policy_context": cast(PolicyContextResolver, lambda *_: None),
+        "validation": cast(ValidationService, object()),
+        "approvals": cast(ApprovalService, object()),
+        "transitions": cast(TransitionService, object()),
+        "branch_publication": cast(GitHubBranchPublicationService, object()),
+        "pull_request_publication": cast(GitHubPullRequestService, object()),
+        "lease_owner": "hidden-check-test",
+    }
+    with pytest.raises(ValueError, match="workflow_hidden_dependencies_unpaired"):
+        build_workflow_activity_runner(**base, evaluation=True, hidden_checks=hidden)
+    with pytest.raises(ValueError, match="workflow_hidden_checks_evaluation_only"):
+        build_workflow_activity_runner(
+            **base,
+            evaluation=False,
+            hidden_checks=hidden,
+            hidden_check_selector=lambda *_: None,
+        )

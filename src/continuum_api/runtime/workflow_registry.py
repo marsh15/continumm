@@ -26,12 +26,14 @@ from continuum_api.runtime.transitions import NextWork, TransitionService
 from continuum_api.runtime.validation_activity import (
     ApprovalFreezeActivityHandler,
     CandidateValidationActivityHandler,
+    HiddenCheckSelector,
 )
 from continuum_api.runtime.validation_source import (
     PersistedCandidateValidationInputResolver,
     PolicyContextResolver,
 )
 from continuum_api.tools.schemas import fixed_model_tool_schemas
+from continuum_api.validation.managed_hidden_checks import ManagedHiddenCheckService
 from continuum_api.validation.service import ValidationService
 
 
@@ -71,6 +73,8 @@ def build_workflow_activity_runner(
     queue: QueueService | None = None,
     heartbeat_interval_seconds: float = 10.0,
     evaluation: bool = False,
+    hidden_checks: ManagedHiddenCheckService | None = None,
+    hidden_check_selector: HiddenCheckSelector | None = None,
 ) -> ActivityRunner:
     """Compose the fixed admitted workflow registry around injected services.
 
@@ -78,6 +82,10 @@ def build_workflow_activity_runner(
     repository, or network work. Activity names and handler bindings are fixed
     here so callers cannot add routes or override one handler independently.
     """
+    if (hidden_checks is None) != (hidden_check_selector is None):
+        raise ValueError("workflow_hidden_dependencies_unpaired")
+    if not evaluation and (hidden_checks is not None or hidden_check_selector is not None):
+        raise ValueError("workflow_hidden_checks_evaluation_only")
     tool_schemas = fixed_model_tool_schemas()
     source_preparation = SourcePreparationActivityHandler(
         engine, principal, checkpoints, fetch_source
@@ -104,6 +112,8 @@ def build_workflow_activity_runner(
         validation,
         approvals,
         transitions,
+        hidden_checks=hidden_checks,
+        hidden_check_selector=hidden_check_selector,
     )
     approval_freeze = ApprovalFreezeActivityHandler(engine, principal, approvals)
     handlers: dict[str, ActivityHandler] = {

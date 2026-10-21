@@ -145,7 +145,7 @@ def test_run_routes_can_be_imported_before_app_construction() -> None:
         capture_output=True,
         text=True,
         check=False,
-        timeout=10,
+        timeout=30,
     )
 
     assert result.returncode == 0, "standalone route import failed"

@@ -91,6 +91,36 @@ def test_execute_forwards_exact_ids_and_bounds_and_requires_ready_report(monkeyp
     assert report["independent_hidden_checks"] == "not_run"
 
 
+@pytest.mark.parametrize("state", ["passed", "failed", "invalid", "unknown", "partial"])
+def test_cli_preserves_known_evaluator_hidden_state(state: str) -> None:
+    output = io.StringIO()
+    result = eval_live.main(
+        _paid_args(),
+        settings_loader=lambda: object(),
+        evaluator=lambda *_args, **_kwargs: {
+            "protocol_smoke_ready": True,
+            "independent_hidden_checks": state,
+        },
+        stdout=output,
+    )
+    assert result == 0
+    assert json.loads(output.getvalue())["independent_hidden_checks"] == state
+
+
+def test_cli_discards_unrecognized_evaluator_hidden_state() -> None:
+    output = io.StringIO()
+    eval_live.main(
+        _paid_args(),
+        settings_loader=lambda: object(),
+        evaluator=lambda *_args, **_kwargs: {
+            "protocol_smoke_ready": True,
+            "independent_hidden_checks": "candidate_claimed_pass",
+        },
+        stdout=output,
+    )
+    assert json.loads(output.getvalue())["independent_hidden_checks"] == "not_run"
+
+
 def test_incomplete_drain_does_not_pass_live_gate() -> None:
     output = io.StringIO()
     result = eval_live.main(

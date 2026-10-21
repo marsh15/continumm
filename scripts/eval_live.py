@@ -20,6 +20,7 @@ from continuum_api.runtime.activity_runner import MAX_RUNNER_JOBS, MAX_RUNNER_SE
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _SAFE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_HIDDEN_CHECK_STATES = frozenset({"passed", "failed", "invalid", "unknown", "not_run", "partial"})
 
 
 def main(
@@ -76,7 +77,11 @@ def main(
                 "schema_version": 1,
                 "kind": "live_protocol_smoke",
                 "reported_at": datetime.now(UTC).isoformat(),
-                "independent_hidden_checks": "not_run",
+                "independent_hidden_checks": (
+                    report.get("independent_hidden_checks")
+                    if report.get("independent_hidden_checks") in _HIDDEN_CHECK_STATES
+                    else "not_run"
+                ),
                 "task_correctness": "not_assessed",
                 "execution_requested": options.execute_live,
                 "source_revision": _revision(),

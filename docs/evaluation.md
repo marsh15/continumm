@@ -85,10 +85,12 @@ Managed profiles currently execute repository tests and protect original tests.
 The [pinned hidden-check comparator](hidden-checks.md) is implemented and used by
 the local corpus. A managed operator service and fixed Python/Node runners are
 also implemented, with fake-adapter coverage and local image builds/probes.
-[Image evidence](evidence/t48-local-image-probes.json) is explicitly local. Its
-fenced activity, accepted-evidence
-and live harness integration and actual hosted execution remain missing. Live reports always
-state `independent_hidden_checks: not_run` and `task_correctness: not_assessed`.
+[Image evidence](evidence/t48-local-image-probes.json) is explicitly local.
+Fenced activity persistence and owner-scoped observation are now implemented.
+A trusted programmatic selector explicitly enables hidden checks in evaluation
+mode; CLI suite loading and actual hosted execution remain open. Verified accepted
+outcomes can be reported as passed, failed, invalid or unknown, while missing
+checks remain `not_run`. Overall `task_correctness` stays `not_assessed`.
 The local fixture runner's hidden checks do not establish managed hidden-check
 coverage. No LLM judge replaces independent evidence.
 

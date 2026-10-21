@@ -25,12 +25,14 @@ from continuum_api.runtime.workflow_resources import (
     _read_admission_pins,
     build_workflow_resources,
 )
+from continuum_api.validation.managed_hidden_checks import ManagedHiddenCheckEvidence
 
 _SAFE_CLASS = re.compile(r"^[a-z0-9_]{1,64}$")
 _PROTOCOL_PASS = frozenset({"passed", "passed_with_baseline_failure"})
 _STOP_REASONS = frozenset({"idle", "waiting", "job_limit", "time_limit"})
 MAX_EVALUATION_JOBS = 100
 MAX_EVALUATION_SECONDS = 300.0
+_HIDDEN_STATUSES = frozenset({"passed", "failed", "invalid", "unknown", "not_run"})
 
 
 class LiveEvaluationError(RuntimeError):
@@ -99,6 +101,7 @@ async def run_live_evaluation(
     resource_factory: Callable[..., Any] | None = None,
     snapshot_reader: Callable[[Engine, UUID, UUID], Mapping[str, Any]] | None = None,
     admission_reader: Callable[[Engine, UUID, UUID], Any] | None = None,
+    hidden_check_selector: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     """Observe or boundedly drain two selected-provider admitted run UUIDs.
 
@@ -116,6 +119,8 @@ async def run_live_evaluation(
         raise LiveEvaluationError("live_runs_must_differ")
     if type(execute) is not bool:
         raise LiveEvaluationError("live_execute_flag_invalid")
+    if hidden_check_selector is not None and (not execute or not callable(hidden_check_selector)):
+        raise LiveEvaluationError("live_hidden_selector_invalid")
     _check_limits(max_jobs, max_seconds)
     selected_provider = _provider(provider)
     factory = resource_factory or build_workflow_resources
@@ -153,7 +158,7 @@ async def run_live_evaluation(
                 "outcome": "observed",
                 "protocol_smoke_ready": False,
                 "cases": cases,
-                "independent_hidden_checks": "not_run",
+                "independent_hidden_checks": _aggregate_hidden_checks(cases),
                 "task_correctness": "not_assessed",
             }
 
@@ -165,7 +170,9 @@ async def run_live_evaluation(
             resources: WorkflowResources | Any | None = None
             drain_started: float | None = None
             try:
-                resources = await _call_factory(factory, settings, account_id, run_id)
+                resources = await _call_factory(
+                    factory, settings, account_id, run_id, hidden_check_selector
+                )
                 drain_started = time.monotonic()
                 receipt = await resources.runner.run_admitted(
                     run_id, max_jobs=max_jobs, max_seconds=max_seconds
@@ -226,7 +233,7 @@ async def run_live_evaluation(
             "outcome": "protocol_smoke_ready" if ready else "failed" if failed else "incomplete",
             "protocol_smoke_ready": ready,
             "cases": results,
-            "independent_hidden_checks": "not_run",
+            "independent_hidden_checks": _aggregate_hidden_checks(results),
             "task_correctness": "not_assessed",
         }
     finally:
@@ -274,9 +281,16 @@ def _reject_public_allocations(engine: Engine, account_id: UUID, run_id: UUID) -
 
 
 async def _call_factory(
-    factory: Callable[..., Any], settings: Any, account_id: UUID, run_id: UUID
+    factory: Callable[..., Any],
+    settings: Any,
+    account_id: UUID,
+    run_id: UUID,
+    hidden_check_selector: Callable[..., Any] | None = None,
 ) -> Any:
-    value = factory(settings, account_id, run_id, evaluation=True)
+    kwargs: dict[str, Any] = {"evaluation": True}
+    if hidden_check_selector is not None:
+        kwargs["hidden_check_selector"] = hidden_check_selector
+    value = factory(settings, account_id, run_id, **kwargs)
     return await value if inspect.isawaitable(value) else value
 
 
@@ -347,6 +361,10 @@ def _safe_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
         "public_allocations",
         "protocol_smoke_ready",
         "independent_hidden_checks",
+        "hidden_check_suite_id",
+        "hidden_check_suite_sha256",
+        "hidden_check_count",
+        "hidden_check_passed_count",
         "task_correctness",
         "dispatches",
     }
@@ -421,10 +439,11 @@ def read_live_evaluation_snapshot(engine: Engine, account_id: UUID, run_id: UUID
             results = (
                 connection.execute(
                     text(
-                        "SELECT result_id,result_sha256,payload "
+                        "SELECT result_id,result_sha256,payload,owner_id,run_id,step_id,job_id,"
+                        "generation,attempt_id,lease_owner,run_status,event_sequence,artifact_id "
                         "FROM runtime_private.accepted_results "
                         "WHERE owner_id=:owner AND run_id=:run "
-                        "ORDER BY event_sequence LIMIT 512"
+                        "ORDER BY event_sequence DESC LIMIT 512"
                     ),
                     {"owner": account_id, "run": run_id},
                 )
@@ -508,6 +527,17 @@ def read_live_evaluation_snapshot(engine: Engine, account_id: UUID, run_id: UUID
             validation_allocations_match = _operator_validation_allocations_match(
                 connection, account_id, run_id, result_rows, approval_data
             )
+            hidden_checks, hidden_metadata = _hidden_check_snapshot(
+                connection,
+                account_id,
+                run_id,
+                revision=run["revision"],
+                repository_id=run["github_repository_id"],
+                profile_id=run["profile_id"],
+                profile_version=run["profile_version"],
+                results=result_rows,
+                observed_at=database_now,
+            )
             metadata = _RunMetadata(
                 run_id=run["run_id"],
                 status=run["status"],
@@ -575,7 +605,8 @@ def read_live_evaluation_snapshot(engine: Engine, account_id: UUID, run_id: UUID
                 "operator_allocations": int(operator_allocations or 0),
                 "public_allocations": int(public_allocations or 0),
                 "protocol_smoke_ready": bool(protocol_ready),
-                "independent_hidden_checks": "not_run",
+                "independent_hidden_checks": hidden_checks,
+                **hidden_metadata,
                 "task_correctness": "not_assessed",
             }
     except LiveEvaluationError:
@@ -801,6 +832,271 @@ def _operator_validation_allocations_match(
         .all()
     )
     return set(rows) == set(allocation_ids)
+
+
+def _hidden_check_snapshot(
+    connection: Any,
+    account_id: UUID,
+    run_id: UUID,
+    *,
+    revision: int,
+    repository_id: int | None,
+    profile_id: str,
+    profile_version: str,
+    results: Sequence[Mapping[str, Any]],
+    observed_at: datetime,
+) -> tuple[str, dict[str, Any]]:
+    """Verify only the latest current-revision accepted candidate-validation record."""
+    candidates = []
+    for row in results:
+        payload = row.get("payload")
+        if not isinstance(payload, dict) or payload.get("run_revision") != revision:
+            continue
+        if not any(key in payload for key in ("approval_validation", "validation_evidence")):
+            continue
+        candidates.append(row)
+    if not candidates:
+        return "not_run", {}
+    row = max(candidates, key=lambda item: int(item.get("event_sequence") or 0))
+    payload = row.get("payload")
+    if not _accepted_payload_hash_matches(row):
+        return "unknown", {}
+    if not isinstance(payload, dict) or "hidden_check_evidence" not in payload:
+        # Attention records can describe rejected observations without retaining
+        # malformed evidence. They never establish a passing check.
+        if isinstance(payload, dict):
+            if payload.get("hidden_check_status") in {"invalid", "unknown"}:
+                return payload["hidden_check_status"], {}
+            if payload.get("hidden_check_error_code"):
+                return "unknown", {}
+        return "not_run", {}
+    try:
+        candidate_id = UUID(str(payload["candidate_artifact_id"]))
+    except (KeyError, TypeError, ValueError):
+        return "invalid", {}
+    normal = _normal_validation_evidence(payload)
+    if normal is None:
+        return "unknown", {}
+    hidden_value = payload.get("hidden_check_evidence")
+    try:
+        hidden = ManagedHiddenCheckEvidence.model_validate_json(
+            _canonical_json(hidden_value), strict=True
+        )
+    except Exception:
+        return "invalid", {}
+    if (
+        row.get("owner_id") != account_id
+        or row.get("run_id") != run_id
+        or hidden.run_id != run_id
+        or hidden.step_id != row.get("step_id")
+        or hidden.attempt_id != row.get("attempt_id")
+        or hidden.generation != row.get("generation")
+        or payload.get("run_revision") != revision
+        or payload.get("candidate_artifact_id") != str(candidate_id)
+        or normal.classification.value not in _PROTOCOL_PASS
+        or normal.candidate.outcome.value != "passed"
+        or normal.candidate.profile_id != profile_id
+        or normal.candidate.profile_version != profile_version
+        or normal.candidate.repository_id != repository_id
+        or hidden.execution.profile_id != profile_id
+        or hidden.execution.profile_version != profile_version
+        or normal.candidate.image != hidden.execution.image
+        or normal.candidate.runtime_version != hidden.execution.runtime_version
+        or normal.candidate.npm_version != hidden.execution.npm_version
+        or normal.candidate.base_commit_sha != hidden.execution.base_commit_sha
+        or normal.candidate.baseline_git_tree_sha256 != hidden.execution.baseline_git_tree_sha256
+        or normal.candidate.baseline_archive_sha256 != hidden.execution.baseline_archive_sha256
+        or normal.candidate.baseline_archive_tree_sha256
+        != hidden.execution.baseline_archive_tree_sha256
+        or normal.candidate.artifact_id != hidden.execution.artifact_id
+        or normal.candidate.package_count != hidden.execution.package_count
+        or normal.candidate.source_archive_sha256 != hidden.execution.source_archive_sha256
+        or normal.candidate.source_tree_sha256 != hidden.execution.source_tree_sha256
+        or normal.candidate.allocation_id == hidden.execution.allocation_id
+        or normal.baseline.allocation_id == hidden.execution.allocation_id
+    ):
+        return "invalid", {}
+    step = (
+        connection.execute(
+            text(
+                "SELECT activity,revision FROM runtime_private.steps "
+                "WHERE owner_id=:owner AND run_id=:run AND step_id=:step"
+            ),
+            {"owner": account_id, "run": run_id, "step": hidden.step_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if step is None or step["activity"] != "candidate_validation" or step["revision"] != revision:
+        return "invalid", {}
+    latest_artifact_id = connection.execute(
+        text(
+            "SELECT artifact_id FROM runtime_private.accepted_results "
+            "WHERE owner_id=:owner AND run_id=:run AND artifact_id IS NOT NULL "
+            "ORDER BY event_sequence DESC LIMIT 1"
+        ),
+        {"owner": account_id, "run": run_id},
+    ).scalar_one_or_none()
+    if latest_artifact_id != candidate_id:
+        return "invalid", {}
+    artifact = (
+        connection.execute(
+            text(
+                "SELECT status,archive_sha256,tree_sha256,github_repository_id,content_expires_at "
+                "FROM runtime_private.artifact_uploads WHERE owner_id=:owner AND run_id=:run "
+                "AND upload_id=:artifact"
+            ),
+            {"owner": account_id, "run": run_id, "artifact": candidate_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if (
+        artifact is None
+        or artifact["status"] != "committed"
+        or artifact["github_repository_id"] != repository_id
+        or not _stored_digest_matches(
+            artifact["archive_sha256"], normal.candidate.source_archive_sha256
+        )
+        or not _stored_digest_matches(artifact["tree_sha256"], normal.candidate.source_tree_sha256)
+        or artifact["content_expires_at"] is None
+        or artifact["content_expires_at"] <= observed_at
+    ):
+        return "invalid", {}
+    baseline_id = normal.baseline.artifact_id
+    baseline_artifact = (
+        connection.execute(
+            text(
+                "SELECT status,archive_sha256,tree_sha256,github_repository_id,content_expires_at "
+                "FROM runtime_private.artifact_uploads WHERE owner_id=:owner AND run_id=:run "
+                "AND upload_id=:artifact"
+            ),
+            {"owner": account_id, "run": run_id, "artifact": baseline_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if (
+        baseline_artifact is None
+        or baseline_artifact["status"] != "committed"
+        or baseline_artifact["github_repository_id"] != repository_id
+        or not _stored_digest_matches(
+            baseline_artifact["archive_sha256"], normal.baseline.source_archive_sha256
+        )
+        or not _stored_digest_matches(
+            baseline_artifact["tree_sha256"], normal.baseline.source_tree_sha256
+        )
+        or baseline_artifact["content_expires_at"] is None
+        or baseline_artifact["content_expires_at"] <= observed_at
+    ):
+        return "invalid", {}
+    allocation_key = f"t48:hidden:v1:{hidden.invocation_sha256}"
+    allocation = (
+        connection.execute(
+            text(
+                "SELECT allocation_id,owner_id,run_id,step_id,job_id,generation,attempt_id,"
+                "lease_owner,allocation_class,status FROM runtime_private.sandbox_allocations "
+                "WHERE owner_id=:owner AND run_id=:run AND logical_key=:logical_key "
+                "AND allocation_id=:allocation"
+            ),
+            {
+                "owner": account_id,
+                "run": run_id,
+                "logical_key": allocation_key,
+                "allocation": hidden.execution.allocation_id,
+            },
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if (
+        allocation is None
+        or allocation["allocation_id"] != hidden.execution.allocation_id
+        or allocation["owner_id"] != row.get("owner_id")
+        or allocation["run_id"] != row.get("run_id")
+        or allocation["step_id"] != row.get("step_id")
+        or allocation["job_id"] != row.get("job_id")
+        or allocation["generation"] != row.get("generation")
+        or allocation["attempt_id"] != row.get("attempt_id")
+        or allocation["lease_owner"] != row.get("lease_owner")
+        or allocation["allocation_class"] != "operator"
+        or allocation["status"] not in {"stopped", "destroyed"}
+        or allocation["status"] != hidden.execution.allocation_status
+    ):
+        return "invalid", {}
+    outcome = hidden.comparison.outcome
+    status = "passed" if outcome == "passed" else outcome
+    if status not in _HIDDEN_STATUSES - {"not_run"}:
+        return "invalid", {}
+    expected_classification = {
+        "failed": "hidden_check_failed",
+        "invalid": "hidden_check_invalid",
+        "unknown": "hidden_check_unknown",
+    }.get(status)
+    if "classification" in payload and (
+        expected_classification is None or payload.get("classification") != expected_classification
+    ):
+        return "invalid", {}
+    return status, {
+        "hidden_check_suite_id": hidden.suite_id,
+        "hidden_check_suite_sha256": hidden.suite_sha256,
+        "hidden_check_count": hidden.comparison.total_count,
+        "hidden_check_passed_count": hidden.comparison.passed_count,
+    }
+
+
+def _stored_digest_matches(value: Any, expected_hex: str) -> bool:
+    return (
+        isinstance(value, (bytes, bytearray, memoryview))
+        and len(value) == 32
+        and bytes(value).hex() == expected_hex
+    )
+
+
+def _accepted_payload_hash_matches(row: Mapping[str, Any]) -> bool:
+    payload = row.get("payload")
+    digest = row.get("result_sha256")
+    if not isinstance(payload, dict) or not isinstance(digest, (bytes, bytearray, memoryview)):
+        return False
+    try:
+        return bytes(digest) == hashlib.sha256(_canonical_json(payload).encode("utf-8")).digest()
+    except (TypeError, ValueError, UnicodeError):
+        return False
+
+
+def _normal_validation_evidence(payload: Mapping[str, Any]) -> Any | None:
+    value = payload.get("approval_validation", payload.get("validation_evidence"))
+    if not isinstance(value, dict):
+        return None
+    from continuum_api.validation.contracts import ValidationEvidence
+
+    try:
+        return ValidationEvidence.model_validate_json(_canonical_json(value), strict=True)
+    except (ValidationError, TypeError, ValueError):
+        return None
+
+
+def _aggregate_hidden_checks(cases: Mapping[str, Any]) -> str:
+    values = []
+    for case in cases.values():
+        if not isinstance(case, Mapping):
+            continue
+        snapshot = case.get("snapshot")
+        source = snapshot if isinstance(snapshot, Mapping) else case
+        values.append(source.get("independent_hidden_checks"))
+    if len(values) != 2 or any(value not in _HIDDEN_STATUSES for value in values):
+        return "unknown"
+    if values == ["not_run", "not_run"]:
+        return "not_run"
+    if values == ["passed", "passed"]:
+        return "passed"
+    if "unknown" in values:
+        return "unknown"
+    if "invalid" in values:
+        return "invalid"
+    if "failed" in values:
+        return "failed"
+    return "partial"
 
 
 def _evidence_digest_matches(

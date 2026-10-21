@@ -4,7 +4,8 @@ The application-side comparator in
 [`validation/hidden_checks.py`](../src/continuum_api/validation/hidden_checks.py)
 validates observations against a trusted suite. It executes no candidate code.
 The trusted local corpus uses it. A managed service and fixed runner path are
-implemented below; activity integration and actual hosted execution remain open.
+implemented below, with fenced activity persistence and observation. CLI suite
+loading and actual hosted execution remain open.
 It does not qualify a live run or change approval/publication behavior.
 
 A suite pins its ID, profile/version, exact candidate archive and source-tree
@@ -48,9 +49,9 @@ input/output entrypoint with deny-all egress, enforce process time/output caps,
 use exact provider-session observations, and verify cleanup. Repository test commands
 must not run before that entrypoint in the same allocation. Suite/source pins
 and the comparison receipt must be retained with the run's accepted evidence.
-Until the activity/report integration is implemented and hosted execution is
-exercised, live reports continue to
-say `independent_hidden_checks: not_run` and `task_correctness: not_assessed`.
+Observers can now report hash-verified, current accepted hidden outcomes. A
+run without accepted hidden evidence remains `not_run`; overall task correctness
+remains `not_assessed`. No actual hosted outcome has yet been measured.
 
 The local corpus executes only its allowlisted literal fixtures, passes inputs
 without expected answers, and records comparison receipts for both original and
@@ -62,8 +63,9 @@ runner hashes and results.
 
 `validation/managed_hidden_checks.py` now provides an internal
 `ManagedHiddenCheckService`. Evaluation-mode workflow resources expose it as
-`hidden_checks`; normal workflow resources do not. There is no public endpoint
-or automatic activity for it, and the live CLI does not invoke it yet.
+`hidden_checks`; normal workflow resources do not. There is no public endpoint.
+A trusted operator selector can explicitly enable it inside candidate validation;
+the CLI has no suite-loading option yet.
 
 The caller supplies the current execution lease, verified candidate source
 authorization, a trusted suite and an operator-selected entry file. Explicit
@@ -94,19 +96,61 @@ After a profile returns, the service verifies source, image, runtime, allocation
 and stopped/destroyed cleanup identities before comparing observations. Returned
 `ManagedHiddenCheckEvidence` binds the run/attempt, suite, entry/invocation and
 execution/comparison stream hashes. It contains no raw process output or expected
-answers. It is **prepared evidence**, not an accepted runtime result: the future
-activity must still commit it through the existing fenced transition. Failures
+answers. The service return is **prepared evidence**. The candidate-validation
+handler now commits it through the existing fenced transition as described below. Failures
 or cancellation attempt owner-scoped, journaled cleanup; uncertain resources stay
 charged and cannot produce passing evidence.
 
 The profile Dockerfiles now include these runners. Deployment requires rebuilding
 both profile images and configuring their new immutable digests; an old image
-without the helper cannot qualify. The two images now build locally, and trusted literal probes passed inside
-non-root, read-only Docker containers with no networking. The Node runtime
+without the helper cannot qualify. The two images now build locally, and
+trusted literal probes passed inside non-root, read-only Docker containers with no networking. The Node runtime
 identity check also passed after fixing duplicate npm config paths.
 [Raw local image evidence](evidence/t48-local-image-probes.json) records local
 image IDs and source hashes; these are not published registry digests. Fake
-managed adapters cover the service orchestration. Actual provider execution, the
-fenced activity/evidence integration and live CLI/report integration remain open.
-Live reports therefore still report hidden checks as `not_run` and task
-correctness as `not_assessed`.
+managed adapters cover service orchestration. PostgreSQL tests now cover fenced
+activity persistence, approval freezing and observation. Actual provider execution
+and CLI suite loading remain open; no passing deployed qualification is claimed.
+
+
+## Fenced candidate-validation integration
+
+Programmatic callers can pass a trusted `hidden_check_selector` to
+`build_workflow_resources(..., evaluation=True)` or to
+`run_live_evaluation(..., execute=True)`. The selector receives the current lease
+and verified candidate inputs and returns a `HiddenCheckSelection` containing
+an immutable suite and entry path. It is operator-owned code: expected answers
+must not come from a model or the candidate repository. Selection is resolved
+and source/entry bindings are checked before validation costs begin. Default
+calls install no selector and do not run hidden checks.
+
+Normal baseline/candidate validation runs first. Only a normal pass proceeds to
+the independently allocated probe. Revision, artifact and lease fences are
+checked before and after it. A passing hidden receipt must match the selected
+suite, entry, source, profile image/runtime and current execution identity.
+`ApprovalService.record_validation()` rechecks the third operator allocation and
+stores the receipt alongside `approval_validation` in the same accepted T08
+result. The exact result hash, including hidden metadata, is anchored by the
+approval manifest. Freeze rechecks hidden evidence and its persisted allocation
+using the original accepted execution identity rather than the later freeze
+lease. Both normal validation allocations must match the explicitly configured
+public/operator class; normal application services default to public.
+
+A failed, invalid or unknown hidden outcome leads to `needs_attention`, with no
+approval-freeze job. Operational errors record a safe code and unknown status.
+Cancellation or a lost lease cannot create an accepted result from the stale
+attempt. Invalid responses need not be retained to record their invalid status.
+Expected answers, inputs and raw command output never enter these receipts.
+
+The owner-scoped observer checks the accepted payload hash, current revision and
+step, latest candidate, retained baseline/candidate objects and authoritative
+operator allocation before displaying an outcome. Source digests use actual
+PostgreSQL bytea values. It preserves invalid/unknown attention states instead
+of calling them unexecuted. Only suite IDs/digests and counts are returned.
+The combined report distinguishes passed, failed, invalid, unknown, partial and
+not-run cases; `task_correctness` stays `not_assessed`. The CLI preserves only
+these known outcome labels and still requires its existing execution opt-ins.
+
+The PostgreSQL proofs use fake validation/probe results and seeded allocation
+records. They verify persistence and fencing, not hosted execution or model
+quality. Public admission and evaluation publication remain disabled.

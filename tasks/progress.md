@@ -980,3 +980,42 @@ the suite. A transient Docker Hub 502 required a build retry.
   The returned service receipt is prepared evidence, not a completed T48 live
   gate; live reports still say hidden checks `not_run` and correctness
   `not_assessed`. Public admission remains disabled.
+
+
+### 21 October 2026 — T48 fenced hidden validation and observation
+
+- Added an evaluation-only trusted selector that binds a suite and entry to the
+  current verified candidate before validation spending. The handler retains
+  revision/artifact/lease fences around selection and hidden execution. Normal
+  validation must pass first; hidden failure, invalid data or operational
+  uncertainty leads to needs attention without approval work.
+- Approval persistence now accepts optional typed hidden evidence alongside
+  normal validation in the same fenced T08 result. It verifies the third
+  allocation, exact execution/source/environment identities and operator pool.
+  Freeze rechecks that allocation against the original accepted attempt and
+  anchors the complete payload hash, including hidden metadata, in the manifest.
+- Fixed the evaluation approval blocker: record/freeze allocation class is now
+  explicitly configured as operator for evaluation and public by default.
+  Publication remains absent from the evaluation activity registry.
+- Added owner-scoped observation of accepted hidden evidence. It checks the
+  canonical result hash, current step/revision, latest candidate, retained
+  baseline/candidate PostgreSQL bytea digests and exact allocation identity.
+  Invalid/unknown observations without valid receipts remain invalid/unknown,
+  rather than being mislabeled as never run. Reports expose only suite/count
+  metadata and keep overall task correctness unassessed.
+- Verification: 63 targeted unit/CLI checks passed, and 29 serial PostgreSQL
+  integration/regression tests passed with no skips, including actual handler
+  T08 acceptance, hidden failure, lease loss, manifest hash anchoring and observed
+  passed/failed outcomes. The owned disposable database was stopped and removed.
+- Local verification also exposed short startup limits on a busy host: the
+  trusted literal corpus runner and app-import smoke now use bounded 30-second
+  startup allowances. Managed provider, lease and budget limits were not changed.
+- Final backend verification passed 854 tests with 217 optional database skips;
+  Ruff and mypy (110 source files) passed. All 29 console tests passed with one
+  worker after a parallel loading-state timeout; frontend type/API checks passed.
+  All 30 Edge tests, Edge type/format checks and wheel/source builds passed;
+  97 affected local documentation links were verified.
+- No live provider, sandbox or GitHub operations ran. CLI suite loading and
+  actual hosted qualification remain open; the new selector is programmatic
+  operator configuration and is disabled by default. Historical local image and
+  fixture reports are unchanged. Public admission remains disabled.

@@ -51,6 +51,15 @@ def test_workflow_sandbox_configuration_requires_only_selected_profile_image() -
         settings.require_profile_image("other")
 
 
+def test_factory_rejects_hidden_selector_outside_evaluation_before_resource_construction() -> None:
+    with pytest.raises(resources.WorkflowConfigurationError, match="hidden_checks_evaluation_only"):
+        asyncio.run(
+            resources.build_workflow_resources(
+                object(), uuid4(), uuid4(), hidden_check_selector=lambda *_: None
+            )
+        )
+
+
 def test_admission_pin_read_is_owner_scoped_and_allows_missing_key(monkeypatch) -> None:
     account_id, run_id = uuid4(), uuid4()
     now = datetime.now(UTC)
@@ -244,6 +253,8 @@ def test_factory_wires_admitted_profile_and_provider_without_hosted_calls(
 
     validation = calls["validation"]
     assert calls["evaluation"] is evaluation
+    assert calls["hidden_checks"] is None
+    assert calls["hidden_check_selector"] is None
     assert validation._allocation_class == ("operator" if evaluation else "public")
     assert built.runner is runner
     if evaluation:

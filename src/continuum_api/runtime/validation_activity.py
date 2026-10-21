@@ -16,8 +16,15 @@ from continuum_api.runtime.approvals import ApprovalService
 from continuum_api.runtime.leases import ExecutionLease, LeaseLost, lock_current_execution
 from continuum_api.runtime.persistence import Principal, RunStatus, RuntimeRepository
 from continuum_api.runtime.transitions import TransitionService
+from continuum_api.sandbox.hidden_probe_recipe import HiddenProbe
 from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
 from continuum_api.validation.contracts import ValidationClassification
+from continuum_api.validation.hidden_checks import HiddenCheckSuite
+from continuum_api.validation.managed_hidden_checks import (
+    ManagedHiddenCheckError,
+    ManagedHiddenCheckEvidence,
+    ManagedHiddenCheckService,
+)
 from continuum_api.validation.service import ValidationService
 
 
@@ -37,6 +44,20 @@ class CandidateValidationInputResolver(Protocol):
     ) -> CandidateValidationInput | Awaitable[CandidateValidationInput]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class HiddenCheckSelection:
+    """Trusted operator-selected hidden suite and candidate entry point."""
+
+    suite: HiddenCheckSuite
+    entry_path: str
+
+
+class HiddenCheckSelector(Protocol):
+    def __call__(
+        self, lease: ExecutionLease, inputs: CandidateValidationInput
+    ) -> HiddenCheckSelection | Awaitable[HiddenCheckSelection]: ...
+
+
 class CandidateValidationActivityHandler:
     """Run fixed candidate validation and persist its exact result under T08."""
 
@@ -48,13 +69,20 @@ class CandidateValidationActivityHandler:
         validation: ValidationService,
         approvals: ApprovalService,
         transitions: TransitionService,
+        *,
+        hidden_checks: ManagedHiddenCheckService | None = None,
+        hidden_check_selector: HiddenCheckSelector | None = None,
     ) -> None:
+        if (hidden_checks is None) != (hidden_check_selector is None):
+            raise ValueError("candidate_validation_hidden_dependencies_unpaired")
         self._engine = engine
         self._principal = principal
         self._resolver = resolver
         self._validation = validation
         self._approvals = approvals
         self._transitions = transitions
+        self._hidden_checks = hidden_checks
+        self._hidden_check_selector = hidden_check_selector
 
     async def __call__(self, lease: ExecutionLease) -> Any:
         revision = await asyncio.to_thread(self._assert_current_candidate_step, lease)
@@ -68,6 +96,12 @@ class CandidateValidationActivityHandler:
             raise ValidationActivityError("candidate_validation_inputs_invalid")
         await asyncio.to_thread(self._assert_persisted_artifact_binding, lease, inputs)
 
+        selection: HiddenCheckSelection | None = None
+        if self._hidden_check_selector is not None:
+            selection = await self._resolve_hidden_selection(lease, inputs)
+            await asyncio.to_thread(self._assert_current_candidate_step, lease, revision)
+            await asyncio.to_thread(self._assert_persisted_artifact_binding, lease, inputs)
+
         evidence = await self._validation.run(
             self._principal,
             lease,
@@ -80,8 +114,79 @@ class CandidateValidationActivityHandler:
             ValidationClassification.PASSED,
             ValidationClassification.PASSED_WITH_BASELINE_FAILURE,
         }:
+            hidden_evidence: ManagedHiddenCheckEvidence | None = None
+            if selection is not None:
+                # The first fence protects the allocation boundary; the second
+                # prevents an expired attempt from committing its result.
+                await asyncio.to_thread(self._assert_persisted_artifact_binding, lease, inputs)
+                await asyncio.to_thread(self._assert_current_candidate_step, lease, revision)
+                assert self._hidden_checks is not None
+                try:
+                    raw_hidden_evidence = await self._hidden_checks.run(
+                        self._principal,
+                        lease,
+                        inputs.source,
+                        selection.suite,
+                        entry_path=selection.entry_path,
+                        allow_operator_sandbox=True,
+                    )
+                except (LeaseLost, asyncio.CancelledError):
+                    raise
+                except Exception as error:
+                    code = _safe_hidden_error_code(error)
+                    await asyncio.to_thread(self._assert_current_candidate_step, lease, revision)
+                    await asyncio.to_thread(self._assert_persisted_artifact_binding, lease, inputs)
+                    return await self._attention_result(
+                        lease,
+                        inputs,
+                        evidence,
+                        run_revision=revision,
+                        hidden_status="unknown",
+                        classification="hidden_check_unknown",
+                        detail={"code": code},
+                    )
+                await asyncio.to_thread(self._assert_current_candidate_step, lease, revision)
+                await asyncio.to_thread(self._assert_persisted_artifact_binding, lease, inputs)
+                try:
+                    hidden_evidence = _validate_hidden_evidence(
+                        raw_hidden_evidence, lease, inputs.source, selection, evidence
+                    )
+                except (ManagedHiddenCheckError, TypeError, ValueError):
+                    return await self._attention_result(
+                        lease,
+                        inputs,
+                        evidence,
+                        run_revision=revision,
+                        hidden_status="invalid",
+                        classification="hidden_check_invalid",
+                    )
+                if hidden_evidence.comparison.outcome != "passed":
+                    outcome = hidden_evidence.comparison.outcome
+                    classification = {
+                        "failed": "hidden_check_failed",
+                        "invalid": "hidden_check_invalid",
+                        "unknown": "hidden_check_unknown",
+                    }.get(outcome, "hidden_check_invalid")
+                    return await self._attention_result(
+                        lease,
+                        inputs,
+                        evidence,
+                        run_revision=revision,
+                        hidden_status=(
+                            outcome if outcome in {"failed", "invalid", "unknown"} else "invalid"
+                        ),
+                        classification=classification,
+                        hidden_evidence=hidden_evidence,
+                    )
+            approval_kwargs = (
+                {"hidden_check_evidence": hidden_evidence} if hidden_evidence is not None else {}
+            )
             return await asyncio.to_thread(
-                self._approvals.record_validation, lease, inputs.candidate_artifact_id, evidence
+                self._approvals.record_validation,
+                lease,
+                inputs.candidate_artifact_id,
+                evidence,
+                **approval_kwargs,
             )
 
         return await asyncio.to_thread(
@@ -90,9 +195,79 @@ class CandidateValidationActivityHandler:
             result={
                 "activity": "candidate_validation",
                 "candidate_artifact_id": str(inputs.candidate_artifact_id),
+                "run_revision": revision,
                 "classification": evidence.classification.value,
                 "validation_evidence": evidence.model_dump(mode="json"),
             },
+            target_run_status=RunStatus.NEEDS_ATTENTION,
+        )
+
+    async def _resolve_hidden_selection(
+        self, lease: ExecutionLease, inputs: CandidateValidationInput
+    ) -> HiddenCheckSelection:
+        selector = self._hidden_check_selector
+        assert selector is not None
+        try:
+            if inspect.iscoroutinefunction(selector):
+                selection = await selector(lease, inputs)
+            else:
+                selection = await asyncio.to_thread(selector, lease, inputs)
+                if inspect.isawaitable(selection):
+                    selection = await selection
+            if type(selection) is not HiddenCheckSelection:
+                raise ValueError
+            suite = selection.suite
+            source = inputs.source
+            if (
+                type(suite) is not HiddenCheckSuite
+                or (suite.profile_id, suite.profile_version)
+                != (source.profile_id, source.profile_version)
+                or suite.candidate_archive_sha256 != source.candidate_archive_sha256
+                or suite.candidate_tree_sha256 != source.candidate_source_tree_sha256
+                or selection.entry_path
+                not in {entry.path for entry in source.candidate_manifest.entries}
+            ):
+                raise ValueError
+            HiddenProbe(
+                suite.profile_id,
+                suite.profile_version,
+                selection.entry_path,
+                suite.public_inputs_json(),
+            )
+            return selection
+        except (LeaseLost, asyncio.CancelledError):
+            raise
+        except Exception:
+            raise ValidationActivityError("candidate_validation_hidden_selection_invalid") from None
+
+    async def _attention_result(
+        self,
+        lease: ExecutionLease,
+        inputs: CandidateValidationInput,
+        evidence: Any,
+        *,
+        run_revision: int,
+        hidden_status: str,
+        classification: str,
+        detail: dict[str, str] | None = None,
+        hidden_evidence: ManagedHiddenCheckEvidence | None = None,
+    ) -> Any:
+        result: dict[str, Any] = {
+            "activity": "candidate_validation",
+            "run_revision": run_revision,
+            "candidate_artifact_id": str(inputs.candidate_artifact_id),
+            "classification": classification,
+            "validation_evidence": evidence.model_dump(mode="json"),
+            "hidden_check_status": hidden_status,
+        }
+        if detail and "code" in detail:
+            result["hidden_check_error_code"] = detail["code"]
+        if hidden_evidence is not None:
+            result["hidden_check_evidence"] = hidden_evidence.model_dump(mode="json")
+        return await asyncio.to_thread(
+            self._transitions.commit_result,
+            lease=lease,
+            result=result,
             target_run_status=RunStatus.NEEDS_ATTENTION,
         )
 
@@ -274,3 +449,49 @@ class ValidationActivityError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _safe_hidden_error_code(error: Exception) -> str:
+    code = getattr(error, "code", None)
+    if (
+        isinstance(code, str)
+        and 1 <= len(code) <= 96
+        and all(
+            char.isascii() and (char.islower() or char.isdigit() or char == "_") for char in code
+        )
+    ):
+        return code
+    return "hidden_check_service_failed"
+
+
+def _validate_hidden_evidence(
+    raw: Any,
+    lease: ExecutionLease,
+    source: ValidationSourceAuthorization,
+    selection: HiddenCheckSelection,
+    normal_evidence: Any,
+) -> ManagedHiddenCheckEvidence:
+    if type(raw) is not ManagedHiddenCheckEvidence:
+        raise ManagedHiddenCheckError("hidden_evidence_type_invalid")
+    evidence = ManagedHiddenCheckEvidence.model_validate_json(raw.model_dump_json(), strict=True)
+    execution = evidence.execution
+    normal_candidate = normal_evidence.candidate
+    if (
+        (evidence.run_id, evidence.step_id, evidence.attempt_id, evidence.generation)
+        != (lease.run_id, lease.step_id, lease.attempt_id, lease.generation)
+        or evidence.suite_id != selection.suite.suite_id
+        or evidence.suite_sha256 != selection.suite.digest
+        or evidence.entry_path != selection.entry_path
+        or (execution.profile_id, execution.profile_version)
+        != (source.profile_id, source.profile_version)
+        or execution.source_archive_sha256 != source.candidate_archive_sha256
+        or execution.source_tree_sha256 != source.candidate_source_tree_sha256
+        or evidence.comparison.candidate_archive_sha256 != source.candidate_archive_sha256
+        or evidence.comparison.candidate_tree_sha256 != source.candidate_source_tree_sha256
+        or execution.image != normal_candidate.image
+        or execution.runtime_version != normal_candidate.runtime_version
+        or execution.npm_version != normal_candidate.npm_version
+        or execution.package_count != normal_candidate.package_count
+    ):
+        raise ManagedHiddenCheckError("hidden_evidence_identity_mismatch")
+    return evidence

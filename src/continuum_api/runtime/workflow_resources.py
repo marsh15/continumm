@@ -42,6 +42,7 @@ from continuum_api.runtime.scheduler import RuntimeRecoveryService
 from continuum_api.runtime.source_preparation import SourceFetcher
 from continuum_api.runtime.transitions import TransitionService
 from continuum_api.runtime.trusted_tool_policy import PersistedToolPolicyContextResolver
+from continuum_api.runtime.validation_activity import HiddenCheckSelector
 from continuum_api.runtime.workflow_registry import build_workflow_activity_runner
 from continuum_api.runtime.workspace_recovery import WorkspaceRecoveryService
 from continuum_api.sandbox.allocation_service import SandboxAllocationService
@@ -105,7 +106,12 @@ class _AdmissionPins:
 
 
 async def build_workflow_resources(
-    settings: Any, account_id: UUID, run_id: UUID, *, evaluation: bool = False
+    settings: Any,
+    account_id: UUID,
+    run_id: UUID,
+    *,
+    evaluation: bool = False,
+    hidden_check_selector: HiddenCheckSelector | None = None,
 ) -> WorkflowResources:
     """Construct trusted services for one active, pinned run without provider I/O.
 
@@ -114,6 +120,8 @@ async def build_workflow_resources(
     sessions start inside individual activities after durable authorization.
     """
 
+    if hidden_check_selector is not None and not evaluation:
+        raise WorkflowConfigurationError("hidden_checks_evaluation_only")
     _require_base_settings(settings)
     sandbox_settings = WorkflowSandboxSettings()
     credentials, provider_period_id = _require_sandbox_configuration(sandbox_settings)
@@ -220,6 +228,7 @@ async def build_workflow_resources(
             transitions,
             storage,
             publication_facts=GitHubPublicationFactsProvider(authorization),
+            validation_allocation_class="operator" if evaluation else "public",
         )
         ledger = ExternalOperationService(engine, principal)
         branch_publication = GitHubBranchPublicationService(
@@ -233,6 +242,11 @@ async def build_workflow_resources(
             engine, principal, checkpoints, github_access
         )
         model_adapter = _model_adapter(pins.provider)
+        hidden_checks = (
+            ManagedHiddenCheckService(python_profile, node_profile, allocations, allocations)
+            if evaluation
+            else None
+        )
         runner = build_workflow_activity_runner(
             engine,
             principal,
@@ -249,11 +263,8 @@ async def build_workflow_resources(
             pull_request_publication=pull_request_publication,
             lease_owner=f"workflow-worker:{os.getpid()}:{run_id}",
             evaluation=evaluation,
-        )
-        hidden_checks = (
-            ManagedHiddenCheckService(python_profile, node_profile, allocations, allocations)
-            if evaluation
-            else None
+            hidden_checks=hidden_checks if hidden_check_selector is not None else None,
+            hidden_check_selector=hidden_check_selector,
         )
         return WorkflowResources(
             runner, storage, engine, model_adapter, hidden_checks=hidden_checks

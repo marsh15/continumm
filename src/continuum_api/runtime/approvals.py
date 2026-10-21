@@ -36,6 +36,7 @@ from continuum_api.runtime.persistence import (
     RunStatus,
     RuntimeRepository,
 )
+from continuum_api.runtime.sandbox_allocations import AllocationClass
 from continuum_api.runtime.transitions import (
     NextWork,
     TransitionReceipt,
@@ -46,6 +47,10 @@ from continuum_api.validation.contracts import (
     ValidationClassification,
     ValidationContractError,
     ValidationEvidence,
+)
+from continuum_api.validation.managed_hidden_checks import (
+    ManagedHiddenCheckError,
+    ManagedHiddenCheckEvidence,
 )
 
 _MAX_APPROVAL_LIFETIME = timedelta(hours=48)
@@ -150,6 +155,16 @@ class ApprovalPublicationSnapshot:
     candidate_object_key: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _AcceptedExecutionIdentity:
+    run_id: UUID
+    step_id: UUID
+    job_id: UUID
+    attempt_id: UUID
+    generation: int
+    lease_owner: str
+
+
 class ApprovalService:
     """Persist T20 evidence and freeze/decide exact owner-scoped approvals."""
 
@@ -161,12 +176,16 @@ class ApprovalService:
         storage: ApprovalObjectStorage | None,
         *,
         publication_facts: PublicationFactsProvider | None = None,
+        validation_allocation_class: AllocationClass = "public",
     ) -> None:
         self._engine = engine
         self._principal = principal
         self._transitions = transitions
         self._storage = storage
         self._publication_facts = publication_facts or PendingPublicationFactsProvider()
+        if validation_allocation_class not in {"public", "operator"}:
+            raise ValueError("validation_allocation_class_invalid")
+        self._validation_allocation_class = validation_allocation_class
 
     def publication_snapshot(
         self, approval_id: UUID, manifest_sha256: str
@@ -263,6 +282,8 @@ class ApprovalService:
         lease: ExecutionLease,
         candidate_artifact_id: UUID,
         evidence: ValidationEvidence,
+        *,
+        hidden_check_evidence: ManagedHiddenCheckEvidence | None = None,
     ) -> TransitionReceipt:
         """Commit typed T20 evidence through T08 while pinning the candidate."""
         if lease.owner_id != self._principal.account_id:
@@ -272,6 +293,17 @@ class ApprovalService:
         except (ValidationContractError, TypeError, ValueError):
             raise ApprovalError("approval_validation_evidence_invalid") from None
         _validate_pass_evidence(evidence)
+        hidden_evidence: ManagedHiddenCheckEvidence | None = None
+        if hidden_check_evidence is not None:
+            if self._validation_allocation_class != "operator":
+                raise ApprovalConflict("approval_hidden_evidence_not_allowed")
+            try:
+                hidden_evidence = ManagedHiddenCheckEvidence.model_validate_json(
+                    _canonical_json(hidden_check_evidence.model_dump(mode="json")), strict=True
+                )
+            except (ManagedHiddenCheckError, TypeError, ValueError):
+                raise ApprovalConflict("approval_hidden_evidence_invalid") from None
+            _validate_hidden_binding(hidden_evidence, evidence, lease)
         with self._engine.begin() as connection:
             RuntimeRepository(connection, self._principal)
             try:
@@ -403,11 +435,18 @@ class ApprovalService:
                 if (
                     allocation is None
                     or allocation["status"] not in {"stopped", "destroyed"}
-                    or allocation["allocation_class"] != "public"
+                    or allocation["allocation_class"] != self._validation_allocation_class
                     or allocation["logical_key"] != expected_key
                     or phase.allocation_status != allocation["status"]
                 ):
                     raise ApprovalConflict("approval_validation_allocation_mismatch")
+            if hidden_evidence is not None:
+                _validate_hidden_allocation(
+                    connection,
+                    owner_id=self._principal.account_id,
+                    lease=lease,
+                    evidence=hidden_evidence,
+                )
             database_now: datetime = connection.execute(
                 text("SELECT clock_timestamp()")
             ).scalar_one()
@@ -420,6 +459,8 @@ class ApprovalService:
             "candidate_artifact_id": str(candidate_artifact_id),
             "run_revision": revision,
         }
+        if hidden_evidence is not None:
+            payload["hidden_check_evidence"] = hidden_evidence.model_dump(mode="json")
         return self._transitions.commit_result(
             lease=lease,
             result=payload,
@@ -583,7 +624,9 @@ class ApprovalService:
             evidence = (
                 connection.execute(
                     text(
-                        "SELECT accepted.result_id, accepted.result_sha256, accepted.payload "
+                        "SELECT accepted.result_id, accepted.result_sha256, accepted.payload, "
+                        "accepted.step_id, accepted.job_id, accepted.generation, "
+                        "accepted.attempt_id, accepted.lease_owner "
                         "FROM runtime_private.accepted_results AS accepted "
                         "JOIN runtime_private.steps AS step ON step.owner_id=accepted.owner_id "
                         "AND step.run_id=accepted.run_id AND step.step_id=accepted.step_id "
@@ -618,6 +661,28 @@ class ApprovalService:
             ):
                 raise ApprovalConflict("approval_validation_stale")
             _validate_pass_evidence(validated)
+            hidden_evidence: ManagedHiddenCheckEvidence | None = None
+            if "hidden_check_evidence" in evidence["payload"]:
+                if self._validation_allocation_class != "operator":
+                    raise ApprovalConflict("approval_hidden_evidence_not_allowed")
+                try:
+                    hidden_evidence = ManagedHiddenCheckEvidence.model_validate_json(
+                        _canonical_json(evidence["payload"]["hidden_check_evidence"]), strict=True
+                    )
+                except (ManagedHiddenCheckError, TypeError, ValueError):
+                    raise ApprovalConflict("approval_hidden_evidence_invalid") from None
+                _validate_hidden_binding(
+                    hidden_evidence,
+                    validated,
+                    _AcceptedExecutionIdentity(
+                        run_id=run_id,
+                        step_id=evidence["step_id"],
+                        job_id=evidence["job_id"],
+                        attempt_id=evidence["attempt_id"],
+                        generation=evidence["generation"],
+                        lease_owner=evidence["lease_owner"],
+                    ),
+                )
             candidate_row = (
                 connection.execute(
                     text(
@@ -716,12 +781,26 @@ class ApprovalService:
                 if (
                     allocation is None
                     or allocation["status"] not in {"stopped", "destroyed"}
-                    or allocation["allocation_class"] != "public"
+                    or allocation["allocation_class"] != self._validation_allocation_class
                     or allocation["logical_key"]
                     != f"t20:v1:{validated.candidate_lineage_sha256}:{phase.phase.value}"
                     or allocation["status"] != phase.allocation_status
                 ):
                     raise ApprovalConflict("approval_validation_allocation_mismatch")
+            if hidden_evidence is not None:
+                _validate_hidden_allocation(
+                    connection,
+                    owner_id=self._principal.account_id,
+                    lease=_AcceptedExecutionIdentity(
+                        run_id=run_id,
+                        step_id=evidence["step_id"],
+                        job_id=evidence["job_id"],
+                        attempt_id=evidence["attempt_id"],
+                        generation=evidence["generation"],
+                        lease_owner=evidence["lease_owner"],
+                    ),
+                    evidence=hidden_evidence,
+                )
             return {
                 "run_id": run_id,
                 "owner_id": self._principal.account_id,
@@ -1795,6 +1874,77 @@ def _validate_pass_evidence(evidence: ValidationEvidence) -> None:
     )
     if not valid_baseline:
         raise ApprovalError("approval_baseline_classification_mismatch")
+
+
+def _validate_hidden_binding(
+    hidden: ManagedHiddenCheckEvidence,
+    normal: ValidationEvidence,
+    lease: ExecutionLease | _AcceptedExecutionIdentity,
+) -> None:
+    execution = hidden.execution
+    candidate = normal.candidate
+    if (
+        hidden.comparison.outcome != "passed"
+        or hidden.run_id != lease.run_id
+        or hidden.step_id != lease.step_id
+        or hidden.attempt_id != lease.attempt_id
+        or hidden.generation != lease.generation
+        or execution.allocation_id in {normal.baseline.allocation_id, candidate.allocation_id}
+        or execution.artifact_id != candidate.artifact_id
+        or execution.repository_id != candidate.repository_id
+        or execution.base_commit_sha != candidate.base_commit_sha
+        or execution.baseline_git_tree_sha256 != candidate.baseline_git_tree_sha256
+        or execution.baseline_archive_sha256 != candidate.baseline_archive_sha256
+        or execution.baseline_archive_tree_sha256 != candidate.baseline_archive_tree_sha256
+        or execution.source_archive_sha256 != normal.candidate_archive_sha256
+        or execution.source_tree_sha256 != normal.candidate_source_tree_sha256
+        or execution.profile_id != candidate.profile_id
+        or execution.profile_version != candidate.profile_version
+        or execution.image != candidate.image
+        or execution.runtime_version != candidate.runtime_version
+        or execution.npm_version != candidate.npm_version
+        or execution.package_count != candidate.package_count
+    ):
+        raise ApprovalConflict("approval_hidden_evidence_mismatch")
+
+
+def _validate_hidden_allocation(
+    connection: Any,
+    *,
+    owner_id: UUID,
+    lease: ExecutionLease | _AcceptedExecutionIdentity,
+    evidence: ManagedHiddenCheckEvidence,
+) -> None:
+    allocation_id = evidence.execution.allocation_id
+    assert allocation_id is not None
+    allocation = (
+        connection.execute(
+            text(
+                "SELECT owner_id, run_id, step_id, job_id, generation, attempt_id, "
+                "lease_owner, status, allocation_class, logical_key "
+                "FROM runtime_private.sandbox_allocations WHERE allocation_id=:allocation "
+                "FOR SHARE"
+            ),
+            {"allocation": allocation_id},
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if (
+        allocation is None
+        or allocation["owner_id"] != owner_id
+        or allocation["run_id"] != lease.run_id
+        or allocation["step_id"] != lease.step_id
+        or allocation["job_id"] != lease.job_id
+        or allocation["generation"] != lease.generation
+        or allocation["attempt_id"] != lease.attempt_id
+        or allocation["lease_owner"] != lease.lease_owner
+        or allocation["allocation_class"] != "operator"
+        or allocation["status"] not in {"stopped", "destroyed"}
+        or allocation["status"] != evidence.execution.allocation_status
+        or allocation["logical_key"] != f"t48:hidden:v1:{evidence.invocation_sha256}"
+    ):
+        raise ApprovalConflict("approval_hidden_allocation_mismatch")
 
 
 def _validate_approved_base(context: dict[str, Any], facts: RepositoryPublicationFacts) -> None:

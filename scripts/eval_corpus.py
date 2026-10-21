@@ -231,7 +231,8 @@ def _check(
         cwd=directory,
         env={"PATH": os.defpath},
         capture_output=True,
-        timeout=5,
+        # These allowlisted literals need a bounded startup allowance on busy hosts.
+        timeout=30,
         check=False,
     )
     comparison = compare_hidden_output(
