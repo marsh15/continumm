@@ -1,4 +1,4 @@
-"""Explicit opt-in worker for existing approved GitHub publication jobs."""
+"""Explicit opt-in bounded workers for admitted workflows and maintenance."""
 
 from __future__ import annotations
 
@@ -44,16 +44,17 @@ def main(
     *,
     settings_loader: Callable[[], Any] | None = None,
     resources_factory: Callable[[Any, UUID], Any] | None = None,
+    workflow_resources_factory: Callable[[Any, UUID, UUID], Any] | None = None,
     stdout: TextIO | None = None,
 ) -> int:
-    """Run one bounded publication or retention drain after explicit selection."""
+    """Run one bounded workflow, publication or retention drain after explicit selection."""
     args = _parser().parse_args(argv)
     output = stdout or sys.stdout
     if args.retention:
         return _run_retention_drain(args, settings_loader=settings_loader, stdout=output)
     if args.account_id is None or args.run_id is None:
-        _parser().error("--account-id and --run-id are required for publication work")
-    if not args.execute_publication:
+        _parser().error("--account-id and --run-id are required for run work")
+    if not (args.execute_publication or args.execute_workflow):
         _write_json(
             output,
             {
@@ -70,6 +71,7 @@ def main(
                 args,
                 settings_loader=settings_loader,
                 resources_factory=resources_factory,
+                workflow_resources_factory=workflow_resources_factory,
             )
         )
         record = _receipt_record(args.run_id, receipt, args.max_jobs)
@@ -157,16 +159,23 @@ async def _execute(
     *,
     settings_loader: Callable[[], Any] | None,
     resources_factory: Callable[[Any, UUID], Any] | None,
+    workflow_resources_factory: Callable[[Any, UUID, UUID], Any] | None,
 ) -> Any:
     if settings_loader is None:
         from continuum_api.settings import get_settings
 
         settings_loader = get_settings
-    if resources_factory is None:
-        resources_factory = _build_publication_resources
-
     settings = settings_loader()
-    resources = resources_factory(settings, args.account_id)
+    if args.execute_workflow:
+        if workflow_resources_factory is None:
+            from continuum_api.runtime.workflow_resources import build_workflow_resources
+
+            workflow_resources_factory = build_workflow_resources
+        resources = workflow_resources_factory(settings, args.account_id, args.run_id)
+    else:
+        if resources_factory is None:
+            resources_factory = _build_publication_resources
+        resources = resources_factory(settings, args.account_id)
     if inspect.isawaitable(resources):
         resources = await resources
     try:
@@ -290,7 +299,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m continuum_api.worker",
         description=(
-            "Run a bounded drain of existing approved GitHub publication work. "
+            "Run a bounded drain of existing admitted workflow or approved publication work. "
             "Exit status 0 means only that the bounded drain ended."
         ),
     )
@@ -308,6 +317,11 @@ def _parser() -> argparse.ArgumentParser:
         "--execute-publication",
         action="store_true",
         help="explicitly authorize this bounded publication worker invocation",
+    )
+    execution.add_argument(
+        "--execute-workflow",
+        action="store_true",
+        help="explicitly authorize this bounded admitted workflow invocation",
     )
     execution.add_argument(
         "--retention",

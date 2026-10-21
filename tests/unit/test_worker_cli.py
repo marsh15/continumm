@@ -62,6 +62,7 @@ def test_publication_execution_refuses_before_loading_settings() -> None:
     status = main(
         _args(account_id, run_id),
         settings_loader=settings_loader,
+        workflow_resources_factory=lambda *_: pytest.fail("workflow factory must not run"),
         stdout=output,
     )
 
@@ -179,3 +180,100 @@ def test_async_factory_is_supported_and_settings_failure_is_sanitized() -> None:
 
     assert status == 1
     assert "database-password-value" not in output.getvalue()
+
+
+def test_workflow_mode_selects_run_scoped_factory_and_preserves_bounds() -> None:
+    account_id, run_id = uuid4(), uuid4()
+    settings = object()
+    runner = _Runner(_Receipt(run_id, 3, "job_limit"))
+    resources = _Resources(runner)
+    created = []
+    output = io.StringIO()
+
+    def factory(config, owner, admitted_run):
+        created.append((config, owner, admitted_run))
+        return resources
+
+    status = main(
+        _args(account_id, run_id, "--execute-workflow", "--max-jobs", "3", "--max-seconds", "45"),
+        settings_loader=lambda: settings,
+        resources_factory=lambda *_: pytest.fail("publication factory must not run"),
+        workflow_resources_factory=factory,
+        stdout=output,
+    )
+
+    assert status == 0
+    assert created == [(settings, account_id, run_id)]
+    assert runner.calls == [(run_id, 3, 45.0)]
+    assert resources.closed == 1
+    assert json.loads(output.getvalue()) == {
+        "run_id": str(run_id),
+        "jobs_started": 3,
+        "stop_reason": "job_limit",
+    }
+
+
+def test_async_workflow_factory_failure_does_not_leak_configuration() -> None:
+    account_id, run_id = uuid4(), uuid4()
+    output = io.StringIO()
+
+    class ConfigurationFailure(Exception):
+        code = "workflow_configuration_invalid"
+
+    async def factory(config, owner, admitted_run):
+        await asyncio.sleep(0)
+        raise ConfigurationFailure("private-provider-token")
+
+    status = main(
+        _args(account_id, run_id, "--execute-workflow"),
+        settings_loader=lambda: object(),
+        workflow_resources_factory=factory,
+        stdout=output,
+    )
+
+    assert status == 1
+    assert json.loads(output.getvalue())["error_code"] == "workflow_configuration_invalid"
+    assert "private-provider-token" not in output.getvalue()
+
+
+@pytest.mark.parametrize("other_mode", ["--execute-publication", "--retention"])
+def test_workflow_mode_is_exclusive_before_settings_load(other_mode: str) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(
+            _args(uuid4(), uuid4(), "--execute-workflow", other_mode),
+            settings_loader=lambda: pytest.fail("settings must not load"),
+        )
+    assert error.value.code == 2
+
+
+def test_workflow_cancellation_closes_created_resources() -> None:
+    account_id, run_id = uuid4(), uuid4()
+
+    class CancelledRunner(_Runner):
+        async def run_admitted(self, *args, **kwargs):
+            raise asyncio.CancelledError
+
+    resources = _Resources(CancelledRunner())
+    with pytest.raises(asyncio.CancelledError):
+        main(
+            _args(account_id, run_id, "--execute-workflow"),
+            settings_loader=lambda: object(),
+            workflow_resources_factory=lambda *_: resources,
+            stdout=io.StringIO(),
+        )
+    assert resources.closed == 1
+
+
+def test_workflow_invalid_receipt_is_rejected_after_resource_cleanup() -> None:
+    account_id, run_id = uuid4(), uuid4()
+    resources = _Resources(_Runner(_Receipt(uuid4(), 1, "idle")))
+    output = io.StringIO()
+    status = main(
+        _args(account_id, run_id, "--execute-workflow"),
+        settings_loader=lambda: object(),
+        workflow_resources_factory=lambda *_: resources,
+        stdout=output,
+    )
+    assert status == 1
+    assert resources.closed == 1
+    assert json.loads(output.getvalue())["error_code"] == "worker_receipt_invalid"

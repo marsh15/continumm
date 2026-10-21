@@ -84,19 +84,14 @@ Before the live demonstration can run:
 3. Configure the managed sandbox and execution profile, and supply the OpenAI key
    through the existing encrypted credential service. A raw environment key must
    not bypass durable model reservations or credential dispatch.
-4. Complete the trusted worker composition for model/tool turns. The
-   [bounded activity runner and approved-publication CLI](activity-runner.md)
-   connect publication, durable continuations and evidence-gated completion.
-   Source preparation verifies the admitted Git tree/profile and accepts the
-   baseline. The admitted first-turn resolver binds that accepted baseline to
-   the original source receipt, model and task context. Validation/freeze handlers
-   and persisted validation-input resolution are also implemented. The
-   [source fetcher](source-acquisition.md) now provides bounded authenticated
-   acquisition. The [workflow registry](workflow-composition.md) connects the
-   trusted handlers and persisted tool-policy callbacks; production resource
-   construction and the full workflow CLI remain open. The existing CLI registers
-   only publication, and the Docker entrypoint starts
-   Uvicorn. `make eval-live PROVIDER=openai` remains fail-closed.
+4. Use the [opt-in full workflow worker](activity-runner.md) for the existing
+   admitted run. The production resource builder selects immutable admitted
+   provider/profile pins, private checkpoint storage, credential dispatch,
+   managed validation, publication services and the fixed activity registry.
+   Configure the actual current sandbox accounting period and selected profile
+   image before invoking it. The Docker entrypoint still starts Uvicorn; operator
+   worker execution is explicit. `make eval-live PROVIDER=openai` remains
+   fail-closed pending the separate controlled live-evaluation harness.
 5. Run a bounded task, request and validate one revision, inspect the exact new
    manifest, approve it, and publish normally to the managed branch and PR. Record
    real run/approval identifiers, approved commit, PR link, timestamps, provider

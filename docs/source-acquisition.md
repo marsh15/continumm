@@ -29,7 +29,7 @@ the checkpoint under the current lease. If Git archive attributes omit or alter
 tracked content, the tree comparison rejects it. The adapter does not weaken that
 comparison or substitute its downloaded file list for the admitted tree.
 
-This is a server-side adapter. The publication-only CLI does not register the
-source-preparation/model/tool workflow yet. Local fixture tests exercise its
+This is a server-side adapter. The explicit `--execute-workflow` mode registers the source/model/tool workflow;
+`--execute-publication` remains restricted to approved publication. Local fixture tests exercise its
 HTTP and archive boundaries; they do not establish a live authenticated GitHub
 run or complete the deferred T34 demonstration.

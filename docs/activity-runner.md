@@ -1,8 +1,49 @@
 # Controlled activity runner
 
-T34 supplies a bounded runner for one existing admitted run and an opt-in
-publication worker. It does not create runs, approve manifests, or provision
+T34 supplies a bounded runner for one existing admitted run, an opt-in full
+workflow worker and a narrower publication worker. It does not create runs, approve manifests, or provision
 Render. The full live provider-to-publication demonstration is still pending.
+
+## Admitted workflow worker
+
+After service setup, drain an existing owner-scoped admitted run explicitly:
+
+```sh
+uv run --locked --python 3.13 python -m continuum_api.worker \
+  --account-id <account-uuid> --run-id <admitted-run-uuid> \
+  --max-jobs 20 --max-seconds 300 --execute-workflow
+```
+
+The flag authorizes this bounded invocation, including its configured BYOK and
+managed-sandbox work. It is mutually exclusive with `--execute-publication` and
+`--retention`. Without an execution flag, settings and clients are not loaded.
+The worker selects the provider/model and profile from immutable admission pins;
+there are no command-line key, provider or profile overrides.
+
+Configure the existing GitHub, encryption and private storage settings, plus
+`CONTINUUM_VERCEL_TOKEN`, `CONTINUUM_VERCEL_TEAM_ID`,
+`CONTINUUM_VERCEL_PROJECT_ID`, `CONTINUUM_SANDBOX_PROVIDER_PERIOD_ID` and the
+selected `CONTINUUM_PYTHON_PROFILE_IMAGE` or `CONTINUUM_NODE_PROFILE_IMAGE`.
+Images must use immutable digests. The accounting period and its public/operator
+usage rows must already exist; see [allocation accounting](sandbox-allocation-accounting.md).
+The worker does not create an allowance or switch to another pool. Model keys
+come only from the existing encrypted owner/run credential service.
+
+The resource factory checks owner-scoped run state under database RLS, retained
+content, admitted pins, the configured current period and the selected image.
+Only then does it construct the service graph. Construction performs database
+reads but no GitHub, storage, model or sandbox requests. Missing or revoked model
+keys remain subject to the existing credential-wait gate. Inactive profiles are
+not configured for this run. Client/pool cleanup also runs on construction failure
+and cancellation.
+
+The existing limits remain 1–100 started jobs and at most 300 seconds per drain.
+A limit receipt does not establish completion. Inspect authoritative run/effect
+state before resuming the same run, and supply a real owner decision at review
+waits. A cancelled or timed-out activity may leave a managed allocation pending
+observation; its server timeout and conservative ledger charge remain in force.
+This command does not create runs, enable public admission or complete deployed
+release qualification.
 
 ## Publication worker
 
@@ -74,7 +115,7 @@ against the receipt's complete Git tree and fixed Python/Node profile, and
 accepts it as the first retained checkpoint. Acceptance queues one replay-safe
 `agent_turn` at revision zero. The fetch adapter is injected. The [GitHub source adapter](source-acquisition.md)
 provides bounded exact-commit acquisition using fresh authorization. The
-publication-only worker does not register this handler.
+full workflow worker registers this handler; publication-only mode stays narrower.
 
 `AdmittedAgentTurnInputResolver` initializes the next first-turn lease from the
 immutable admission row. It checks the accepted source result and its digest,
@@ -84,7 +125,7 @@ verified baseline and initializes the persisted model/context/schema values.
 A retry after interruption between these writes completes with identical pins.
 The initializer creates no model turn or request reservation. Later turns only
 read the persisted inputs; missing pins fail closed and rework never resets them.
-This resolver is a trusted server API and is not registered by the CLI yet.
+This resolver is registered by the opt-in full workflow worker.
 
 `AgentActivityDispatcher` maps persisted `agent_turn` and `agent_tool` steps to
 the existing durable model and tool services. The OpenAI adapter uses their
@@ -109,8 +150,8 @@ The [workflow registry](workflow-composition.md) now composes source preparation
 admitted inputs, the model/tool dispatcher, validation, freeze and publication.
 Its persisted tool-policy resolver derives authority and baseline protections
 from server state and fresh GitHub access checks. These remain trusted Python
-APIs: production resource construction and the full workflow CLI are still open.
-The existing publication CLI registers only `publish_approved`.
+APIs connected by the opt-in full workflow CLI. The narrower publication mode
+registers only `publish_approved`.
 
 ## Validation and review activities
 
@@ -150,8 +191,8 @@ there is no automatic reconstruction from an expired eligibility cache.
 Neither activity accepts arbitrary validation evidence from a job payload.
 Non-passing validation records bounded typed evidence in `needs_attention` and
 schedules no freeze. Unknown allocation outcomes retain the existing accounting
-and reconciliation rules. These handlers are not yet registered in the
-publication-only CLI.
+and reconciliation rules. These handlers are registered in full workflow mode;
+publication-only mode does not execute validation.
 
 The Render image still starts the API, not this operator worker. The local tests
 use controlled remote adapters and do not establish hosted execution or live

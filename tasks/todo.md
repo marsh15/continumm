@@ -394,7 +394,7 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 - [ ] Complete a real-provider patch, revision, approval and normal GitHub publication.
 - [x] Demonstrate actual worker death, stale-owner rejection and lost-response reconciliation separately (local controlled fixtures).
 - **Verify:** make test-faults; controlled live demo with recorded evidence.
-- **Status:** Local recovery evidence, exact source acquisition, admission-bound inputs, validation/freeze handlers, and the fixed workflow registry with persisted tool policy are implemented. Production resource construction, the full workflow CLI and live service setup/qualification remain open. Public admission remains disabled. [Evidence](../docs/evidence/t34-demonstration.md); [composition](../docs/workflow-composition.md).
+- **Status:** Local recovery evidence, exact source acquisition, admission-bound inputs, validation/freeze handlers, and the fixed workflow registry with persisted tool policy are implemented. The production resource builder and opt-in full workflow CLI are implemented. Live service setup and qualification remain open. Public admission remains disabled. [Evidence](../docs/evidence/t34-demonstration.md); [composition](../docs/workflow-composition.md).
 
 ### Checkpoint K — Portfolio demonstration
 

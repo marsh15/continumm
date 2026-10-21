@@ -833,3 +833,29 @@ the suite. A transient Docker Hub 502 required a build retry.
   skips, 29 console tests, 30 Edge tests, Ruff and mypy (104 source files), plus
   wheel/source builds. The registry test also passed all existing admitted-input
   cases and migration teardown after removing its synthetic provider history.
+
+### T34 follow-up — production resources and workflow CLI (21 October 2026)
+
+- Added owner/run-scoped production resource construction. It installs the
+  runtime RLS principal, checks nonterminal state, work/content deadlines and
+  immutable provider/model/profile pins, and verifies the configured current
+  sandbox period has both usage pools before constructing hosted clients.
+- The selected profile gets its immutable image; the inactive profile remains
+  disabled. Existing encrypted run credentials and current GitHub authorization
+  supply model and repository access. Absent/revoked/expired model keys retain
+  the existing credential-wait behavior; no raw environment key is accepted.
+- Added explicit `--execute-workflow`, mutually exclusive with publication and
+  retention modes. It preserves run/job/time bounds and sanitized receipts and
+  cleans created clients/pools on errors or cancellation. The narrower existing
+  publication command remains available. Configuration and usage are documented
+  in [the activity runner guide](../docs/activity-runner.md) and `.env.example`.
+- Verification passed: 77 combined targeted tests with no skips; final
+  `make check build-package` passed with 723 backend tests, 205 optional database
+  skips, 29 console tests, 30 Edge tests, Ruff and mypy (105 source files), and
+  wheel/source builds. The real CLI refused disabled GitHub auth before hosted
+  work. A duplicate unit/integration test basename was corrected before the
+  final combined runs.
+- Production resource construction and full workflow CLI wiring are now present.
+  The controlled live-evaluation harness and actual service/provider/sandbox
+  qualification remain open. No live GitHub, provider or sandbox requests were
+  made, and public admission remains disabled.

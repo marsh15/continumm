@@ -116,6 +116,71 @@ class NodeProfileSettings(BaseSettings):
         return image
 
 
+class WorkflowSandboxSettings(BaseSettings):
+    """Operator configuration for production admitted-workflow sandboxes.
+
+    These settings deliberately have no execution-enable switch. Calling the
+    production workflow resource factory is the explicit execution boundary;
+    sandbox credentials, billing period, and immutable images must still be
+    configured independently.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="CONTINUUM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    vercel_token: SecretStr | None = None
+    vercel_team_id: str | None = None
+    vercel_project_id: str | None = None
+    sandbox_provider_period_id: str | None = None
+    python_profile_image: str | None = None
+    node_profile_image: str | None = None
+
+    def require_control_plane(self) -> tuple[VercelCredentials, str]:
+        """Return explicit Vercel credentials and the current allowance period."""
+
+        if self.vercel_token is None or not self.vercel_token.get_secret_value().strip():
+            raise ValueError("workflow_vercel_token_unconfigured")
+        if not isinstance(self.vercel_team_id, str) or not self.vercel_team_id.strip():
+            raise ValueError("workflow_vercel_team_unconfigured")
+        if not isinstance(self.vercel_project_id, str) or not self.vercel_project_id.strip():
+            raise ValueError("workflow_vercel_project_unconfigured")
+        if (
+            not isinstance(self.sandbox_provider_period_id, str)
+            or not self.sandbox_provider_period_id.strip()
+        ):
+            raise ValueError("workflow_provider_period_unconfigured")
+        return (
+            VercelCredentials(
+                token=self.vercel_token.get_secret_value(),
+                team_id=self.vercel_team_id.strip(),
+                project_id=self.vercel_project_id.strip(),
+            ),
+            self.sandbox_provider_period_id.strip(),
+        )
+
+    def require_profile_image(self, profile_id: str) -> str:
+        """Require the selected admitted profile's immutable runtime image."""
+
+        if profile_id == "python-pytest":
+            configured = self.python_profile_image
+            code = "python_profile_image_unconfigured"
+        elif profile_id == "node-npm":
+            configured = self.node_profile_image
+            code = "node_profile_image_unconfigured"
+        else:
+            raise ValueError("workflow_profile_unsupported")
+        if not isinstance(configured, str) or not configured.strip():
+            raise ValueError(code)
+        image = configured.strip()
+        SandboxAllocationLimits(image=image, session_seconds=1)
+        return image
+
+
 def validate_sandbox_name(name: str) -> str:
     """Accept only generated, non-user-derived provider names."""
 

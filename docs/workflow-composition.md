@@ -19,9 +19,9 @@ not approve a candidate or invoke a handler.
 
 Construction performs no network or provider work. The caller explicitly invokes
 `run_admitted` with a run ID, job limit and time limit, and remains responsible for
-closing the injected storage, database and adapter resources. The factory accepts
-trusted service dependencies, not an arbitrary handler map. It does not load
-production settings or replace the publication-only CLI's resource builder.
+closing the injected storage, database and adapter resources. The registry factory accepts
+trusted service dependencies, not an arbitrary handler map. The production
+resource builder supplies them for the explicitly selected workflow CLI mode.
 Choose the model adapter for the admitted provider; a mismatched adapter must
 fail its existing request validation before credential dispatch.
 
@@ -50,7 +50,12 @@ Nullable fields retain their null option. This follows the
 and is checked against both existing provider adapter normalizers. Each call
 returns independent schema values so one run cannot mutate another's schemas.
 
-The concrete deployment resource builder and full workflow CLI invocation remain
-open. Registry tests use local storage and synthetic provider credentials with a
+`build_workflow_resources` now selects the immutable admitted provider/profile,
+validates owner/run/retention and sandbox period/image configuration, and builds
+the concrete graph for `--execute-workflow`. It owns storage/client/pool cleanup
+and uses the selected profile image only; no model API key is loaded from the
+environment. See the [worker command and configuration](activity-runner.md).
+
+Registry tests use local storage and synthetic provider credentials with a
 fake SDK response. They do not qualify a hosted model or sandbox run, and public
 admission remains disabled. See [release qualification](release-qualification.md).
