@@ -1,18 +1,27 @@
 # Coding-agent evaluation evidence
 
-`make eval-corpus` runs twelve trusted fixture repairs: six Python and six Node
-cases (doubling, absolute value, clamping, reversal, counting and parity). Each
-baseline fails its hidden behavioral checks, a known scripted repair passes,
-and the production archive/edit helper preserves the original test artifact.
-Hidden check programs live outside the writable fixture workspace. Only literal
-fixtures in that runner may execute on the local host; arbitrary repositories
-remain subject to the managed-sandbox boundary.
+`make eval-corpus` runs twelve maintained trusted fixtures: six Python and six
+Node cases covering ordinary repair, malformed tool instructions, malicious
+repository text, contradictory requirements, preexisting test failure and budget
+exhaustion. Repairs use the production archive/edit boundary; denial cases probe
+the production tool authorization policy. Hidden check programs live outside the
+writable fixture workspace. Only literal fixtures may execute on the local host;
+arbitrary repositories remain subject to managed sandbox execution.
 
-These fixtures measure harness behavior, not model coding ability. They report
-zero model calls. The broader planned corpus covering malformed instructions,
-hostile repository text, unsolvable tasks, baseline failures and budget exhaustion
-is still open. Run `make test-target TARGET=tests/evaluation/test_corpus.py` for
-the thirteen existing fixture checks.
+These fixtures measure scripted harness behavior, not model coding ability.
+Malicious text is inert input paired with scripted unauthorized actions; the
+runner does not measure whether a model resists prompt injection. Malformed
+instructions mean malformed tool arguments, not natural-language interpretation.
+Budget exhaustion probes the tool policy gate, not provider token accounting.
+Contradictory checks intentionally cannot both pass for a deterministic function.
+Preexisting failure cases execute an archived unrelated failing test and exercise
+the production classifier, without a managed validation run. Expected denials and failed
+candidates are retained in the report rather than counted as successful repairs.
+Reports record scripted unauthorized attempts (including an attempted write after
+budget exhaustion), malformed-call errors, zero model tokens, elapsed time and
+review status. `patch_text_bytes` counts UTF-8 expected and replacement text for
+the attempted edit; it is not unified-diff size. Probe completion and unexecuted
+checks remain null.
 
 ## Controlled live protocol harness
 
@@ -85,7 +94,14 @@ passed. [Raw fixture report](evidence/t48-deterministic.json) records zero model
 calls and all four live smoke cases as NOT_RUN. Its historical guard result is
 preserved; it predates the controlled protocol harness.
 
+Measured on 21 October 2026: the expanded twelve-case corpus produced its expected
+repair, failure and denial outcomes; fourteen focused harness tests passed.
+[Raw expanded report](evidence/t48-adversarial-deterministic.json) records the
+runner hash, base commit and dirty-worktree provenance. The full backend suite
+passed with 750 tests and 208 optional database skips; type checking and package
+builds also passed. The earlier report remains historical evidence.
+
 No live provider result has been recorded. Release still requires Python and Node
-smokes for both OpenAI and Anthropic, the broader deterministic corpus, managed
-hidden-check support and actual deployed qualification. The harness implementation
+smokes for both OpenAI and Anthropic, managed hidden-check support and actual
+deployed qualification. The harness implementation
 does not close those gates or enable public admission.

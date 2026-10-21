@@ -892,3 +892,26 @@ the suite. A transient Docker Hub 502 required a build retry.
   API, broader adversarial deterministic corpus and actual four provider/profile
   smokes remain open. Public admission stays disabled.
   [Harness contract and limits](../docs/evaluation.md).
+
+
+### 21 October 2026 — T48 deterministic failure and authorization corpus
+
+- Replaced the twelve success-only micro-repairs with six maintained scenarios
+  per language: ordinary repair, malformed tool arguments, malicious repository
+  text with scripted protected-test/secret-read attempts, contradictory checks,
+  an unrelated baseline test failure, and exhausted tool budget.
+- Production policy decisions use verified archive identities and actual path
+  sizes. Candidate-producing cases use the production archive/edit boundary and
+  preserve the original test artifact. Literal unrelated tests execute locally;
+  their failed outcomes exercise the production validation classifier.
+- Recorded observed outcomes, scripted unauthorized attempts, malformed-call
+  errors, zero model/token usage, elapsed time, attempted edit text bytes and
+  unperformed review status. Unexecuted checks and probe completion stay null.
+- Verification: 14 focused tests and all twelve actual runner cases passed their
+  expected outcomes; full backend suite 750 passed, 208 optional database skips.
+  Ruff format/lint, mypy (106 source files) and wheel/source builds passed.
+- [Raw measured report](../docs/evidence/t48-adversarial-deterministic.json)
+  retains base commit and dirty-worktree provenance. No live model, network or
+  managed sandbox work ran. This verifies scripted boundaries, not model prompt
+  injection resistance or managed hidden correctness. T48 live and hidden-oracle
+  gates remain open; public admission stays disabled.
