@@ -915,3 +915,31 @@ the suite. A transient Docker Hub 502 required a build retry.
   managed sandbox work ran. This verifies scripted boundaries, not model prompt
   injection resistance or managed hidden correctness. T48 live and hidden-oracle
   gates remain open; public admission stays disabled.
+
+
+### 21 October 2026 — T48 pinned application-side hidden comparison
+
+- Added immutable suite/case contracts binding exact archive/tree identities,
+  profile/version and a canonical digest including hidden expected values.
+  A public-input projection excludes expected answers from execution transport.
+- Added strict comparison of an exact JSON observation protocol, with digest-only
+  receipts. Candidate pass assertions, wrong source pins, duplicate keys,
+  nonfinite/unsafe numbers, decimal precision loss, invalid Unicode, excessive
+  nesting/size, missing exits and failed processes cannot qualify as passing.
+  Safe errors suppress payload-bearing exception context.
+- Integrated the comparator into trusted Python/Node corpus execution: children
+  receive only inputs; expected values stay in the application process. Both
+  baseline and candidate comparisons record suite/source pins and output hashes.
+  Invalid UTF-8 aborts instead of becoming replacement-character observations.
+- Verification: 50 focused tests passed before the final UTF-8 regression; final
+  backend run passed 787 tests with 208 optional database skips. Full checks also
+  passed 29 console tests, 30 Edge tests, Ruff and mypy (107 source files).
+  Wheel/source builds passed after final code changes; 32 affected local document
+  links and both measured implementation hashes verified.
+- [Measured local comparison report](../docs/evidence/t48-application-hidden-checks.json)
+  retains base commit/dirty provenance and records managed checks as `not_run`.
+  This adds the comparison contract and local transport integration only. Fresh
+  managed execution, operator accounting, accepted evidence and live report
+  integration remain open; no model/network/sandbox calls were made. Existing
+  live readiness and publication behavior are unchanged. See the
+  [contract and remaining integration](../docs/hidden-checks.md).

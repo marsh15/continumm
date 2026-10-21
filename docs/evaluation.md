@@ -4,8 +4,8 @@
 Node cases covering ordinary repair, malformed tool instructions, malicious
 repository text, contradictory requirements, preexisting test failure and budget
 exhaustion. Repairs use the production archive/edit boundary; denial cases probe
-the production tool authorization policy. Hidden check programs live outside the
-writable fixture workspace. Only literal fixtures may execute on the local host;
+the production tool authorization policy. Input/output runner programs live outside
+the writable fixture workspace; expected answers remain in the application process. Only literal fixtures may execute on the local host;
 arbitrary repositories remain subject to managed sandbox execution.
 
 These fixtures measure scripted harness behavior, not model coding ability.
@@ -82,7 +82,9 @@ provenance. Exit codes are:
 - `130`: interrupted execution with unknown outcome; inspect authoritative state.
 
 Managed profiles currently execute repository tests and protect original tests.
-There is **no managed hidden-check oracle API** yet. Live reports therefore always
+The [pinned hidden-check comparator](hidden-checks.md) is implemented and used by
+the local corpus. Its managed execution and accepted-evidence integration are
+still missing. Live reports therefore always
 state `independent_hidden_checks: not_run` and `task_correctness: not_assessed`.
 The local fixture runner's hidden checks do not establish managed hidden-check
 coverage. No LLM judge replaces independent evidence.
@@ -100,6 +102,15 @@ repair, failure and denial outcomes; fourteen focused harness tests passed.
 runner hash, base commit and dirty-worktree provenance. The full backend suite
 passed with 750 tests and 208 optional database skips; type checking and package
 builds also passed. The earlier report remains historical evidence.
+
+Measured later on 21 October 2026: the application-side comparator and corpus
+transport passed fifty focused tests. The final backend run, including the
+additional invalid-UTF-8 regression, passed 787 tests with 208 optional database
+skips. Console/Edge tests, type checking and package builds also passed.
+The [application comparison report](evidence/t48-application-hidden-checks.json)
+records source/suite pins and digest-only receipts for twelve cases, with zero
+model calls and no managed execution. It also records the comparator's source
+hash; earlier reports remain unchanged.
 
 No live provider result has been recorded. Release still requires Python and Node
 smokes for both OpenAI and Anthropic, managed hidden-check support and actual

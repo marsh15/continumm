@@ -83,3 +83,55 @@ def test_corpus_keeps_six_cases_per_language_and_each_required_scenario() -> Non
 def test_arbitrary_code_is_not_accepted_by_local_fixture_executor() -> None:
     with pytest.raises(ValueError, match="only_trusted_literal"):
         run_case(Case("untrusted", "python", "ordinary_repair", "", "", ()))
+
+
+@pytest.mark.parametrize("language", ["python", "node"])
+def test_hidden_expected_answers_never_enter_fixture_runner(
+    language: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+    from pathlib import Path
+
+    real_run = subprocess.run
+    observed_runners: list[str] = []
+
+    def inspect_runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        runner = next(Path(arg) for arg in command if arg.endswith(("check.py", "check.cjs")))
+        observed_runners.append(runner.read_text())
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", inspect_runner)
+    case = next(
+        case
+        for case in corpus()
+        if case.language == language and case.scenario == "ordinary_repair"
+    )
+    report = run_case(case)
+    assert len(observed_runners) == 2
+    assert all("expected" not in runner and "checks=" not in runner for runner in observed_runners)
+    # 6 and -8 are hidden expected values; the public inputs are 0, 3 and -4.
+    assert all("6" not in runner and "-8" not in runner for runner in observed_runners)
+    baseline = report["baseline_hidden_checks"]
+    candidate = report["candidate_hidden_checks"]
+    assert isinstance(baseline, dict) and isinstance(candidate, dict)
+    assert baseline["outcome"] == "failed"
+    assert candidate["outcome"] == "passed"
+    assert candidate["candidate_tree_sha256"] == report["candidate_tree_sha256"]
+    assert baseline["suite_sha256"] != candidate["suite_sha256"]
+    assert "values" not in candidate and "expected" not in candidate
+
+
+def test_invalid_utf8_observation_cannot_become_a_replacement_character_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess
+
+    def invalid_observation(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(
+            args, 0, b'{"protocol_version":1,"values":["\xff"]}', b""
+        )
+
+    monkeypatch.setattr(subprocess, "run", invalid_observation)
+    case = next(case for case in corpus() if case.scenario == "ordinary_repair")
+    with pytest.raises(UnicodeDecodeError):
+        run_case(case)

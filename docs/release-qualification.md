@@ -20,7 +20,7 @@ owner-configured Render/Supabase/GitHub/sandbox/provider environment:
 | Anthropic | One Python and one Node admitted-run smoke using owner BYOK | Not run |
 | Signature demo | Real generation, revision, exact approval and normal GitHub publication | T34 deferred |
 | Public lifecycle | Fresh account completes console and comment journeys | Not run |
-| Hidden correctness | Managed independent checker outside the writable workspace | Not implemented |
+| Hidden correctness | Managed independent checker outside the writable workspace | Application comparator implemented; managed runner missing |
 | Adversarial corpus | Twelve deterministic tasks covering the required failure and attack classes | Local scripted coverage; model behavior unmeasured |
 | Final acceptance | Every acceptance item in `tasks/plan.md` evidenced | Open |
 

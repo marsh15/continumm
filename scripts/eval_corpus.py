@@ -29,6 +29,11 @@ from continuum_api.validation.contracts import (
     PhaseOutcome,
     ValidationClassification,
 )
+from continuum_api.validation.hidden_checks import (
+    HiddenCheckCase,
+    HiddenCheckSuite,
+    compare_hidden_output,
+)
 from continuum_api.validation.service import ValidationService
 
 _PYTHON_BASELINE_TEST_PATH = "tests/test_original.py"
@@ -157,8 +162,23 @@ def _check(
     hidden: Path,
     baseline_test: bytes,
     *,
+    archive_sha256: str,
+    tree_sha256: str,
     run_preexisting_test: bool = False,
-) -> bool:
+) -> tuple[bool, dict[str, object]]:
+    suite = HiddenCheckSuite(
+        suite_id=case.case_id,
+        profile_id="python-pytest" if case.language == "python" else "node-npm",
+        profile_version="1",
+        candidate_archive_sha256=archive_sha256,
+        candidate_tree_sha256=tree_sha256,
+        cases=tuple(
+            HiddenCheckCase(f"check-{index}", json.dumps(value), json.dumps(expected))
+            for index, (value, expected) in enumerate(case.checks)
+        ),
+    )
+    # Only inputs enter the child process. Expected answers stay in this process.
+    inputs = suite.public_inputs_json()
     extension = "py" if case.language == "python" else "cjs"
     target = directory / f"solution.{extension}"
     target.write_bytes(source)
@@ -171,8 +191,8 @@ def _check(
             "import importlib.util, json, sys\n"
             "spec=importlib.util.spec_from_file_location('candidate',sys.argv[1])\n"
             "module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)\n"
-            f"checks=json.loads({json.dumps(json.dumps(case.checks))})\n"
-            "assert all(module.solve(value)==expected for value,expected in checks)\n"
+            f"inputs=json.loads({json.dumps(inputs)})\n"
+            "print(json.dumps({'protocol_version':1,'values':[module.solve(x) for x in inputs]}))\n"
             + (
                 "test_spec=importlib.util.spec_from_file_location('baseline_test',sys.argv[2])\n"
                 "test_module=importlib.util.module_from_spec(test_spec);test_spec.loader.exec_module(test_module)\n"
@@ -189,8 +209,8 @@ def _check(
         checker = hidden / "check.cjs"
         checker.write_text(
             "const {solve}=require(process.argv[2]);\n"
-            f"const checks={json.dumps(case.checks)};\n"
-            "if(!checks.every(([x,y])=>JSON.stringify(solve(x))===JSON.stringify(y)))process.exit(1);\n"
+            f"const inputs={inputs};\n"
+            "console.log(JSON.stringify({protocol_version:1,values:inputs.map(x=>solve(x))}));\n"
             + (
                 "require(process.argv[3]).testUnrelatedBaselineRegression();\n"
                 if run_preexisting_test
@@ -214,7 +234,15 @@ def _check(
         timeout=5,
         check=False,
     )
-    return result.returncode == 0
+    comparison = compare_hidden_output(
+        suite,
+        candidate_archive_sha256=archive_sha256,
+        candidate_tree_sha256=tree_sha256,
+        exit_code=result.returncode,
+        stdout=result.stdout.decode("utf-8"),
+        stderr=result.stderr.decode("utf-8"),
+    )
+    return comparison.outcome == "passed", comparison.as_dict()
 
 
 def _policy_context(
@@ -317,6 +345,8 @@ def run_case(case: Case) -> dict[str, object]:
         "boundary_decision": None,
         "baseline_passed": None,
         "candidate_passed": None,
+        "baseline_hidden_checks": None,
+        "candidate_hidden_checks": None,
         "candidate_created": False,
         "hidden_check_count": 0,
         "baseline_fixture_check_count": 0,
@@ -388,20 +418,24 @@ def run_case(case: Case) -> dict[str, object]:
             hidden.mkdir()
             assert candidate is not None
             baseline_test = files[_baseline_test_path(case)]
-            baseline_passed = _check(
+            baseline_passed, baseline_checks = _check(
                 case,
                 workspace,
                 files[path],
                 hidden,
                 baseline_test,
+                archive_sha256=baseline.archive_sha256,
+                tree_sha256=baseline.tree_sha256,
                 run_preexisting_test=True,
             )
-            candidate_passed = _check(
+            candidate_passed, candidate_checks = _check(
                 case,
                 workspace,
                 candidate_files[path],
                 hidden,
                 baseline_test,
+                archive_sha256=candidate.source.archive_sha256,
+                tree_sha256=candidate.tree_sha256,
                 run_preexisting_test=True,
             )
         classification = ValidationService._candidate_classification(
@@ -418,6 +452,8 @@ def run_case(case: Case) -> dict[str, object]:
             boundary_decision=classification.value,
             baseline_passed=baseline_passed,
             candidate_passed=candidate_passed,
+            baseline_hidden_checks=baseline_checks,
+            candidate_hidden_checks=candidate_checks,
             candidate_created=True,
             candidate_tree_sha256=candidate.tree_sha256,
             hidden_check_count=len(case.checks),
@@ -433,8 +469,24 @@ def run_case(case: Case) -> dict[str, object]:
             workspace.mkdir()
             hidden.mkdir()
             baseline_test = files[_baseline_test_path(case)]
-            baseline_passed = _check(case, workspace, files[path], hidden, baseline_test)
-            candidate_passed = _check(case, workspace, candidate_files[path], hidden, baseline_test)
+            baseline_passed, baseline_checks = _check(
+                case,
+                workspace,
+                files[path],
+                hidden,
+                baseline_test,
+                archive_sha256=baseline.archive_sha256,
+                tree_sha256=baseline.tree_sha256,
+            )
+            candidate_passed, candidate_checks = _check(
+                case,
+                workspace,
+                candidate_files[path],
+                hidden,
+                baseline_test,
+                archive_sha256=candidate.source.archive_sha256,
+                tree_sha256=candidate.tree_sha256,
+            )
         expected_repair = case.scenario == "ordinary_repair"
         if expected_repair and (baseline_passed or not candidate_passed):
             raise AssertionError(
@@ -449,6 +501,8 @@ def run_case(case: Case) -> dict[str, object]:
             ),
             baseline_passed=baseline_passed,
             candidate_passed=candidate_passed,
+            baseline_hidden_checks=baseline_checks,
+            candidate_hidden_checks=candidate_checks,
             candidate_created=True,
             candidate_tree_sha256=candidate.tree_sha256,
             hidden_check_count=len(case.checks),
@@ -469,6 +523,12 @@ def main() -> int:
     report = {
         "created_at": datetime.now(UTC).isoformat(),
         "runner_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "hidden_comparator_source_sha256": hashlib.sha256(
+            (
+                Path(__file__).resolve().parents[1]
+                / "src/continuum_api/validation/hidden_checks.py"
+            ).read_bytes()
+        ).hexdigest(),
         "working_tree_dirty": bool(
             subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
         ),
@@ -479,6 +539,8 @@ def main() -> int:
         ).strip(),
         "corpus_sha256": hashlib.sha256(repr(corpus()).encode()).hexdigest(),
         "kind": "deterministic_fixture_and_boundary_coverage",
+        "hidden_check_execution": "local_trusted_fixture_only",
+        "managed_hidden_checks": "not_run",
         "case_count": len(results),
         "language_counts": {
             language: sum(case.language == language for case in corpus())
@@ -516,6 +578,10 @@ def main() -> int:
             (
                 "only literal trusted fixtures execute locally; no provider, network, "
                 "or managed sandbox call occurs"
+            ),
+            (
+                "hidden expected answers are compared on the application side; "
+                "only inputs reach literal fixture processes"
             ),
             "live smoke and hidden managed oracle outcomes are unobserved",
         ],
