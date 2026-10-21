@@ -70,6 +70,7 @@ def build_workflow_activity_runner(
     lease_owner: str,
     queue: QueueService | None = None,
     heartbeat_interval_seconds: float = 10.0,
+    evaluation: bool = False,
 ) -> ActivityRunner:
     """Compose the fixed admitted workflow registry around injected services.
 
@@ -105,17 +106,18 @@ def build_workflow_activity_runner(
         transitions,
     )
     approval_freeze = ApprovalFreezeActivityHandler(engine, principal, approvals)
-    publication = ApprovedPublicationActivityHandler(
-        engine, principal, transitions, branch_publication, pull_request_publication
-    )
     handlers: dict[str, ActivityHandler] = {
         "source_preparation": source_preparation,
         "agent_turn": agent_dispatcher,
         "agent_tool": agent_dispatcher,
         "candidate_validation": candidate_validation,
         "approval_freeze": approval_freeze,
-        "publish_approved": publication,
     }
+    if not evaluation:
+        publication = ApprovedPublicationActivityHandler(
+            engine, principal, transitions, branch_publication, pull_request_publication
+        )
+        handlers["publish_approved"] = publication
     return ActivityRunner(
         engine,
         principal,

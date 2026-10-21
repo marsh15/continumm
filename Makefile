@@ -33,7 +33,17 @@ test-target:
 
 eval-live:
 	@test "$(PROVIDER)" = "openai" -o "$(PROVIDER)" = "anthropic" || (echo "Usage: make eval-live PROVIDER=openai|anthropic" >&2; exit 2)
-	uv run --locked --python $(PYTHON_VERSION) python scripts/eval_live.py --provider "$(PROVIDER)"
+	@uv run --locked --python $(PYTHON_VERSION) python scripts/eval_live.py --provider "$(PROVIDER)" \
+	  $(if $(ACCOUNT_ID),--account-id "$(ACCOUNT_ID)",) \
+	  $(if $(PYTHON_RUN_ID),--python-run-id "$(PYTHON_RUN_ID)",) \
+	  $(if $(NODE_RUN_ID),--node-run-id "$(NODE_RUN_ID)",) \
+	  $(if $(filter execute,$(EVAL_MODE)),--execute-live,) \
+	  $(if $(filter observe,$(EVAL_MODE)),--observe-only,) \
+	  $(if $(filter 1,$(ALLOW_MODEL_CHARGES)),--allow-model-charges,) \
+	  $(if $(filter 1,$(ALLOW_OPERATOR_SANDBOX)),--allow-operator-sandbox,) \
+	  $(if $(EVAL_MAX_JOBS),--max-jobs "$(EVAL_MAX_JOBS)",) \
+	  $(if $(EVAL_MAX_SECONDS),--max-seconds "$(EVAL_MAX_SECONDS)",) \
+	  $(if $(EVAL_REPORT),--output "$(EVAL_REPORT)",)
 
 test-integration:
 	uv run --locked --python $(PYTHON_VERSION) python scripts/run_tests.py -q tests/integration

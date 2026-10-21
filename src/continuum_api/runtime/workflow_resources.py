@@ -103,7 +103,7 @@ class _AdmissionPins:
 
 
 async def build_workflow_resources(
-    settings: Any, account_id: UUID, run_id: UUID
+    settings: Any, account_id: UUID, run_id: UUID, *, evaluation: bool = False
 ) -> WorkflowResources:
     """Construct trusted services for one active, pinned run without provider I/O.
 
@@ -209,6 +209,7 @@ async def build_workflow_resources(
             python_profile,
             node_profile,
             allocations,
+            allocation_class="operator" if evaluation else "public",
         )
 
         approvals = ApprovalService(
@@ -245,6 +246,7 @@ async def build_workflow_resources(
             branch_publication=branch_publication,
             pull_request_publication=pull_request_publication,
             lease_owner=f"workflow-worker:{os.getpid()}:{run_id}",
+            evaluation=evaluation,
         )
         return WorkflowResources(runner, storage, engine, model_adapter)
     except BaseException:
@@ -303,7 +305,14 @@ def _require_profile_image(settings: WorkflowSandboxSettings, pins: _AdmissionPi
         ) from None
 
 
-def _read_admission_pins(engine: Engine, account_id: UUID, run_id: UUID) -> _AdmissionPins:
+def _read_admission_pins(
+    engine: Engine,
+    account_id: UUID,
+    run_id: UUID,
+    *,
+    require_binding: bool = False,
+    allow_terminal: bool = False,
+) -> _AdmissionPins:
     if not isinstance(account_id, UUID) or not isinstance(run_id, UUID):
         raise WorkflowConfigurationError("workflow_identity_invalid")
     try:
@@ -317,13 +326,20 @@ def _read_admission_pins(engine: Engine, account_id: UUID, run_id: UUID) -> _Adm
                         "run.content_expires_at, run.content_deleted_at, "
                         "account.status AS account_status, pins.profile_id, "
                         "pins.profile_version, pins.provider, pins.model_id, "
-                        "binding.provider AS credential_provider "
+                        "binding.provider AS credential_provider, "
+                        "credential.status AS credential_status, "
+                        "credential.scope AS credential_scope, credential.scope_run_id, "
+                        "credential.expires_at AS credential_expires_at "
                         "FROM runtime_private.runs AS run "
                         "JOIN runtime_private.users AS account ON account.user_id=run.owner_id "
                         "JOIN runtime_private.run_admission_pins AS pins "
                         "ON pins.owner_id=run.owner_id AND pins.run_id=run.run_id "
                         "LEFT JOIN runtime_private.run_credentials AS binding "
                         "ON binding.owner_id=run.owner_id AND binding.run_id=run.run_id "
+                        "LEFT JOIN runtime_private.provider_credentials AS credential "
+                        "ON credential.owner_id=binding.owner_id "
+                        "AND credential.provider=binding.provider "
+                        "AND credential.credential_id=binding.credential_id "
                         "WHERE run.owner_id=:owner AND run.run_id=:run"
                     ),
                     {"owner": account_id, "run": run_id},
@@ -339,17 +355,18 @@ def _read_admission_pins(engine: Engine, account_id: UUID, run_id: UUID) -> _Adm
     deadline = row["deadline_at"] or (row["created_at"] + timedelta(days=7))
     if row["account_status"] != "active":
         raise WorkflowConfigurationError("workflow_account_inactive")
+    active_status = row["status"] in {
+        "queued",
+        "running",
+        "waiting_approval",
+        "waiting_credentials",
+        "waiting_capacity",
+        "needs_attention",
+    }
+    terminal_status = row["status"] in {"succeeded", "failed", "cancelled", "expired"}
     if (
-        row["status"]
-        not in {
-            "queued",
-            "running",
-            "waiting_approval",
-            "waiting_credentials",
-            "waiting_capacity",
-            "needs_attention",
-        }
-        or deadline <= now
+        not (active_status or (allow_terminal and terminal_status))
+        or (not allow_terminal and deadline <= now)
         or row["content_deleted_at"] is not None
         or row["content_expires_at"] <= now
     ):
@@ -363,7 +380,26 @@ def _read_admission_pins(engine: Engine, account_id: UUID, run_id: UUID) -> _Adm
         expected is None
         or row["model_id"] != expected[1]
         or (
-            row["credential_provider"] is not None and row["credential_provider"] != row["provider"]
+            (require_binding and row["credential_provider"] is None)
+            or (
+                require_binding
+                and (
+                    row["credential_status"] != "active"
+                    or row["credential_scope"] not in {"saved", "run"}
+                    or (
+                        row["credential_scope"] == "run"
+                        and (
+                            row["scope_run_id"] != run_id
+                            or row["credential_expires_at"] is None
+                            or row["credential_expires_at"] <= now
+                        )
+                    )
+                )
+            )
+            or (
+                row["credential_provider"] is not None
+                and row["credential_provider"] != row["provider"]
+            )
         )
     ):
         raise WorkflowConfigurationError("workflow_provider_pin_invalid")

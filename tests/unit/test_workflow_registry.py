@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import cast
 from uuid import uuid4
 
@@ -9,7 +10,7 @@ from sqlalchemy import Engine
 from continuum_api.adapters.anthropic import _tools as anthropic_tools
 from continuum_api.adapters.openai import _tools as openai_tools
 from continuum_api.artifacts.checkpoints import CheckpointStorageService
-from continuum_api.runtime.activity_runner import ActivityRunner
+from continuum_api.runtime.activity_runner import ActivityRunner, UnknownActivity
 from continuum_api.runtime.agent_activity import AgentActivityStep, PolicyResolver
 from continuum_api.runtime.agent_loop import DurableAgentLoopService
 from continuum_api.runtime.approvals import ApprovalService
@@ -67,10 +68,10 @@ def test_candidate_validation_continuation_is_fixed_and_revision_bound() -> None
         )
 
 
-def test_registry_composes_only_the_fixed_workflow_handlers() -> None:
+def _registry(*, evaluation: bool = False, queue=None) -> ActivityRunner:
     principal = Principal(uuid4())
 
-    runner = build_workflow_activity_runner(
+    return build_workflow_activity_runner(
         cast(Engine, object()),
         principal,
         checkpoints=cast(CheckpointStorageService, object()),
@@ -85,8 +86,13 @@ def test_registry_composes_only_the_fixed_workflow_handlers() -> None:
         branch_publication=cast(GitHubBranchPublicationService, object()),
         pull_request_publication=cast(GitHubPullRequestService, object()),
         lease_owner="unit-test",
+        evaluation=evaluation,
+        queue=queue,
     )
 
+
+def test_registry_composes_only_the_fixed_workflow_handlers() -> None:
+    runner = _registry()
     assert isinstance(runner, ActivityRunner)
     assert set(runner._handlers) == {
         "source_preparation",
@@ -97,3 +103,36 @@ def test_registry_composes_only_the_fixed_workflow_handlers() -> None:
         "publish_approved",
     }
     assert runner._handlers["agent_turn"] is runner._handlers["agent_tool"]
+
+
+def test_evaluation_registry_does_not_register_publication_dispatch() -> None:
+    runner = build_workflow_activity_runner(
+        cast(Engine, object()),
+        Principal(uuid4()),
+        checkpoints=cast(CheckpointStorageService, object()),
+        fetch_source=cast(SourceFetcher, lambda *_: ()),
+        agent_service=cast(DurableAgentLoopService, object()),
+        model_adapter=object(),
+        resolve_tool_policy_context=cast(PolicyResolver, lambda *_: None),
+        resolve_validation_policy_context=cast(PolicyContextResolver, lambda *_: None),
+        validation=cast(ValidationService, object()),
+        approvals=cast(ApprovalService, object()),
+        transitions=cast(TransitionService, object()),
+        branch_publication=cast(GitHubBranchPublicationService, object()),
+        pull_request_publication=cast(GitHubPullRequestService, object()),
+        lease_owner="evaluation-test",
+        evaluation=True,
+    )
+
+    assert "publish_approved" not in runner._handlers
+
+
+def test_evaluation_refuses_publication_before_claim_even_if_approval_arrives(monkeypatch) -> None:
+    class Queue:
+        def claim_one(self, *_args, **_kwargs):
+            pytest.fail("evaluation must not claim publication work")
+
+    runner = _registry(evaluation=True, queue=Queue())
+    monkeypatch.setattr(runner, "_next_due_activity", lambda _run: ("publish_approved", False))
+    with pytest.raises(UnknownActivity, match="runtime_activity_unregistered:publish_approved"):
+        asyncio.run(runner.run_admitted(uuid4(), max_jobs=1, max_seconds=1))

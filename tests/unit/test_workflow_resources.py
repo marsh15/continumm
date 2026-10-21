@@ -187,8 +187,9 @@ def test_factory_closes_created_resources_when_construction_is_cancelled(monkeyp
         ("node-npm", CredentialProvider.ANTHROPIC, "AnthropicModelAdapter"),
     ],
 )
+@pytest.mark.parametrize("evaluation", [False, True])
 def test_factory_wires_admitted_profile_and_provider_without_hosted_calls(
-    monkeypatch, profile_id, provider, adapter_type
+    monkeypatch, profile_id, provider, adapter_type, evaluation
 ) -> None:
     account_id, run_id = uuid4(), uuid4()
     closed = []
@@ -237,9 +238,13 @@ def test_factory_wires_admitted_profile_and_provider_without_hosted_calls(
         pytest.fail("sandbox provider must be created only inside an admitted activity")
 
     monkeypatch.setattr(resources, "VercelSandboxProvider", unexpected_sandbox_provider)
-    built = asyncio.run(resources.build_workflow_resources(settings, account_id, run_id))
+    built = asyncio.run(
+        resources.build_workflow_resources(settings, account_id, run_id, evaluation=evaluation)
+    )
 
     validation = calls["validation"]
+    assert calls["evaluation"] is evaluation
+    assert validation._allocation_class == ("operator" if evaluation else "public")
     assert built.runner is runner
     assert type(calls["model_adapter"]).__name__ == adapter_type
     assert validation._profiles["python-pytest"].configured_image == (

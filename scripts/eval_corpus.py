@@ -180,7 +180,7 @@ def main() -> int:
             "scripted known repairs; no model quality score",
             "trusted fixtures execute locally; no managed sandbox measurement",
             "hidden checks are outside the writable workspace",
-            "live admitted-run provider harness remains gated by T34 setup",
+            "live protocol execution requires admitted runs, explicit opt-ins and service setup",
         ],
         "results": results,
     }

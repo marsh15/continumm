@@ -90,8 +90,9 @@ Before the live demonstration can run:
    managed validation, publication services and the fixed activity registry.
    Configure the actual current sandbox accounting period and selected profile
    image before invoking it. The Docker entrypoint still starts Uvicorn; operator
-   worker execution is explicit. `make eval-live PROVIDER=openai` remains
-   fail-closed pending the separate controlled live-evaluation harness.
+   worker execution is explicit. The [controlled protocol evaluation harness](evaluation.md)
+   requires explicit model-charge and operator-sandbox opt-ins plus admitted
+   Python/Node run IDs; the provider-only command continues to refuse execution.
 5. Run a bounded task, request and validate one revision, inspect the exact new
    manifest, approve it, and publish normally to the managed branch and PR. Record
    real run/approval identifiers, approved commit, PR link, timestamps, provider

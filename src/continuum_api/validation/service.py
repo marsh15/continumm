@@ -146,6 +146,7 @@ class ValidationService:
         allocation_creator: AllocationCreator,
         *,
         allocation_seconds_per_phase: int = DEFAULT_VALIDATION_ALLOCATION_SECONDS,
+        allocation_class: AllocationClass = "public",
     ) -> None:
         if (
             type(allocation_seconds_per_phase) is not int
@@ -157,6 +158,9 @@ class ValidationService:
             _PYTHON_PROFILE[0]: python_profile,
             _NODE_PROFILE[0]: node_profile,
         }
+        if allocation_class not in {"public", "operator"}:
+            raise ValueError("validation_allocation_class_invalid")
+        self._allocation_class = allocation_class
         self._allocation_creator = allocation_creator
         self._allocation_seconds_per_phase = allocation_seconds_per_phase
 
@@ -277,7 +281,7 @@ class ValidationService:
                 lease,
                 logical_key,
                 self._allocation_seconds_per_phase,
-                allocation_class="public",
+                allocation_class=self._allocation_class,
             )
             created_id = getattr(reservation, "allocation_id", None)
             if not isinstance(created_id, UUID):

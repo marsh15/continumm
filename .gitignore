@@ -24,3 +24,5 @@ node_modules/
 .artifacts/fault-matrix.json
 
 *.cpx
+
+.artifacts/live-evaluation*.json

@@ -859,3 +859,36 @@ the suite. A transient Docker Hub 502 required a build retry.
   The controlled live-evaluation harness and actual service/provider/sandbox
   qualification remain open. No live GitHub, provider or sandbox requests were
   made, and public admission remains disabled.
+
+### T48 follow-up — controlled protocol evaluation harness (21 October 2026)
+
+- Replaced the dead live-evaluation entry point with explicit execution and
+  read-only observation modes for already-admitted Python/Node runs. Both owner,
+  provider and profile bindings are preflighted before either drain. Execution
+  requires separate model-charge and operator-sandbox opt-ins; there is no raw
+  key, admission, approval or publication shortcut.
+- Evaluation construction selects the operator allocation class and excludes
+  publication from the activity registry. A concurrent approval cannot cause an
+  evaluation worker to claim publication. Ordinary workflow defaults retain
+  public allocation accounting and their existing publication handler.
+- Added repeatable-read, owner/retention-scoped evidence summaries with actual
+  usage/reservation counters, unknown-usage markers, observed review/validation
+  metadata and conservative unresolved-effect checks. Readiness verifies current
+  unexpired approval, manifest and accepted-result digests, source identity,
+  received model work and two completed operator validation allocations.
+- Reports preserve partial failures, UTC observation/generation timestamps,
+  source revision and dirty-worktree provenance. Exact patch bytes and complete
+  unauthorized-attempt counts remain unavailable rather than reported as zero.
+  Hidden checks are always `not_run` and task correctness `not_assessed`.
+- Added private exclusive report-file writes, bounded per-run controls and
+  distinct exit statuses for refused, failed, incomplete and ready observations.
+  The actual Make entry point refused missing spend opt-ins before configuration.
+- Verification passed: 106 combined targeted tests with no skips; after the
+  final timestamp/report metadata change, 25 focused unit/PostgreSQL tests passed.
+  Final `make check build-package` passed with 749 backend tests, 208 optional
+  database skips, 29 console tests, 30 Edge tests, Ruff and mypy (106 source
+  files), plus wheel/source builds.
+- No live provider, GitHub or sandbox calls were made. The managed hidden-check
+  API, broader adversarial deterministic corpus and actual four provider/profile
+  smokes remain open. Public admission stays disabled.
+  [Harness contract and limits](../docs/evaluation.md).
