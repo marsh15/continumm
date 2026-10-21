@@ -98,8 +98,8 @@ def npm_ci_argv() -> tuple[str, ...]:
         "--no-fund",
         "--engine-strict",
         f"--registry={NPM_REGISTRY_URL}",
-        "--userconfig=/dev/null",
-        "--globalconfig=/dev/null",
+        "--userconfig=/opt/continuum/npm-user-empty.npmrc",
+        "--globalconfig=/opt/continuum/npm-global-empty.npmrc",
         f"--cache={NPM_CACHE_PATH}",
         "--fetch-retries=0",
         "--fetch-timeout=15000",
@@ -116,9 +116,9 @@ def npm_ci_environment() -> Mapping[str, str]:
         "NPM_CONFIG_AUDIT": "false",
         "NPM_CONFIG_CACHE": NPM_CACHE_PATH,
         "NPM_CONFIG_FUND": "false",
-        "NPM_CONFIG_GLOBALCONFIG": "/dev/null",
+        "NPM_CONFIG_GLOBALCONFIG": "/opt/continuum/npm-global-empty.npmrc",
         "NPM_CONFIG_UPDATE_NOTIFIER": "false",
-        "NPM_CONFIG_USERCONFIG": "/dev/null",
+        "NPM_CONFIG_USERCONFIG": "/opt/continuum/npm-user-empty.npmrc",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
     }
 
@@ -135,8 +135,8 @@ def npm_test_environment() -> Mapping[str, str]:
         "HOME": f"{CONTROL_DIRECTORY}/home",
         "LANG": "C.UTF-8",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
-        "NPM_CONFIG_GLOBALCONFIG": "/dev/null",
-        "NPM_CONFIG_USERCONFIG": "/dev/null",
+        "NPM_CONFIG_GLOBALCONFIG": "/opt/continuum/npm-global-empty.npmrc",
+        "NPM_CONFIG_USERCONFIG": "/opt/continuum/npm-user-empty.npmrc",
     }
 
 

@@ -55,6 +55,7 @@ from continuum_api.sandbox.config import (
 from continuum_api.sandbox.node_profile import NodeProfileService
 from continuum_api.sandbox.python_profile import PythonProfileService
 from continuum_api.sandbox.vercel import VercelSandboxProvider
+from continuum_api.validation.managed_hidden_checks import ManagedHiddenCheckService
 from continuum_api.validation.service import ValidationService
 
 
@@ -74,6 +75,7 @@ class WorkflowResources:
     storage: Any
     engine: Engine
     model_adapter: Any | None = None
+    hidden_checks: ManagedHiddenCheckService | None = None
     _closed: bool = False
 
     async def aclose(self) -> None:
@@ -248,7 +250,14 @@ async def build_workflow_resources(
             lease_owner=f"workflow-worker:{os.getpid()}:{run_id}",
             evaluation=evaluation,
         )
-        return WorkflowResources(runner, storage, engine, model_adapter)
+        hidden_checks = (
+            ManagedHiddenCheckService(python_profile, node_profile, allocations, allocations)
+            if evaluation
+            else None
+        )
+        return WorkflowResources(
+            runner, storage, engine, model_adapter, hidden_checks=hidden_checks
+        )
     except BaseException:
         if model_adapter is not None:
             try:

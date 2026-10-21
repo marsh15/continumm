@@ -61,6 +61,7 @@ from continuum_api.sandbox.node_bootstrap_recipe import (
 from continuum_api.sandbox.vercel import VercelSandboxAllocation, VercelSandboxProvider
 
 if TYPE_CHECKING:
+    from continuum_api.sandbox.hidden_probe_recipe import HiddenProbe
     from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
 
 NODE_PROFILE_ID = NODE_NPM_PROFILE.profile_id
@@ -510,6 +511,50 @@ class NodeProfileService:
         *,
         validation_source: ValidationSourceAuthorization | None = None,
     ) -> NodeProfileResult:
+        """Run the profile's ordinary fixed test command."""
+        return await self._run(
+            principal,
+            lease,
+            artifact_id,
+            eligibility,
+            allocation_id,
+            validation_source=validation_source,
+            probe=None,
+        )
+
+    async def run_hidden_probe(
+        self,
+        principal: Principal,
+        lease: ExecutionLease,
+        artifact_id: UUID,
+        eligibility: EligibilityReceipt,
+        allocation_id: UUID,
+        *,
+        validation_source: ValidationSourceAuthorization,
+        probe: HiddenProbe,
+    ) -> NodeProfileResult:
+        """Run one authorized hidden probe in the verified candidate workspace."""
+        return await self._run(
+            principal,
+            lease,
+            artifact_id,
+            eligibility,
+            allocation_id,
+            validation_source=validation_source,
+            probe=probe,
+        )
+
+    async def _run(
+        self,
+        principal: Principal,
+        lease: ExecutionLease,
+        artifact_id: UUID,
+        eligibility: EligibilityReceipt,
+        allocation_id: UUID,
+        *,
+        validation_source: ValidationSourceAuthorization | None = None,
+        probe: HiddenProbe | None = None,
+    ) -> NodeProfileResult:
         """Verify pins, restore through T15, install and test inside T16 allocation."""
         if validation_source is not None:
             from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
@@ -518,6 +563,11 @@ class NodeProfileService:
                 raise NodeProfileError("node_profile_candidate_authorization_invalid")
             if artifact_id != validation_source.baseline_artifact_id:
                 raise NodeProfileError("node_profile_candidate_baseline_identity_mismatch")
+        if probe is not None:
+            if validation_source is None:
+                raise NodeProfileError("node_profile_hidden_probe_candidate_authorization_required")
+            if (probe.profile_id, probe.profile_version) != (NODE_PROFILE_ID, NODE_PROFILE_VERSION):
+                raise NodeProfileError("node_profile_hidden_probe_profile_mismatch")
         if principal.account_id != lease.owner_id:
             raise NodeProfileError("node_profile_owner_mismatch")
 
@@ -532,6 +582,8 @@ class NodeProfileService:
                 )
                 self._validate_reservation(candidate, lease)
                 reservation = candidate
+                if probe is not None and reservation.allocation_class != "operator":
+                    raise NodeProfileError("node_profile_hidden_probe_operator_allocation_required")
                 image = self._require_image()
                 if self._provider_period_id is None:
                     raise NodeProfileError("node_profile_period_unconfigured")
@@ -545,6 +597,13 @@ class NodeProfileService:
                         validation_source,
                         baseline_artifact_id=artifact_id,
                     )
+                if probe is not None:
+                    assert validation_source is not None
+                    if not any(
+                        entry.path == probe.entry_path
+                        for entry in validation_source.candidate_manifest.entries
+                    ):
+                        raise NodeProfileError("node_profile_hidden_probe_entry_missing")
                 if reservation.provider_session_id is None:
                     raise NodeProfileError("node_profile_session_identity_missing")
 
@@ -707,22 +766,27 @@ class NodeProfileService:
                     ):
                         raise NodeProfileError("node_profile_install_receipt_mismatch")
 
-                    test_argv = npm_test_argv()
-                    test_output, total_output_bytes = await self._run_command(
+                    if probe is None:
+                        command_argv = npm_test_argv()
+                        phase = "npm_test"
+                    else:
+                        command_argv = probe.argv()
+                        phase = "hidden_probe"
+                    probe_output, total_output_bytes = await self._run_command(
                         principal,
                         lease,
                         reservation,
                         allocation,
-                        test_argv[0],
-                        test_argv[1:],
-                        phase="npm_test",
+                        command_argv[0],
+                        command_argv[1:],
+                        phase=phase,
                         timeout_seconds=MAX_PROFILE_COMMAND_SECONDS,
-                        cwd=WORKSPACE_PATH,
+                        cwd=WORKSPACE_PATH if probe is None else CONTROL_DIRECTORY,
                         env=npm_test_environment(),
                         outputs=outputs,
                         total_output_bytes=total_output_bytes,
                     )
-                if test_output.exit_code is None:
+                if probe_output.exit_code is None:
                     raise NodeProfileError("node_profile_test_exit_missing")
                 cleanup_attempted = True
                 cleanup = await self._stop_allocation_once(principal, allocation_id)
@@ -745,7 +809,7 @@ class NodeProfileService:
                     allocation_id=allocation_id,
                     validation_phase="candidate" if validation_source is not None else "baseline",
                     image=image,
-                    command_id=NODE_PROFILE_COMMAND_ID,
+                    command_id=probe.command_id if probe is not None else NODE_PROFILE_COMMAND_ID,
                     baseline_git_tree_sha256=eligibility.tree_sha,
                     baseline_archive_tree_sha256=verified.manifest.tree_sha256,
                     candidate_archive_sha256=plan.archive_sha256
@@ -755,8 +819,8 @@ class NodeProfileService:
                     if validation_source is not None
                     else None,
                     package_count=plan.package_count,
-                    test_exit_code=test_output.exit_code,
-                    test_passed=test_output.exit_code == 0,
+                    test_exit_code=probe_output.exit_code,
+                    test_passed=probe_output.exit_code == 0,
                     outputs=tuple(outputs),
                     allocation_status=cleanup.status,
                 )

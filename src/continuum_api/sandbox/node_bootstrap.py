@@ -58,8 +58,8 @@ NPM_CI_ARGUMENTS = (
     "--no-fund",
     "--engine-strict",
     f"--registry={NPM_REGISTRY_URL}",
-    "--userconfig=/dev/null",
-    "--globalconfig=/dev/null",
+    "--userconfig=/opt/continuum/npm-user-empty.npmrc",
+    "--globalconfig=/opt/continuum/npm-global-empty.npmrc",
     f"--cache={NPM_CACHE_PATH}",
     "--fetch-retries=0",
     "--fetch-timeout=15000",
@@ -760,9 +760,9 @@ def _npm_environment() -> dict[str, str]:
         "NPM_CONFIG_AUDIT": "false",
         "NPM_CONFIG_CACHE": str(NPM_CACHE_PATH),
         "NPM_CONFIG_FUND": "false",
-        "NPM_CONFIG_GLOBALCONFIG": "/dev/null",
+        "NPM_CONFIG_GLOBALCONFIG": "/opt/continuum/npm-global-empty.npmrc",
         "NPM_CONFIG_UPDATE_NOTIFIER": "false",
-        "NPM_CONFIG_USERCONFIG": "/dev/null",
+        "NPM_CONFIG_USERCONFIG": "/opt/continuum/npm-user-empty.npmrc",
         "PATH": "/usr/local/bin:/usr/bin:/bin",
     }
 

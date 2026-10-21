@@ -73,8 +73,11 @@ class SandboxAllocationService:
         requested_seconds: int,
         *,
         allocation_class: AllocationClass = "public",
+        require_new: bool = False,
     ) -> AllocationReservation:
         """Reserve all limits, authorize one POST, and never blindly repeat it."""
+        if type(require_new) is not bool:
+            raise SandboxAllocationServiceError("sandbox_allocation_freshness_invalid")
         if principal.account_id != lease.owner_id:
             raise SandboxAllocationServiceError("sandbox_allocation_owner_mismatch")
         if not logical_key or logical_key.strip() != logical_key:
@@ -109,6 +112,8 @@ class SandboxAllocationService:
                     requested_seconds,
                 )
                 if not reservation.is_new:
+                    if require_new:
+                        raise SandboxAllocationServiceError("sandbox_allocation_reuse_forbidden")
                     return await self._observe_existing(principal, reservation)
 
                 create_authorized = False

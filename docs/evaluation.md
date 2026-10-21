@@ -83,8 +83,11 @@ provenance. Exit codes are:
 
 Managed profiles currently execute repository tests and protect original tests.
 The [pinned hidden-check comparator](hidden-checks.md) is implemented and used by
-the local corpus. Its managed execution and accepted-evidence integration are
-still missing. Live reports therefore always
+the local corpus. A managed operator service and fixed Python/Node runners are
+also implemented, with fake-adapter coverage and local image builds/probes.
+[Image evidence](evidence/t48-local-image-probes.json) is explicitly local. Its
+fenced activity, accepted-evidence
+and live harness integration and actual hosted execution remain missing. Live reports always
 state `independent_hidden_checks: not_run` and `task_correctness: not_assessed`.
 The local fixture runner's hidden checks do not establish managed hidden-check
 coverage. No LLM judge replaces independent evidence.

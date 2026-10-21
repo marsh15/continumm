@@ -59,6 +59,7 @@ from continuum_api.sandbox.python_bootstrap_recipe import (
 from continuum_api.sandbox.vercel import VercelSandboxAllocation, VercelSandboxProvider
 
 if TYPE_CHECKING:
+    from continuum_api.sandbox.hidden_probe_recipe import HiddenProbe
     from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
 
 PYTHON_PROFILE_EGRESS_DOMAINS = ("pypi.org", "files.pythonhosted.org")
@@ -220,6 +221,50 @@ class PythonProfileService:
         *,
         validation_source: ValidationSourceAuthorization | None = None,
     ) -> PythonProfileResult:
+        """Run the profile's ordinary fixed test command."""
+        return await self._run(
+            principal,
+            lease,
+            artifact_id,
+            eligibility,
+            allocation_id,
+            validation_source=validation_source,
+            probe=None,
+        )
+
+    async def run_hidden_probe(
+        self,
+        principal: Principal,
+        lease: ExecutionLease,
+        artifact_id: UUID,
+        eligibility: EligibilityReceipt,
+        allocation_id: UUID,
+        *,
+        validation_source: ValidationSourceAuthorization,
+        probe: HiddenProbe,
+    ) -> PythonProfileResult:
+        """Run one authorized hidden probe in the verified candidate workspace."""
+        return await self._run(
+            principal,
+            lease,
+            artifact_id,
+            eligibility,
+            allocation_id,
+            validation_source=validation_source,
+            probe=probe,
+        )
+
+    async def _run(
+        self,
+        principal: Principal,
+        lease: ExecutionLease,
+        artifact_id: UUID,
+        eligibility: EligibilityReceipt,
+        allocation_id: UUID,
+        *,
+        validation_source: ValidationSourceAuthorization | None = None,
+        probe: HiddenProbe | None = None,
+    ) -> PythonProfileResult:
         """Validate pins, restore via T15 authorization, and execute fixed phases."""
         if validation_source is not None:
             from continuum_api.sandbox.validation.preparation import ValidationSourceAuthorization
@@ -228,6 +273,16 @@ class PythonProfileService:
                 raise PythonProfileError("python_profile_candidate_authorization_invalid")
             if artifact_id != validation_source.baseline_artifact_id:
                 raise PythonProfileError("python_profile_candidate_baseline_identity_mismatch")
+        if probe is not None:
+            if validation_source is None:
+                raise PythonProfileError(
+                    "python_profile_hidden_probe_candidate_authorization_required"
+                )
+            if (probe.profile_id, probe.profile_version) != (
+                PYTHON_PROFILE_ID,
+                PYTHON_PROFILE_VERSION,
+            ):
+                raise PythonProfileError("python_profile_hidden_probe_profile_mismatch")
         if principal.account_id != lease.owner_id:
             raise PythonProfileError("python_profile_owner_mismatch")
 
@@ -242,6 +297,10 @@ class PythonProfileService:
                 )
                 self._validate_reservation(candidate, lease)
                 reservation = candidate
+                if probe is not None and reservation.allocation_class != "operator":
+                    raise PythonProfileError(
+                        "python_profile_hidden_probe_operator_allocation_required"
+                    )
                 image = self._require_image()
                 if self._provider_period_id is None:
                     raise PythonProfileError("python_profile_period_unconfigured")
@@ -255,6 +314,13 @@ class PythonProfileService:
                         validation_source,
                         baseline_artifact_id=artifact_id,
                     )
+                if probe is not None:
+                    assert validation_source is not None
+                    if not any(
+                        entry.path == probe.entry_path
+                        for entry in validation_source.candidate_manifest.entries
+                    ):
+                        raise PythonProfileError("python_profile_hidden_probe_entry_missing")
                 assert reservation.provider_session_id is not None
 
                 limits = SandboxAllocationLimits(
@@ -412,21 +478,27 @@ class PythonProfileService:
                     if install_receipt.get("installed_wheel_count") != plan.package_count:
                         raise PythonProfileError("python_profile_install_receipt_mismatch")
 
-                    pytest_output, total_output_bytes = await self._run_command(
+                    if probe is None:
+                        command_argv = pytest_argv()
+                        phase = "pytest"
+                    else:
+                        command_argv = probe.argv()
+                        phase = "hidden_probe"
+                    probe_output, total_output_bytes = await self._run_command(
                         principal,
                         lease,
                         reservation,
                         allocation,
-                        pytest_argv()[0],
-                        pytest_argv()[1:],
-                        phase="pytest",
+                        command_argv[0],
+                        command_argv[1:],
+                        phase=phase,
                         timeout_seconds=MAX_PROFILE_COMMAND_SECONDS,
-                        cwd=WORKSPACE_PATH,
+                        cwd=WORKSPACE_PATH if probe is None else CONTROL_DIRECTORY,
                         env=pytest_environment(),
                         outputs=outputs,
                         total_output_bytes=total_output_bytes,
                     )
-                assert pytest_output.exit_code is not None
+                assert probe_output.exit_code is not None
                 cleanup_attempted = True
                 cleanup = await self._stop_allocation_once(principal, allocation_id)
                 if cleanup is None or cleanup.status not in {
@@ -447,7 +519,7 @@ class PythonProfileService:
                     allocation_id=allocation_id,
                     validation_phase="candidate" if validation_source is not None else "baseline",
                     image=image,
-                    command_id=PYTHON_PROFILE_COMMAND_ID,
+                    command_id=probe.command_id if probe is not None else PYTHON_PROFILE_COMMAND_ID,
                     baseline_git_tree_sha256=eligibility.tree_sha,
                     baseline_archive_tree_sha256=verified.manifest.tree_sha256,
                     candidate_archive_sha256=plan.archive_sha256
@@ -457,8 +529,8 @@ class PythonProfileService:
                     if validation_source is not None
                     else None,
                     package_count=plan.package_count,
-                    test_exit_code=pytest_output.exit_code,
-                    test_passed=pytest_output.exit_code == 0,
+                    test_exit_code=probe_output.exit_code,
+                    test_passed=probe_output.exit_code == 0,
                     outputs=tuple(outputs),
                     allocation_status=cleanup.status,
                 )

@@ -39,7 +39,9 @@ COPY src/continuum_api/sandbox/node_bootstrap_recipe.py /opt/continuum/node_boot
 COPY src/continuum_api/artifacts/archives.py /opt/continuum/trusted/archives.py
 COPY profiles/node/trustedfiles/README.md /opt/continuum/trusted/README.md
 
-RUN chown root:root \
+RUN touch /opt/continuum/npm-user-empty.npmrc /opt/continuum/npm-global-empty.npmrc \
+    && chmod 0444 /opt/continuum/npm-user-empty.npmrc /opt/continuum/npm-global-empty.npmrc \
+    && chown root:root \
         /opt/continuum/node_bootstrap.py \
         /opt/continuum/node_bootstrap_recipe.py \
         /opt/continuum/trusted/archives.py \
@@ -50,6 +52,13 @@ RUN chown root:root \
     && test "$(/usr/local/bin/node --version)" = "v24.21.0" \
     && test "$(/usr/local/bin/npm --version)" = "11.19.0" \
     && /usr/local/bin/python3.13 -I -S /opt/continuum/node_bootstrap.py verify-runtime
+
+
+
+
+COPY src/continuum_api/sandbox/hidden_probe.cjs /opt/continuum/hidden_probe.cjs
+RUN chown root:root /opt/continuum/hidden_probe.cjs \
+    && chmod 0555 /opt/continuum/hidden_probe.cjs
 
 USER 10001:10001
 WORKDIR /opt/continuum

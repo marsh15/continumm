@@ -943,3 +943,40 @@ the suite. A transient Docker Hub 502 required a build retry.
   integration remain open; no model/network/sandbox calls were made. Existing
   live readiness and publication behavior are unchanged. See the
   [contract and remaining integration](../docs/hidden-checks.md).
+
+
+### 21 October 2026 — T48 managed hidden-probe execution service
+
+- Added an explicitly enabled internal service that binds trusted suites and
+  operator-selected entry paths to authorized candidate archives. It requests
+  fresh operator-only allocations; allocator replay rejection occurs before
+  provider observation. Normal allocation replay behavior remains the default.
+- Python and Node profiles now have a separate fixed-probe path after trusted
+  dependency setup and deny-all checks, with no repository test command first.
+  Existing runtime/image/source/session/lease/output/timeout and cleanup gates
+  remain in use. Probe command IDs cannot satisfy ordinary validation.
+- Added image-owned, root-owned read-only Python and CommonJS runners for the
+  synchronous `solve(JSON)` interface. Expected answers remain in the application;
+  candidate diagnostic sinks do not grow in memory. Python supports isolated
+  standard-library imports and module identity for dataclasses.
+- The service verifies completed cleanup and profile identities before producing
+  prepared digest-only evidence. Suite, entry/invocation, source, process and
+  comparison identities are cross-checked, including JSON round trips and
+  tamper rejection. Only evaluation-mode resources expose this internal service.
+- Real local Docker builds found and fixed a preexisting Node startup failure:
+  npm rejects the same `/dev/null` user/global config path. Distinct root-owned,
+  read-only empty config files now serve both setup commands and runtime probes.
+- Both amd64 profile images built. Trusted literal probes passed inside local
+  UID-10001 containers with immutable helpers, a read-only root filesystem and
+  no networking. Node runtime identity also passed under those restrictions.
+  [Measured local image evidence](../docs/evidence/t48-local-image-probes.json)
+  records local IDs, source hashes and honest zero managed/provider/model calls.
+- Verification: 91 focused tests passed after the npm fix; final backend suite
+  passed 832 tests with 208 optional database skips. Ruff, mypy (110 source files),
+  wheel/source builds passed; the wheel includes the fixed CommonJS runner.
+  Earlier full checks in this slice also passed 29 console and 30 Edge tests.
+- No image was published and no managed sandbox/model/GitHub call was made.
+  Fenced activity/accepted evidence and live CLI/report integration remain open.
+  The returned service receipt is prepared evidence, not a completed T48 live
+  gate; live reports still say hidden checks `not_run` and correctness
+  `not_assessed`. Public admission remains disabled.

@@ -545,3 +545,18 @@ def test_recipe_uses_isolated_bootstrap_and_fixed_registry_commands() -> None:
     assert npm_ci_environment()["HOME"] == f"{CONTROL_DIRECTORY}/home"
     assert npm_test_environment()["CI"] == "true"
     assert "NODE_OPTIONS" not in npm_test_environment()
+
+
+def test_npm_empty_config_paths_are_distinct_and_image_owned() -> None:
+    from continuum_api.sandbox.node_bootstrap import _npm_environment
+    from continuum_api.sandbox.node_bootstrap_recipe import npm_ci_environment, npm_test_environment
+
+    for environment in (_npm_environment(), npm_ci_environment(), npm_test_environment()):
+        user = environment["NPM_CONFIG_USERCONFIG"]
+        global_config = environment["NPM_CONFIG_GLOBALCONFIG"]
+        assert user == "/opt/continuum/npm-user-empty.npmrc"
+        assert global_config == "/opt/continuum/npm-global-empty.npmrc"
+        assert user != global_config
+    argv = npm_ci_argv()
+    assert "--userconfig=/opt/continuum/npm-user-empty.npmrc" in argv
+    assert "--globalconfig=/opt/continuum/npm-global-empty.npmrc" in argv

@@ -26,6 +26,7 @@ from continuum_api.runtime.persistence import Principal
 from continuum_api.runtime.sandbox_allocations import AllocationReservation
 from continuum_api.sandbox.config import PythonProfileSettings, SandboxAllocationLimits
 from continuum_api.sandbox.contracts import CommandResult, EffectState, SandboxObservation
+from continuum_api.sandbox.hidden_probe_recipe import HiddenProbe
 from continuum_api.sandbox.python_bootstrap_recipe import (
     CONTROL_DIRECTORY,
     PYTHON_EXECUTABLE,
@@ -193,43 +194,51 @@ class _Allocation:
             stdout = "1 passed\n"
         else:
             assert cwd == CONTROL_DIRECTORY
-            phase = args[3]
-            if phase == self.block_phase:
-                self.blocked_command_started.set()
-                await self.blocked_command_continue.wait()
-            if phase == "verify-runtime":
-                receipt = {
-                    "implementation": "CPython",
-                    "machine": "x86_64",
-                    "profile_version": "1",
-                    "python_version": "3.13.12",
-                }
-            elif phase == "extract":
-                receipt = {
-                    "archive_sha256": self.plan.archive_sha256,
-                    "file_count": self.plan.file_count,
-                    "lockfile_sha256": self.plan.lockfile_sha256,
-                    "source_bytes": self.plan.source_bytes,
-                    "tree_sha256": self.plan.tree_sha256,
-                }
-            elif phase == "validate-lock":
-                receipt = {
-                    "lockfile_sha256": self.plan.lockfile_sha256,
-                    "package_count": self.lock_package_count_override or 1,
-                }
-            elif phase == "probe":
-                expected = args[args.index("--expected") + 1]
-                observed_allowed = expected == "allowed"
-                if self.probe_forced_allowed is not None:
-                    observed_allowed = self.probe_forced_allowed
-                receipt = {"expected": expected, "observed_allowed": observed_allowed}
-            elif phase == "download-verify":
-                receipt = {"package_count": 1, "total_bytes": 2_048}
-            elif phase == "install":
-                receipt = {"installed_wheel_count": 1}
+            phase = "hidden_probe" if args[2] == "/opt/continuum/hidden_probe.py" else args[3]
+            if phase == "hidden_probe":
+                assert self.network_policy.mode == "deny-all"
+                assert command == "/usr/local/bin/python3.13"
+                assert env is not None and "PYTHONPATH" in env
+                assert "--entry" in args and "--inputs-b64" in args
+                self.events.append(("hidden_command", (command, tuple(args), cwd)))
+                stdout = '{"results":[true]}\n'
             else:
-                raise AssertionError(f"unexpected trusted phase {phase}")
-            stdout = json.dumps(receipt, sort_keys=True) + "\n"
+                if phase == self.block_phase:
+                    self.blocked_command_started.set()
+                    await self.blocked_command_continue.wait()
+                if phase == "verify-runtime":
+                    receipt = {
+                        "implementation": "CPython",
+                        "machine": "x86_64",
+                        "profile_version": "1",
+                        "python_version": "3.13.12",
+                    }
+                elif phase == "extract":
+                    receipt = {
+                        "archive_sha256": self.plan.archive_sha256,
+                        "file_count": self.plan.file_count,
+                        "lockfile_sha256": self.plan.lockfile_sha256,
+                        "source_bytes": self.plan.source_bytes,
+                        "tree_sha256": self.plan.tree_sha256,
+                    }
+                elif phase == "validate-lock":
+                    receipt = {
+                        "lockfile_sha256": self.plan.lockfile_sha256,
+                        "package_count": self.lock_package_count_override or 1,
+                    }
+                elif phase == "probe":
+                    expected = args[args.index("--expected") + 1]
+                    observed_allowed = expected == "allowed"
+                    if self.probe_forced_allowed is not None:
+                        observed_allowed = self.probe_forced_allowed
+                    receipt = {"expected": expected, "observed_allowed": observed_allowed}
+                elif phase == "download-verify":
+                    receipt = {"package_count": 1, "total_bytes": 2_048}
+                elif phase == "install":
+                    receipt = {"installed_wheel_count": 1}
+                else:
+                    raise AssertionError(f"unexpected trusted phase {phase}")
+                stdout = json.dumps(receipt, sort_keys=True) + "\n"
         self.events.append(("command", phase))
         return CommandResult(exit_code=0, stdout=stdout, stderr="", effect=EffectState.APPLIED)
 
@@ -251,7 +260,9 @@ class _Provider:
         return self.allocation
 
 
-def _reservation(*, status: str = "running") -> AllocationReservation:
+def _reservation(
+    *, status: str = "running", allocation_class: str = "public"
+) -> AllocationReservation:
     return AllocationReservation(
         allocation_id=uuid4(),
         provider_name="continuum-t17-profilefixture001",
@@ -261,7 +272,7 @@ def _reservation(*, status: str = "running") -> AllocationReservation:
         vcpus=2,
         memory_mb=4096,
         provider_period_id="period-p0",
-        allocation_class="public",
+        allocation_class=allocation_class,
         provider_session_id="session-t17-fixture",
         owner_id=uuid4(),
         run_id=uuid4(),
@@ -863,5 +874,71 @@ def test_unconfigured_profile_image_fails_closed_and_stops_owned_allocation() ->
 
         assert cleanup.calls == 1
         assert not any(kind == "provider_connection" for kind, _value in events)
+
+    asyncio.run(scenario())
+
+
+def test_hidden_probe_uses_fixed_command_after_deny_all_without_pytest() -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source()
+        operator_reservation = _reservation(allocation_class="operator")
+        candidate_plan = _build_python_candidate_profile_plan(
+            eligibility, baseline, authorization, baseline_artifact_id=artifact_id
+        )
+        service, events, cleanup, provider = _service(
+            reservation=operator_reservation,
+            eligibility=eligibility,
+            verified=baseline,
+            expected_plan=candidate_plan,
+        )
+        probe = HiddenProbe("python-pytest", "1", "module.py", '[{"value":2}]')
+
+        result = await service.run_hidden_probe(
+            *_principal_lease(operator_reservation),
+            artifact_id,
+            eligibility,
+            operator_reservation.allocation_id,
+            validation_source=authorization,
+            probe=probe,
+        )
+
+        phases = [value for kind, value in events if kind == "command"]
+        assert phases[-1] == "hidden_probe"
+        assert phases.index("probe", phases.index("probe") + 1) < phases.index("hidden_probe")
+        assert "pytest" not in phases
+        assert result.command_id == "python-hidden-probe-v1"
+        assert ("hidden_command", (probe.argv()[0], probe.argv()[1:], CONTROL_DIRECTORY)) in events
+        assert result.outputs[-1].phase == "hidden_probe"
+        assert result.outputs[-1].stdout == '{"results":[true]}\n'
+        assert cleanup.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_hidden_probe_requires_operator_allocation_and_cleans_up() -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source()
+        reservation = _reservation(allocation_class="public")
+        service, events, cleanup, _provider = _service(
+            reservation=reservation,
+            eligibility=eligibility,
+            verified=baseline,
+        )
+
+        with pytest.raises(
+            PythonProfileError,
+            match="python_profile_hidden_probe_operator_allocation_required",
+        ):
+            await service.run_hidden_probe(
+                *_principal_lease(reservation),
+                artifact_id,
+                eligibility,
+                reservation.allocation_id,
+                validation_source=authorization,
+                probe=HiddenProbe("python-pytest", "1", "module.py", "[1]"),
+            )
+
+        assert not [value for kind, value in events if kind == "command"]
+        assert cleanup.calls == 1
 
     asyncio.run(scenario())

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "kind": "local_image_literal_probe",
+  "recorded_at": "2026-10-21T09:33:29.094822+00:00",
+  "commit": "547683423dfd089dd654504a1c284e75327e15f3",
+  "working_tree_dirty": true,
+  "managed_provider_calls": 0,
+  "model_calls": 0,
+  "managed_hidden_checks": "not_run",
+  "limitations": [
+    "literal fixture files written in local Docker; no managed allocation or profile dependency setup",
+    "local image IDs are not published registry digests",
+    "no fenced accepted evidence or live harness execution"
+  ],
+  "cases": {
+    "python": {
+      "image_local_id": "sha256:d01926cbf1dd3f0e5df62d1ff0af01e387ca4ce13af1555d83620a236b0004a0",
+      "architecture": "amd64",
+      "runner_source_sha256": "8b83095dacf96e5c54bffe0879bf7ff94402d45f873d97c5254b0141a979081d",
+      "fixture_sha256": "a0f8577c73461fc763d7be81f841f3cc496b1a3f8d22414b2e2dbac73aac4875",
+      "uid": 10001,
+      "runner_owner_uid": 0,
+      "runner_writable": false,
+      "network": "none",
+      "root_filesystem": "read_only",
+      "seconds": 4.742865542008076,
+      "comparison": {
+        "outcome": "passed",
+        "passed_count": 2,
+        "total_count": 2,
+        "suite_sha256": "f975aab28d7e37a97016098f27abc572e2ff64dd08eb51dc9e0a8cfb2c2ac75b",
+        "candidate_archive_sha256": "6f3a9d01b3e5815160fa919960d9ff9d4ee38d2376deb324ba9fe1222d45102c",
+        "candidate_tree_sha256": "8264eb9880c7a089542257e788740aad124358354401d53c9ba8e70eb281cc05",
+        "stdout_sha256": "558af6c64cbcd5579fcee49bdb70ad7e3124ed2aeeb40ad2d5bc6c798243a685",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "code": "hidden_checks_passed"
+      },
+      "dockerfile_source_sha256": "0b98bb1a593cb0e9d5685dd5e12798c9a99d25daca465ad1a009d42fe0498973"
+    },
+    "node": {
+      "recorded_at": "2026-10-21T09:35:58.144794+00:00",
+      "image_local_id": "sha256:e2a2b991f5c084cb830c0d039e72fc0c98d76e68c82edd2408053aa00e81ef18",
+      "architecture": "amd64",
+      "runner_source_sha256": "81043d90a5c824fa00d65a021c97de3404ea7fb808b897636a3010d67921bf91",
+      "bootstrap_source_sha256": "60f3b5ed8ccc7cad0bf1e593a6d2b78f527719638b0558aa0c9dafd9b4074e03",
+      "fixture_sha256": "2bcbc3d7d66d083a752ba20fde6f036991c949492c22b1028ea8d91266796137",
+      "uid": 10001,
+      "runner_owner_uid": 0,
+      "runner_writable": false,
+      "npm_configs": "distinct_root_owned_empty_read_only_files",
+      "runtime_identity_check": "passed",
+      "network": "none",
+      "root_filesystem": "read_only",
+      "seconds": 5.731703124998603,
+      "comparison": {
+        "outcome": "passed",
+        "passed_count": 2,
+        "total_count": 2,
+        "suite_sha256": "8b7d67cc6488081d79e1e54f589fb577d8698406500207af437a46b9b677f1cc",
+        "candidate_archive_sha256": "069f9ee65043878824aa5fab8a16480929376b98f6a0cb47867d6c0ba7da432a",
+        "candidate_tree_sha256": "8764c66efc53e6446f769b95804c04ee37f9c78dd2e09cc61962eaaab82567fb",
+        "stdout_sha256": "558af6c64cbcd5579fcee49bdb70ad7e3124ed2aeeb40ad2d5bc6c798243a685",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "code": "hidden_checks_passed"
+      },
+      "dockerfile_source_sha256": "d8a81880277f6e25ff2ab2221fb250af888c5efd24ebcf433371e925e066f46f"
+    }
+  }
+}

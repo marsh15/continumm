@@ -18,16 +18,19 @@ Node executable, npm CLI tree, and Node's `libstdc++`, `libgcc_s`, and
 `libatomic` runtime libraries from the pinned Node stage. The Dockerfile checks
 the linked libraries and exact Python, Node, and npm versions when built.
 
-This is an image recipe, not a published Vercel image. T18 did not build or
-publish an image, and the local Docker daemon was unavailable for a container
-build or startup check. The runtime must remain disabled until an operator
+This is an image recipe, not a published Vercel image. At T18, no image was
+built or published because the local Docker daemon was unavailable. On 21 October
+2026, the image built locally and the runtime identity/fixed hidden-probe checks
+passed in a non-root read-only container with no network. See
+[the measured local image evidence](../../docs/evidence/t48-local-image-probes.json). The runtime must remain disabled until an operator
 configures a Vercel image reference pinned to a verified digest and the managed
 profile passes its real-session fixture.
 
 The root-owned helper and T14 archive verifier live under `/opt/continuum`.
 Source is extracted only to `/vercel/sandbox/workspace`. npm reads only the
 validated package manifests and uses `/opt/continuum/npm-cache`; the project
-`.npmrc` is rejected, user/global config is set to `/dev/null`, and helper
+`.npmrc` is rejected, user/global config uses distinct root-owned, read-only empty files under
+`/opt/continuum` (npm rejects using `/dev/null` for both), and helper
 subprocesses receive an explicit environment without proxy, token, `NODE_PATH`,
 or `NODE_OPTIONS` variables.
 

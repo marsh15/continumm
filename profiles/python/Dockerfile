@@ -38,5 +38,12 @@ RUN chown root:root \
     && chmod 0555 /opt/continuum/profile_bootstrap.py \
     && chmod 0444 /opt/continuum/trusted/archives.py /opt/continuum/trusted/README.md
 
+
+
+
+COPY src/continuum_api/sandbox/hidden_probe.py /opt/continuum/hidden_probe.py
+RUN chown root:root /opt/continuum/hidden_probe.py \
+    && chmod 0555 /opt/continuum/hidden_probe.py
+
 USER 10001:10001
 WORKDIR /opt/continuum

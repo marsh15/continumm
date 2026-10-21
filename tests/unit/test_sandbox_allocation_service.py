@@ -758,3 +758,49 @@ def test_explicit_stop_reconciles_reserved_unclaimed_row_without_provider_creati
         assert [call[0] for call in store.calls].count("reconcile_undispatched") == 1
 
     asyncio.run(scenario())
+
+
+def test_require_new_refuses_prior_identity_before_any_provider_observation() -> None:
+    async def scenario() -> None:
+        store = _FakeStore(reservation=_reservation(status="running", is_new=False))
+        provider = _FakeProvider()
+        factory_calls = []
+        service = _service(store, provider, factory_calls=factory_calls)
+        principal, lease = _principal_lease()
+        with pytest.raises(
+            SandboxAllocationServiceError, match="sandbox_allocation_reuse_forbidden"
+        ):
+            await service.create(
+                principal,
+                lease,
+                "hidden:fresh",
+                120,
+                allocation_class="operator",
+                require_new=True,
+            )
+        assert [call[0] for call in store.calls] == ["reserve"]
+        assert factory_calls == []
+        assert provider.observe_calls == []
+        assert provider.create_calls == []
+
+    asyncio.run(scenario())
+
+
+def test_require_new_creates_once_and_refuses_replay() -> None:
+    async def scenario() -> None:
+        store = _FakeStore()
+        provider = _FakeProvider()
+        service = _service(store, provider)
+        principal, lease = _principal_lease()
+        first = await service.create(principal, lease, "hidden:fresh", 120, require_new=True)
+        assert first.status == "running"
+        # The persisted reservation signals that this identity already existed.
+        store.reservation = replace(store.reservation, is_new=False)
+        with pytest.raises(
+            SandboxAllocationServiceError, match="sandbox_allocation_reuse_forbidden"
+        ):
+            await service.create(principal, lease, "hidden:fresh", 120, require_new=True)
+        assert len(provider.create_calls) == 1
+        assert provider.observe_calls == []
+
+    asyncio.run(scenario())

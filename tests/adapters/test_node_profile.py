@@ -30,6 +30,7 @@ from continuum_api.runtime.persistence import Principal
 from continuum_api.runtime.sandbox_allocations import AllocationReservation
 from continuum_api.sandbox.config import NodeProfileSettings
 from continuum_api.sandbox.contracts import CommandResult, EffectState, SandboxObservation
+from continuum_api.sandbox.hidden_probe_recipe import HiddenProbe
 from continuum_api.sandbox.node_bootstrap_recipe import (
     CONTROL_DIRECTORY,
     NODE_EXECUTABLE,
@@ -95,6 +96,7 @@ def _source_files(*extra: ArchiveFile) -> tuple[ArchiveFile, ...]:
         ArchiveFile("package.json", json.dumps(package, sort_keys=True).encode()),
         ArchiveFile("package-lock.json", json.dumps(lock, sort_keys=True).encode()),
         ArchiveFile("src/index.js", b"export const value = 1;\n"),
+        ArchiveFile("src/probe.cjs", b"module.exports = value => value;\n"),
         *extra,
     )
 
@@ -321,7 +323,9 @@ def test_node_profile_image_setting_is_operator_supplied_and_fail_closed() -> No
         NodeProfileSettings(node_profile_image="registry.example/node:latest").require_image()
 
 
-def _reservation(*, status: str = "running") -> AllocationReservation:
+def _reservation(
+    *, status: str = "running", allocation_class: str = "public"
+) -> AllocationReservation:
     return AllocationReservation(
         allocation_id=uuid4(),
         provider_name="continuum-t18-profilefixture001",
@@ -331,7 +335,7 @@ def _reservation(*, status: str = "running") -> AllocationReservation:
         vcpus=2,
         memory_mb=4096,
         provider_period_id="period-p0",
-        allocation_class="public",
+        allocation_class=allocation_class,
         provider_session_id="session-t18-fixture",
         owner_id=uuid4(),
         run_id=uuid4(),
@@ -483,6 +487,19 @@ class _Allocation:
             phase = "npm_test"
             stdout = "test output\n"
             exit_code = self.test_exit_code
+        elif cwd == CONTROL_DIRECTORY and command == "/usr/local/bin/node":
+            assert self.network_policy.mode == "deny-all"
+            assert env == npm_test_environment()
+            assert args[:3] == (
+                "--no-addons",
+                "--disable-proto=throw",
+                "/opt/continuum/hidden_probe.cjs",
+            )
+            assert "--entry" in args and "--inputs-b64" in args
+            self.events.append(("hidden_command", (command, tuple(args), cwd)))
+            phase = "hidden_probe"
+            stdout = '{"results":[true]}\n'
+            exit_code = 0
         else:
             assert cwd == CONTROL_DIRECTORY
             assert command == "/usr/local/bin/python3.13"
@@ -563,6 +580,7 @@ def _service(
     tmp_path: Path,
     *,
     image: str | None = _IMAGE,
+    reservation: AllocationReservation | None = None,
     cleanup_status: str = "stopped",
     policy_override: NetworkPolicyReadback | None = None,
     probe_overrides: dict[str, bool] | None = None,
@@ -578,7 +596,7 @@ def _service(
         verified = baseline if verified is None else verified
     assert eligibility is not None and verified is not None
     plan = expected_plan or build_node_profile_plan(eligibility, verified)
-    reservation = _reservation()
+    reservation = reservation or _reservation()
     principal, lease = _principal_lease(reservation)
     events: list[tuple[str, Any]] = []
     store = _Store(events, reservation)
@@ -933,3 +951,79 @@ def test_node_profile_does_not_stop_another_attempts_allocation(tmp_path: Path) 
         )
 
     assert cleanup.calls == 0
+
+
+def test_node_hidden_probe_uses_fixed_command_after_deny_all_without_npm_test(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source(tmp_path)
+        reservation = _reservation(allocation_class="operator")
+        candidate_plan = _build_node_candidate_profile_plan(
+            eligibility, baseline, authorization, baseline_artifact_id=artifact_id
+        )
+        service, _principal, _lease, events, cleanup, provider = _service(
+            tmp_path,
+            reservation=reservation,
+            eligibility=eligibility,
+            verified=baseline,
+            expected_plan=candidate_plan,
+        )
+        probe = HiddenProbe("node-npm", "1", "src/probe.cjs", '[{"value":2}]')
+
+        result = await service.run_hidden_probe(
+            *_principal_lease(reservation),
+            artifact_id,
+            eligibility,
+            reservation.allocation_id,
+            validation_source=authorization,
+            probe=probe,
+        )
+
+        phases = [value for kind, value in events if kind == "command"]
+        assert phases[-1] == "hidden_probe"
+        assert phases.index("probe", phases.index("probe") + 1) < phases.index("hidden_probe")
+        assert "npm_test" not in phases
+        assert result.command_id == "node-hidden-probe-v1"
+        assert ("hidden_command", (probe.argv()[0], probe.argv()[1:], CONTROL_DIRECTORY)) in events
+        assert result.outputs[-1].phase == "hidden_probe"
+        assert result.outputs[-1].stdout == '{"results":[true]}\n'
+        assert cleanup.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_node_hidden_probe_requires_operator_allocation_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        eligibility, baseline, artifact_id, authorization = _validation_source(tmp_path)
+        reservation = _reservation(allocation_class="public")
+        candidate_plan = _build_node_candidate_profile_plan(
+            eligibility, baseline, authorization, baseline_artifact_id=artifact_id
+        )
+        service, _principal, _lease, events, cleanup, _provider = _service(
+            tmp_path,
+            reservation=reservation,
+            eligibility=eligibility,
+            verified=baseline,
+            expected_plan=candidate_plan,
+        )
+
+        with pytest.raises(
+            NodeProfileError,
+            match="node_profile_hidden_probe_operator_allocation_required",
+        ):
+            await service.run_hidden_probe(
+                *_principal_lease(reservation),
+                artifact_id,
+                eligibility,
+                reservation.allocation_id,
+                validation_source=authorization,
+                probe=HiddenProbe("node-npm", "1", "src/probe.cjs", "[1]"),
+            )
+
+        assert not [value for kind, value in events if kind == "command"]
+        assert cleanup.calls == 1
+
+    asyncio.run(scenario())

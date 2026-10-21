@@ -246,6 +246,12 @@ def test_factory_wires_admitted_profile_and_provider_without_hosted_calls(
     assert calls["evaluation"] is evaluation
     assert validation._allocation_class == ("operator" if evaluation else "public")
     assert built.runner is runner
+    if evaluation:
+        assert built.hidden_checks is not None
+        assert built.hidden_checks._profiles == validation._profiles
+        assert built.hidden_checks._creator is validation._allocation_creator
+    else:
+        assert built.hidden_checks is None
     assert type(calls["model_adapter"]).__name__ == adapter_type
     assert validation._profiles["python-pytest"].configured_image == (
         IMAGE if profile_id == "python-pytest" else None
