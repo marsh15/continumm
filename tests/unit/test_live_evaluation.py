@@ -285,6 +285,18 @@ def test_hidden_snapshot_requires_current_hashed_fenced_evidence() -> None:
         == "passed"
     )
 
+    _status, metadata = live._hidden_check_snapshot(
+        connection, lease.owner_id, lease.run_id, results=[row], **args
+    )
+    assert (
+        metadata["hidden_check_candidate_archive_sha256"] == normal.candidate.source_archive_sha256
+    )
+    assert metadata["hidden_check_candidate_tree_sha256"] == normal.candidate.source_tree_sha256
+    assert metadata["hidden_check_repository_id"] == normal.candidate.repository_id
+    assert metadata["hidden_check_base_commit_sha"] == normal.candidate.base_commit_sha
+    assert metadata["hidden_check_invocation_sha256"] == hidden.invocation_sha256
+    assert live._safe_snapshot(metadata) == metadata
+
     tampered = {**row, "result_sha256": b"x" * 32}
     assert (
         live._hidden_check_snapshot(

@@ -548,8 +548,9 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
   Controlled protocol harness is implemented with explicit spend/hosted opt-ins;
   no live smokes have run. Application-side hidden comparison, local transport,
   managed operator execution, fenced activity persistence and observation are
-  implemented. CLI suite loading, actual hosted execution and measured live model
-  behavior remain open, along with deferred service setup.
+  implemented, including private CLI suite loading with exact qualification checks.
+  Actual hosted execution and measured live model behavior remain open, along
+  with deferred service setup.
 - [ ] Retain hidden checks outside writable workspaces and keep paid/hosted execution explicitly enabled within the owner's model and operator-sandbox allowances.
 - **Verify:** deterministic corpus tests; explicit make eval-live PROVIDER=openai and PROVIDER=anthropic.
 

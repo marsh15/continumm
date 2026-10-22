@@ -1019,3 +1019,29 @@ the suite. A transient Docker Hub 502 required a build retry.
   actual hosted qualification remain open; the new selector is programmatic
   operator configuration and is disabled by default. Historical local image and
   fixture reports are unchanged. Public admission remains disabled.
+
+
+### 22 October 2026 — T48 private CLI hidden-suite loading
+
+- Added `--hidden-suites` and Make's `HIDDEN_SUITES` option for explicitly enabled
+  evaluation execution. A data-only loader checks a bounded private regular file,
+  exact mode 0600/current owner/single link, no symlinks and checkout exclusion
+  before settings, clients or the report file can be created.
+- Strict JSON schema binds account, provider, both run IDs, original repositories,
+  full base commits, profiles, entry files and uniquely named checks. Loaded
+  expected answers remain immutable operator data, and candidate source digests
+  are bound when the fenced selector resolves the run's actual inputs.
+- CLI qualification now requires both protocol readiness and accepted snapshots
+  matching the exact requested suite, source and invocation digests. Other
+  answers/entries, missing checks, malformed metadata or unrelated prior passes
+  return incomplete. Reports retain the loaded file hash and match booleans,
+  without its path or expected answers; overall correctness stays unassessed.
+- Added verified source/repository/base/invocation metadata to the private
+  observer allowlist, enabling exact catalogue matching without exposing source.
+- Verification: 69 focused catalogue/CLI/observer tests passed; full backend
+  suite 888 passed, 217 optional database skips. Ruff format/lint, mypy (111
+  source files) and wheel/source builds passed. Actual Make observe/invalid-file
+  execution calls refused with exit 2 before service setup.
+- No provider, managed sandbox or GitHub call was made. All local CLI plumbing
+  is implemented; actual hosted qualification and owner-deferred T34 remain open.
+  See the [operator file schema and invocation](../docs/hidden-suite-files.md).

@@ -5,7 +5,8 @@ The application-side comparator in
 validates observations against a trusted suite. It executes no candidate code.
 The trusted local corpus uses it. A managed service and fixed runner path are
 implemented below, with fenced activity persistence and observation. CLI suite
-loading and actual hosted execution remain open.
+loading is described in [private suite files](hidden-suite-files.md).
+Actual hosted execution remains open.
 It does not qualify a live run or change approval/publication behavior.
 
 A suite pins its ID, profile/version, exact candidate archive and source-tree
@@ -65,7 +66,7 @@ runner hashes and results.
 `ManagedHiddenCheckService`. Evaluation-mode workflow resources expose it as
 `hidden_checks`; normal workflow resources do not. There is no public endpoint.
 A trusted operator selector can explicitly enable it inside candidate validation;
-the CLI has no suite-loading option yet.
+the CLI enables it only with an explicit [private suite file](hidden-suite-files.md).
 
 The caller supplies the current execution lease, verified candidate source
 authorization, a trusted suite and an operator-selected entry file. Explicit
@@ -104,13 +105,14 @@ charged and cannot produce passing evidence.
 The profile Dockerfiles now include these runners. Deployment requires rebuilding
 both profile images and configuring their new immutable digests; an old image
 without the helper cannot qualify. The two images now build locally, and
-trusted literal probes passed inside non-root, read-only Docker containers with no networking. The Node runtime
+trusted literal probes passed inside non-root, read-only Docker containers
+with no networking. The Node runtime
 identity check also passed after fixing duplicate npm config paths.
 [Raw local image evidence](evidence/t48-local-image-probes.json) records local
 image IDs and source hashes; these are not published registry digests. Fake
 managed adapters cover service orchestration. PostgreSQL tests now cover fenced
 activity persistence, approval freezing and observation. Actual provider execution
-and CLI suite loading remain open; no passing deployed qualification is claimed.
+remains open; no passing deployed qualification is claimed.
 
 
 ## Fenced candidate-validation integration

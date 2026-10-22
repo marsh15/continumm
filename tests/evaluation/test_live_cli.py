@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import sys
+import types
 from uuid import uuid4
 
 import pytest
 
+from continuum_api.sandbox.hidden_probe_recipe import HiddenProbe
+from continuum_api.validation.hidden_checks import HiddenCheckCase, HiddenCheckSuite
+from continuum_api.validation.managed_hidden_checks import _invocation_digest
 from scripts import eval_live
 
 
@@ -32,6 +37,73 @@ def _paid_args(*extra: str) -> list[str]:
 
 def _no_settings():
     pytest.fail("settings must not be loaded")
+
+
+class _Catalog:
+    file_sha256 = "f" * 64
+
+    def __call__(self, *_args, **_kwargs):
+        return True
+
+    def report_matches(self, report):
+        accepted = report.get("accepted_hidden_checks", {})
+        return {name: accepted.get(name) is True for name in ("python", "node")}
+
+
+def _catalog_import(monkeypatch, loader):
+    module = types.ModuleType("continuum_api.runtime.hidden_suite_catalog")
+    module.load_hidden_suites = loader
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+
+def _write_real_catalog(path, arguments) -> None:
+    document = {
+        "schema_version": 1,
+        "account_id": arguments[3],
+        "provider": arguments[1],
+        "suites": [],
+    }
+    for run_id, profile_id, entry_path in (
+        (arguments[5], "python-pytest", "src/solution.py"),
+        (arguments[7], "node-npm", "src/solution.cjs"),
+    ):
+        document["suites"].append(
+            {
+                "run_id": run_id,
+                "repository_id": 123,
+                "base_commit_sha": "a" * 40,
+                "profile_id": profile_id,
+                "profile_version": "1",
+                "suite_id": f"{profile_id}-suite",
+                "entry_path": entry_path,
+                "checks": [{"check_id": "case-1", "input": [1], "expected": {"ok": True}}],
+            }
+        )
+    path.write_text(json.dumps(document), encoding="utf-8")
+    path.chmod(0o600)
+
+
+def _matching_snapshot(run_id, profile_id, suite_id, entry_path):
+    checks = (HiddenCheckCase("case-1", "[1]", '{"ok":true}'),)
+    suite = HiddenCheckSuite(suite_id, profile_id, "1", "b" * 64, "c" * 64, checks)
+    probe = HiddenProbe(profile_id, "1", entry_path, suite.public_inputs_json())
+    return {
+        "independent_hidden_checks": "passed",
+        "run_id": run_id,
+        "profile_id": profile_id,
+        "profile_version": "1",
+        "hidden_check_suite_id": suite_id,
+        "hidden_check_suite_sha256": suite.digest,
+        "hidden_check_count": 1,
+        "hidden_check_passed_count": 1,
+        "hidden_check_repository_id": 123,
+        "hidden_check_base_commit_sha": "a" * 40,
+        "hidden_check_candidate_archive_sha256": "b" * 64,
+        "hidden_check_candidate_tree_sha256": "c" * 64,
+        "hidden_check_invocation_sha256": _invocation_digest(
+            suite.digest, entry_path, probe.command_id
+        ),
+    }
 
 
 @pytest.mark.parametrize(
@@ -89,6 +161,8 @@ def test_execute_forwards_exact_ids_and_bounds_and_requires_ready_report(monkeyp
     assert report["source_revision"] == "a" * 40
     assert report["working_tree_dirty"] is True
     assert report["independent_hidden_checks"] == "not_run"
+    assert report["hidden_checks_requested"] is False
+    assert "hidden_suite_matches" not in report
 
 
 @pytest.mark.parametrize("state", ["passed", "failed", "invalid", "unknown", "partial"])
@@ -181,6 +255,204 @@ def test_duplicate_run_ids_refuse_before_settings() -> None:
     assert json.loads(output.getvalue())["error_code"] == "live_evaluation_distinct_runs_required"
 
 
+def test_hidden_suites_are_rejected_for_observation_before_loader_and_report_creation(
+    tmp_path, monkeypatch
+) -> None:
+    report_path = tmp_path / "report.json"
+    _catalog_import(monkeypatch, lambda *_args, **_kwargs: pytest.fail("catalog must not load"))
+    output = io.StringIO()
+    result = eval_live.main(
+        _args(
+            "--observe-only",
+            "--hidden-suites",
+            str(tmp_path / "suites.json"),
+            "--output",
+            str(report_path),
+        ),
+        settings_loader=_no_settings,
+        stdout=output,
+    )
+    assert result == 2
+    assert json.loads(output.getvalue()) == {
+        "outcome": "not_run",
+        "error_code": "live_hidden_suites_execute_required",
+    }
+    assert not report_path.exists()
+
+
+def test_invalid_hidden_suite_catalog_is_rejected_before_settings_and_report_creation(
+    tmp_path, monkeypatch
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir(exist_ok=True)
+    monkeypatch.setattr(eval_live, "PROJECT_ROOT", checkout)
+    report_path = tmp_path / "report.json"
+    suite_path = tmp_path / "private-suites.json"
+    suite_path.write_text('{"private_expected_value":"do not disclose"}')
+    suite_path.chmod(0o600)
+    output = io.StringIO()
+    result = eval_live.main(
+        _paid_args("--hidden-suites", str(suite_path), "--output", str(report_path)),
+        settings_loader=_no_settings,
+        stdout=output,
+    )
+    assert result == 2
+    assert json.loads(output.getvalue()) == {
+        "outcome": "not_run",
+        "error_code": "live_hidden_suites_invalid",
+    }
+    assert str(suite_path) not in output.getvalue()
+    assert "private_expected_value" not in output.getvalue()
+    assert not report_path.exists()
+
+
+def test_hidden_suite_identity_mismatch_uses_real_catalog_loader(tmp_path, monkeypatch) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir(exist_ok=True)
+    monkeypatch.setattr(eval_live, "PROJECT_ROOT", checkout)
+    suite_path = tmp_path / "private-suites.json"
+    arguments = _paid_args("--hidden-suites", str(suite_path))
+    _write_real_catalog(suite_path, arguments)
+    payload = json.loads(suite_path.read_text())
+    payload["account_id"] = str(uuid4())
+    suite_path.write_text(json.dumps(payload), encoding="utf-8")
+    suite_path.chmod(0o600)
+    output = io.StringIO()
+
+    result = eval_live.main(arguments, settings_loader=_no_settings, stdout=output)
+
+    assert result == 2
+    assert json.loads(output.getvalue()) == {
+        "outcome": "not_run",
+        "error_code": "live_hidden_suites_invalid",
+    }
+    assert str(suite_path) not in output.getvalue()
+
+
+def test_hidden_suite_selector_and_match_metadata_gate_success(tmp_path, monkeypatch) -> None:
+    catalog = _Catalog()
+    suite_path = tmp_path / "suites.json"
+    suite_path.write_text("{}")
+    suite_path.chmod(0o600)
+    observed_load = []
+
+    def load(path, **identity):
+        observed_load.append((path, identity))
+        return catalog
+
+    _catalog_import(monkeypatch, load)
+    seen = []
+
+    def evaluator(*args, **kwargs):
+        seen.append((args, kwargs))
+        return {
+            "outcome": "protocol_smoke_ready",
+            "protocol_smoke_ready": True,
+            "accepted_hidden_checks": {"python": True, "node": True},
+        }
+
+    output = io.StringIO()
+    arguments = _paid_args("--hidden-suites", str(suite_path))
+    result = eval_live.main(
+        arguments, settings_loader=lambda: object(), evaluator=evaluator, stdout=output
+    )
+    assert result == 0
+    assert observed_load[0][0] == suite_path
+    assert observed_load[0][1]["project_root"] == eval_live.PROJECT_ROOT
+    assert seen[0][1]["hidden_check_selector"] is catalog
+    report = json.loads(output.getvalue())
+    assert report["hidden_checks_requested"] is True
+    assert report["hidden_suites_sha256"] == catalog.file_sha256
+    assert report["hidden_suite_matches"] == {"python": True, "node": True}
+    assert report["hidden_suite_ready"] is True
+    assert report["task_correctness"] == "not_assessed"
+
+
+@pytest.mark.parametrize(
+    "accepted,expected_outcome",
+    [
+        ({"python": True, "node": False}, "incomplete"),
+        ({"python": True}, "incomplete"),
+    ],
+)
+def test_protocol_ready_without_both_hidden_suites_returns_incomplete(
+    tmp_path, monkeypatch, accepted, expected_outcome
+) -> None:
+    suite_path = tmp_path / "suites.json"
+    suite_path.write_text("{}")
+    _catalog_import(monkeypatch, lambda *_args, **_kwargs: _Catalog())
+    output = io.StringIO()
+    result = eval_live.main(
+        _paid_args("--hidden-suites", str(suite_path)),
+        settings_loader=lambda: object(),
+        evaluator=lambda *_args, **_kwargs: {
+            "outcome": "protocol_smoke_ready",
+            "protocol_smoke_ready": True,
+            "accepted_hidden_checks": accepted,
+        },
+        stdout=output,
+    )
+    assert result == 3
+    report = json.loads(output.getvalue())
+    assert report["outcome"] == expected_outcome
+    assert report["protocol_smoke_ready"] is True
+    assert report["hidden_suite_ready"] is False
+
+
+def test_hidden_suite_mismatch_preserves_failed_outcome(tmp_path, monkeypatch) -> None:
+    suite_path = tmp_path / "suites.json"
+    suite_path.write_text("{}")
+    _catalog_import(monkeypatch, lambda *_args, **_kwargs: _Catalog())
+    output = io.StringIO()
+    result = eval_live.main(
+        _paid_args("--hidden-suites", str(suite_path)),
+        settings_loader=lambda: object(),
+        evaluator=lambda *_args, **_kwargs: {
+            "outcome": "failed",
+            "protocol_smoke_ready": False,
+            "accepted_hidden_checks": {"python": False, "node": False},
+        },
+        stdout=output,
+    )
+    assert result == 3
+    assert json.loads(output.getvalue())["outcome"] == "failed"
+
+
+def test_real_catalog_matches_only_the_exact_suite_snapshot(tmp_path, monkeypatch) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir(exist_ok=True)
+    monkeypatch.setattr(eval_live, "PROJECT_ROOT", checkout)
+    suite_path = tmp_path / "suites.json"
+    arguments = _paid_args("--hidden-suites", str(suite_path))
+    _write_real_catalog(suite_path, arguments)
+    node_snapshot = _matching_snapshot(arguments[7], "node-npm", "node-npm-suite", "src/other.cjs")
+    output = io.StringIO()
+
+    result = eval_live.main(
+        arguments,
+        settings_loader=lambda: object(),
+        evaluator=lambda *_args, **_kwargs: {
+            "outcome": "protocol_smoke_ready",
+            "protocol_smoke_ready": True,
+            "cases": {
+                "python": {
+                    "snapshot": _matching_snapshot(
+                        arguments[5], "python-pytest", "python-pytest-suite", "src/solution.py"
+                    )
+                },
+                "node": {"snapshot": node_snapshot},
+            },
+        },
+        stdout=output,
+    )
+
+    assert result == 3
+    report = json.loads(output.getvalue())
+    assert report["hidden_suite_matches"] == {"python": True, "node": False}
+    assert report["hidden_suite_ready"] is False
+    assert report["outcome"] == "incomplete"
+
+
 @pytest.mark.parametrize(
     "flag,value",
     [
@@ -229,3 +501,51 @@ def test_interruption_records_unknown_outcome_in_private_report(tmp_path) -> Non
         "outcome": "unknown",
         "error_code": "live_evaluation_interrupted",
     }
+
+
+def test_private_catalog_and_both_exact_accepted_suites_qualify(tmp_path, monkeypatch):
+    import hashlib
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setattr(eval_live, "PROJECT_ROOT", checkout)
+    path = tmp_path / "suites.json"
+    arguments = _paid_args("--hidden-suites", str(path))
+    _write_real_catalog(path, arguments)
+    seen = []
+
+    def evaluator(*args, **kwargs):
+        seen.append(kwargs["hidden_check_selector"])
+        return {
+            "protocol_smoke_ready": True,
+            "outcome": "protocol_smoke_ready",
+            "independent_hidden_checks": "passed",
+            "cases": {
+                "python": {
+                    "snapshot": _matching_snapshot(
+                        arguments[5], "python-pytest", "python-pytest-suite", "src/solution.py"
+                    )
+                },
+                "node": {
+                    "snapshot": _matching_snapshot(
+                        arguments[7], "node-npm", "node-npm-suite", "src/solution.cjs"
+                    )
+                },
+            },
+        }
+
+    output = io.StringIO()
+    assert (
+        eval_live.main(
+            arguments, settings_loader=lambda: object(), evaluator=evaluator, stdout=output
+        )
+        == 0
+    )
+    report = json.loads(output.getvalue())
+    assert callable(seen[0])
+    assert report["hidden_suite_matches"] == {"python": True, "node": True}
+    assert report["hidden_suite_ready"] is True
+    assert report["hidden_suites_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert report["task_correctness"] == "not_assessed"
+    assert "expected" not in output.getvalue()
+    assert str(path) not in output.getvalue()

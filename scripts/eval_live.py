@@ -48,6 +48,27 @@ def main(
         )
         return 2
 
+    if options.hidden_suites is not None and not options.execute_live:
+        _emit(output, {"outcome": "not_run", "error_code": "live_hidden_suites_execute_required"})
+        return 2
+
+    hidden_suite_catalog = None
+    if options.hidden_suites is not None:
+        try:
+            from continuum_api.runtime.hidden_suite_catalog import load_hidden_suites
+
+            hidden_suite_catalog = load_hidden_suites(
+                options.hidden_suites,
+                account_id=options.account_id,
+                provider=options.provider,
+                python_run_id=options.python_run_id,
+                node_run_id=options.node_run_id,
+                project_root=PROJECT_ROOT,
+            )
+        except Exception:
+            _emit(output, {"outcome": "not_run", "error_code": "live_hidden_suites_invalid"})
+            return 2
+
     report_file: TextIO | None = None
     try:
         if options.output is not None:
@@ -69,9 +90,21 @@ def main(
 
                 evaluator = run_live_evaluation
             settings = settings_loader()
-            report = asyncio.run(_evaluate(evaluator, settings, options))
+            report = asyncio.run(_evaluate(evaluator, settings, options, hidden_suite_catalog))
             if not isinstance(report, dict):
                 raise ValueError("invalid_report")
+            hidden_suite_matches = (
+                hidden_suite_catalog.report_matches(report)
+                if hidden_suite_catalog is not None
+                else None
+            )
+            hidden_suite_ready = (
+                all(hidden_suite_matches.values()) if hidden_suite_matches is not None else None
+            )
+            if hidden_suite_matches is not None and hidden_suite_ready is False:
+                outcome = report.get("outcome")
+                if outcome not in ("failed", "error", "unknown"):
+                    report["outcome"] = "incomplete"
             report = {
                 **report,
                 "schema_version": 1,
@@ -84,12 +117,29 @@ def main(
                 ),
                 "task_correctness": "not_assessed",
                 "execution_requested": options.execute_live,
+                "hidden_checks_requested": hidden_suite_catalog is not None,
                 "source_revision": _revision(),
                 "working_tree_dirty": _dirty(),
             }
+            if hidden_suite_catalog is not None:
+                report.update(
+                    {
+                        "hidden_suites_sha256": hidden_suite_catalog.file_sha256,
+                        "hidden_suite_matches": hidden_suite_matches,
+                        "hidden_suite_ready": hidden_suite_ready,
+                    }
+                )
             # Serialize before writing so invalid values cannot manufacture a partial success.
             encoded = json.dumps(report, allow_nan=False, sort_keys=True, indent=2) + "\n"
-            status = 0 if options.observe_only or report.get("protocol_smoke_ready") is True else 3
+            status = (
+                0
+                if options.observe_only
+                or (
+                    report.get("protocol_smoke_ready") is True
+                    and (hidden_suite_catalog is None or hidden_suite_ready is True)
+                )
+                else 3
+            )
         except (asyncio.CancelledError, KeyboardInterrupt):
             encoded = (
                 json.dumps({"outcome": "unknown", "error_code": "live_evaluation_interrupted"})
@@ -120,16 +170,26 @@ def main(
                 pass
 
 
-async def _evaluate(evaluator: Callable[..., Any], settings: Any, options: Any) -> Any:
+async def _evaluate(
+    evaluator: Callable[..., Any],
+    settings: Any,
+    options: Any,
+    hidden_suite_catalog: Any | None = None,
+) -> Any:
+    kwargs: dict[str, Any] = {
+        "execute": options.execute_live,
+        "max_jobs": options.max_jobs,
+        "max_seconds": options.max_seconds,
+    }
+    if hidden_suite_catalog is not None:
+        kwargs["hidden_check_selector"] = hidden_suite_catalog
     report = evaluator(
         settings,
         options.account_id,
         options.provider,
         options.python_run_id,
         options.node_run_id,
-        execute=options.execute_live,
-        max_jobs=options.max_jobs,
-        max_seconds=options.max_seconds,
+        **kwargs,
     )
     return await report if inspect.isawaitable(report) else report
 
@@ -194,6 +254,11 @@ def _parser() -> argparse.ArgumentParser:
     modes.add_argument("--observe-only", action="store_true")
     parser.add_argument("--allow-model-charges", action="store_true")
     parser.add_argument("--allow-operator-sandbox", action="store_true")
+    parser.add_argument(
+        "--hidden-suites",
+        type=Path,
+        help="private, identity-bound hidden suite catalog for execute-live evaluations",
+    )
     parser.add_argument(
         "--max-jobs", type=_jobs, default=1, help="per run, not shared between runs"
     )

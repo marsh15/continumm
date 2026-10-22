@@ -88,7 +88,8 @@ also implemented, with fake-adapter coverage and local image builds/probes.
 [Image evidence](evidence/t48-local-image-probes.json) is explicitly local.
 Fenced activity persistence and owner-scoped observation are now implemented.
 A trusted programmatic selector explicitly enables hidden checks in evaluation
-mode; CLI suite loading and actual hosted execution remain open. Verified accepted
+mode, or through an explicit [private suite file](hidden-suite-files.md). Actual
+hosted execution remains open. Verified accepted
 outcomes can be reported as passed, failed, invalid or unknown, while missing
 checks remain `not_run`. Overall `task_correctness` stays `not_assessed`.
 The local fixture runner's hidden checks do not establish managed hidden-check

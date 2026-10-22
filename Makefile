@@ -43,6 +43,7 @@ eval-live:
 	  $(if $(filter 1,$(ALLOW_OPERATOR_SANDBOX)),--allow-operator-sandbox,) \
 	  $(if $(EVAL_MAX_JOBS),--max-jobs "$(EVAL_MAX_JOBS)",) \
 	  $(if $(EVAL_MAX_SECONDS),--max-seconds "$(EVAL_MAX_SECONDS)",) \
+	  $(if $(HIDDEN_SUITES),--hidden-suites "$(HIDDEN_SUITES)",) \
 	  $(if $(EVAL_REPORT),--output "$(EVAL_REPORT)",)
 
 test-integration:

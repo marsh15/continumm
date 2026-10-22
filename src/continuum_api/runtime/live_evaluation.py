@@ -365,6 +365,11 @@ def _safe_snapshot(value: Mapping[str, Any]) -> dict[str, Any]:
         "hidden_check_suite_sha256",
         "hidden_check_count",
         "hidden_check_passed_count",
+        "hidden_check_candidate_archive_sha256",
+        "hidden_check_candidate_tree_sha256",
+        "hidden_check_repository_id",
+        "hidden_check_base_commit_sha",
+        "hidden_check_invocation_sha256",
         "task_correctness",
         "dispatches",
     }
@@ -1042,6 +1047,11 @@ def _hidden_check_snapshot(
         "hidden_check_suite_sha256": hidden.suite_sha256,
         "hidden_check_count": hidden.comparison.total_count,
         "hidden_check_passed_count": hidden.comparison.passed_count,
+        "hidden_check_candidate_archive_sha256": hidden.execution.source_archive_sha256,
+        "hidden_check_candidate_tree_sha256": hidden.execution.source_tree_sha256,
+        "hidden_check_repository_id": hidden.execution.repository_id,
+        "hidden_check_base_commit_sha": hidden.execution.base_commit_sha,
+        "hidden_check_invocation_sha256": hidden.invocation_sha256,
     }
 
 
