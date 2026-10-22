@@ -40,6 +40,8 @@ ROLE_NAMES = (
     "continuum_runtime",
     "continuum_admission",
     "continuum_wake_receiver",
+    "continuum_wake_worker",
+    "continuum_wake_worker_owner",
     "continuum_wake",
     "continuum_wake_issuer",
     "continuum_ingress",
@@ -189,7 +191,12 @@ def _database() -> Any:
                 )
                 login = (
                     "NOLOGIN"
-                    if role in {"continuum_wake_issuer", "continuum_admission"}
+                    if role
+                    in {
+                        "continuum_wake_issuer",
+                        "continuum_admission",
+                        "continuum_wake_worker_owner",
+                    }
                     else "LOGIN"
                 )
                 password_clause = "" if login == "NOLOGIN" else f"PASSWORD '{password}'"

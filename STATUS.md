@@ -2,7 +2,7 @@
 
 **Not launched. Public admission is disabled.**
 
-Last manually checked: 20 October 2026.
+Last manually checked: 22 October 2026.
 
 The local implementation and test harnesses are under development. A live Render
 service, Supabase ingress/storage/database, GitHub App authorization, managed

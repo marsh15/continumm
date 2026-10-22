@@ -320,8 +320,8 @@ def test_command_target_must_match_repository_issue_and_current_comment(
             scenario.service,
             CancellationService(t38_database.runtime_engine, scenario.principal),
         )
-        with pytest.raises(GitHubCommandError, match="github_command_approval_stale"):
-            asyncio.run(processor.execute(accepted))
+        rejected = asyncio.run(processor.execute(accepted))
+        assert rejected.kind == "rejected" and rejected.status == "rejected"
         assert scenario.facts_provider.calls - initial_authorization_calls == 1
     finally:
         _close_scenario(scenario)
@@ -540,8 +540,8 @@ def test_run_command_uses_disabled_admission_service_by_default(
             CancellationService(t38_database.runtime_engine, scenario.principal),
             AdmissionService(t38_database.runtime_engine, scenario.principal, None, None),
         )
-        with pytest.raises(GitHubCommandError, match="public_admission_disabled"):
-            asyncio.run(processor.execute(accepted))
+        rejected = asyncio.run(processor.execute(accepted))
+        assert rejected.kind == "rejected" and rejected.status == "rejected"
         with t38_database.admin_engine.connect() as connection:
             assert (
                 connection.execute(
@@ -550,6 +550,18 @@ def test_run_command_uses_disabled_admission_service_by_default(
                 ).scalar_one()
                 == 1
             )
+            result = connection.execute(
+                text(
+                    "SELECT result FROM runtime_private.github_command_results "
+                    "WHERE owner_id=:owner AND repository_id=:repo AND comment_id=:comment"
+                ),
+                {
+                    "owner": scenario.principal.account_id,
+                    "repo": repository_id,
+                    "comment": event.comment_id,
+                },
+            ).scalar_one()
+        assert result == {"kind": "rejected", "status": "rejected"}
     finally:
         _close_scenario(scenario)
 

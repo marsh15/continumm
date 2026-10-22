@@ -404,9 +404,15 @@ function isAcceptedReceipt(
   if (Object.keys(record).sort().join(",") !== expectedKeys.join(",")) {
     return false;
   }
+  const validState = ((record.status === "worker_not_started" ||
+    record.status === "scheduled") &&
+    record.drain_status === "not_started") ||
+    (record.status === "running" && record.drain_status === "running") ||
+    (record.status === "partial" && record.drain_status === "partial") ||
+    (record.status === "drained" && record.drain_status === "completed" &&
+      typeof record.last_successful_drain_at === "string");
   if (
-    record.accepted !== true || record.status !== "worker_not_started" ||
-    record.drain_status !== "not_started" ||
+    record.accepted !== true || !validState ||
     typeof record.receipt_id !== "string" ||
     !UUID_PATTERN.test(record.receipt_id) ||
     record.receipt_id !== attempt.wakeId

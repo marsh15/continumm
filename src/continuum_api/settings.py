@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     encryption_previous_keys: SecretStr | None = None
     enable_github_auth: bool = False
     enable_public_admission: bool = False
+    enable_wake_worker: bool = False
+    wake_worker_database_url: SecretStr | None = None
     github_client_id: str | None = None
     github_client_secret: SecretStr | None = None
     github_public_origin: str | None = None

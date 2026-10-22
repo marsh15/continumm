@@ -395,6 +395,43 @@ Deno.test("failed or timed-out query closes a checked-out client before release"
   assert(order.join(",") === "close,release", "failed connection was reused");
 });
 
+Deno.test("worker receipt states require matching completion evidence", async () => {
+  for (
+    const [status, drain, watermark, valid] of [
+      ["scheduled", "not_started", null, true],
+      ["running", "running", null, true],
+      ["partial", "partial", null, true],
+      ["drained", "completed", "2026-10-22T12:00:00Z", true],
+      ["drained", "completed", null, false],
+      ["drained", "completed", "invalid", false],
+      ["running", "completed", "2026-10-22T12:00:00Z", false],
+      ["scheduled", "running", null, false],
+    ] as const
+  ) {
+    const store = new TestStore();
+    const handler = createWakeDispatcher({
+      backendUrl: "https://continumm-api.example",
+      backendToken: BACKEND_TOKEN,
+      store,
+      fetcher: async () =>
+        Response.json({
+          accepted: true,
+          receipt_id: WAKE_ID,
+          status,
+          drain_status: drain,
+          last_successful_drain_at: watermark,
+        }, { status: 202 }),
+    });
+    const response = await handler(dispatchRequest(TICKET_BODY));
+    assert(response.status === (valid ? 204 : 502), "invalid state acceptance");
+    assert(
+      store.recordCalls[0]?.outcome ===
+        (valid ? "accepted" : "protocol_failure"),
+      "invalid persisted outcome",
+    );
+  }
+});
+
 function dispatchRequest(body: BodyInit): Request {
   return new Request("https://edge.example/wake-dispatch", {
     method: "POST",

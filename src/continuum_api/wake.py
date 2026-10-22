@@ -1,4 +1,4 @@
-"""Authenticated receiver for durable wake receipts (not a worker)."""
+"""Authenticated durable wake receipts and opt-in bounded execution scheduling."""
 
 from __future__ import annotations
 
@@ -51,8 +51,8 @@ class WakeInput(BaseModel):
 class WakeStatus(BaseModel):
     """Operational status does not claim inbox consumption or drain success."""
 
-    worker_status: Literal["worker_not_started"]
-    drain_status: Literal["not_started"]
+    worker_status: Literal["worker_not_started", "running", "partial", "drained"]
+    drain_status: Literal["not_started", "running", "partial", "completed"]
     last_successful_drain_at: datetime | None
     receipt_accepted_at: datetime | None
 
@@ -60,8 +60,8 @@ class WakeStatus(BaseModel):
 class WakeAccepted(BaseModel):
     accepted: Literal[True]
     receipt_id: str
-    status: Literal["worker_not_started"]
-    drain_status: Literal["not_started"]
+    status: Literal["worker_not_started", "scheduled", "running", "partial", "drained"]
+    drain_status: Literal["not_started", "running", "partial", "completed"]
     last_successful_drain_at: datetime | None
 
 
@@ -85,6 +85,10 @@ class WakeStore(Protocol):
     def accept(self, request: WakeInput) -> ReceiptResult: ...
 
     def status(self) -> StatusResult: ...
+
+
+class WakeScheduler(Protocol):
+    def schedule(self, request: WakeInput) -> bool: ...
 
 
 class WakeStoreUnavailable(RuntimeError):
@@ -230,6 +234,8 @@ def create_wake_receiver_engine(database_url: str, *, production: bool | None = 
 
 def create_wake_router(
     config_provider: Callable[[], WakeReceiverConfig | None] = load_wake_receiver_config,
+    *,
+    scheduler: WakeScheduler | None = None,
 ) -> APIRouter:
     """Build hidden internal routes with authentication before body parsing."""
     router = APIRouter(include_in_schema=False)
@@ -269,15 +275,24 @@ def create_wake_router(
             return _wake_error(request, 409, "wake_not_accepted")
         if (
             result.receipt_id != payload.wake_id
-            or result.drain_status != "worker_not_started"
+            or result.drain_status not in {"worker_not_started", "running", "partial", "drained"}
+            or (result.drain_status == "drained" and result.last_successful_drain_at is None)
             or result.accepted_at is None
         ):
             return _wake_error(request, 503, "wake_receipt_invalid", retryable=True)
+        status = result.drain_status
+        if result.drain_status != "drained" and scheduler is not None:
+            try:
+                scheduled = scheduler.schedule(payload)
+            except Exception:
+                return _wake_error(request, 503, "wake_worker_unavailable", retryable=True)
+            if scheduled and result.drain_status == "worker_not_started":
+                status = "scheduled"
         receipt = WakeAccepted(
             accepted=True,
             receipt_id=result.receipt_id,
-            status="worker_not_started",
-            drain_status="not_started",
+            status=status,  # type: ignore[arg-type]
+            drain_status=_drain_status(result.drain_status),
             last_successful_drain_at=result.last_successful_drain_at,
         )
         return Response(
@@ -303,11 +318,17 @@ def create_wake_router(
             return _wake_error(request, 503, "wake_receiver_unavailable", retryable=True)
         except WakeStoreUnavailable:
             return _wake_error(request, 503, "wake_receiver_unavailable", retryable=True)
-        if result.receipt_state not in {None, "worker_not_started"}:
+        if result.receipt_state not in {
+            None,
+            "worker_not_started",
+            "running",
+            "partial",
+            "drained",
+        }:
             return _wake_error(request, 503, "wake_status_invalid", retryable=True)
         status = WakeStatus(
-            worker_status="worker_not_started",
-            drain_status="not_started",
+            worker_status=result.receipt_state or "worker_not_started",  # type: ignore[arg-type]
+            drain_status=_drain_status(result.receipt_state),
             last_successful_drain_at=result.last_successful_drain_at,
             receipt_accepted_at=result.receipt_accepted_at,
         )
@@ -318,6 +339,16 @@ def create_wake_router(
         )
 
     return router
+
+
+def _drain_status(state: str | None) -> Literal["not_started", "running", "partial", "completed"]:
+    if state == "drained":
+        return "completed"
+    if state == "running":
+        return "running"
+    if state == "partial":
+        return "partial"
+    return "not_started"
 
 
 def _authorized(request: Request, expected: str) -> bool:
@@ -382,6 +413,7 @@ def _wake_error(
         "wake_receipt_invalid": "The wake receipt could not be verified.",
         "wake_not_accepted": "The wake request is stale or no longer actionable.",
         "wake_status_invalid": "Wake status is unavailable.",
+        "wake_worker_unavailable": "Wake execution could not be scheduled.",
         "unsupported_content_type": "The request must use application/json.",
         "request_too_large": "The request body is too large.",
         "request_timeout": "The request body timed out.",

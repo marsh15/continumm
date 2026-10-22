@@ -6,6 +6,15 @@
 
 The plan's §4.4 requires work-triggered backend wakes, persistent backoff, and a last successful drain time. §5 makes PostgreSQL the authority for durable state, while §9.6 requires the webhook inbox to commit before GitHub receives an acknowledgment. T06 joins those boundaries without claiming that a wake processed work.
 
+## Current composed worker
+
+The historical T06 receipt-only contract below remains the default when
+`CONTINUUM_ENABLE_WAKE_WORKER=0`. Migration `20261022_31` and the opt-in
+[bounded wake worker](bounded-wake-worker.md) now add actual inbox consumption,
+due-job recovery and bounded workflow execution. Use that document for the
+current worker role, states, completion rules and remaining qualification gaps.
+Historical T06 fixture results do not prove the composed worker in hosting.
+
 ## Chosen boundary
 
 Use Supabase `pg_cron` plus `pg_net` on a five-minute tick. In one short database transaction, the scheduled database function checks for an unconsumed T05 inbox row and a clear capacity/backoff/lease gate, claims a monotonically increasing generation, creates a short-lived one-use dispatch ticket bound to that generation, and queues an Edge request containing only that ticket. If there is no actionable delivery, it does not queue an Edge or Render request. The Edge Function consumes and validates the ticket and rechecks the gate before calling Render. Runtime jobs, expired leases, and cleanup are later extensions; add each predicate only when its owning task creates the durable state and defines what makes it actionable.

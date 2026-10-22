@@ -137,3 +137,12 @@ A local fixture, scripted HTTP server, or PostgreSQL state simulation is develop
 | No paid resource or fallback enabled | NOT RUN |
 | Reviewed by / UTC date | NOT RECORDED |
 | Blocker or follow-up | T05 schema/implementation and hosted account setup pending |
+
+
+## 22 October 2026 implementation update
+
+The historical receipt-only fixture results above remain unchanged. A new
+opt-in [bounded wake worker](../bounded-wake-worker.md) now composes inbox
+consumption and workflow execution with separate SQL privileges and a fenced
+completion watermark. It is disabled by default. This is local implementation,
+not a deployed T06 pass; the hosted evidence fields remain NOT RUN.

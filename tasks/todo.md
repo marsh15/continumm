@@ -8,7 +8,7 @@
 
 Work in dependency order. Each task is a focused implementation slice, normally touching one module and its tests. Split a task before implementation if it requires unrelated changes or more than one focused session. Do not replace a failed test with a weaker assertion to pass a checkpoint.
 
-The commands below are the backlog command contract. T01–T02 establish bootstrap, development, checks, targeted tests, UI tests and builds; later commands are added with their owning tasks. Authentication and workers are still pending.
+The commands below are the backlog command contract. T01–T02 establish bootstrap, development, checks, targeted tests, UI tests and builds; later commands are added with their owning tasks. Authentication and bounded workflow workers are implemented locally; hosted qualification remains pending.
 
 | Command | Contract |
 |---|---|
@@ -84,7 +84,7 @@ All tasks additionally require relevant documentation updates, no secret exposur
 
 - **Dependencies:** T05.
 - **Scope:** Medium; wake function, schedule, authenticated drain endpoint and tests.
-- **Progress:** Local fenced dispatcher and authenticated receipt/status boundary verified. Receipts explicitly remain undrained; hosted cron, cold-start and suspension evidence are pending. See [wake setup](../docs/wake-setup.md).
+- **Progress:** Local fenced dispatcher, authenticated receipt/status boundary and opt-in bounded inbox/workflow drain verified. Hosted cron, cold-start and suspension evidence remain pending. See [wake setup](../docs/wake-setup.md).
 - [ ] Wake the backend only for actionable work, with backoff and no idle keepalive.
 - [ ] Simulate quota suspension and database unavailability without reporting successful processing.
 - **Verify:** make test-target TARGET=tests/integration/test_wake_dispatch.py; make smoke-hosted.
@@ -442,6 +442,7 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 - **Scope:** Medium; shared command handlers, comment adapter and tests.
 - [x] Approve/reject/changes/cancel follow the exact same transitions in browser and comments.
 - [x] Status-comment creation has stable identity/reconciliation and never exposes private run content.
+- **Composition gap:** the publisher still needs an automatic bounded effect drain; wake job completion does not prove public status delivery.
 - **Verify:** make test-target TARGET=tests/integration/test_cross_channel_decisions.py.
 
 ### T39 — Failed-delivery recovery

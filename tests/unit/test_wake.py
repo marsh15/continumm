@@ -256,3 +256,82 @@ def test_generation_above_postgres_bigint_is_rejected_before_store_call() -> Non
 
     assert response.status_code == 400
     assert store.inputs is None
+
+
+def test_authenticated_committed_wake_schedules_without_claiming_completion() -> None:
+    from types import SimpleNamespace
+
+    events = []
+
+    class CommittedStore(FakeStore):
+        def accept(self, request):
+            result = super().accept(request)
+            events.append("committed")
+            return result
+
+    store = CommittedStore()
+    scheduler = SimpleNamespace(schedule=lambda _: events.append("scheduled") or True)
+    # A separate router avoids changing the original disabled-worker fixture.
+    app = FastAPI()
+    app.include_router(
+        create_wake_router(lambda: WakeReceiverConfig(TOKEN, store), scheduler=scheduler)
+    )
+
+    @app.middleware("http")
+    async def identity(request, call_next):
+        request.state.request_id = "test-request"
+        return await call_next(request)
+
+    denied = _send(app, "POST", "/internal/v1/wake", json=_valid_payload())
+    assert denied.status_code == 401 and events == []
+    reply = _send(
+        app,
+        "POST",
+        "/internal/v1/wake",
+        headers={**_auth(), "content-type": "application/json"},
+        json=_valid_payload(),
+    )
+    assert reply.status_code == 202
+    assert reply.json()["status"] == "scheduled"
+    assert reply.json()["drain_status"] == "not_started"
+    assert events == ["committed", "scheduled"]
+
+
+def test_completed_receipt_is_not_scheduled_again() -> None:
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    class CompletedStore(FakeStore):
+        def accept(self, request):
+            return replace(
+                super().accept(request),
+                drain_status="drained",
+                last_successful_drain_at=datetime(2026, 10, 22, tzinfo=UTC),
+            )
+
+    store = CompletedStore()
+    app = FastAPI()
+    app.include_router(
+        create_wake_router(
+            lambda: WakeReceiverConfig(TOKEN, store),
+            scheduler=SimpleNamespace(
+                schedule=lambda _: pytest.fail("completed wake must not schedule")
+            ),
+        )
+    )
+
+    @app.middleware("http")
+    async def identity(request, call_next):
+        request.state.request_id = "test-request"
+        return await call_next(request)
+
+    response = _send(
+        app,
+        "POST",
+        "/internal/v1/wake",
+        headers={**_auth(), "content-type": "application/json"},
+        json=_valid_payload(),
+    )
+    assert response.status_code == 202
+    assert response.json()["status"] == "drained"
+    assert response.json()["drain_status"] == "completed"

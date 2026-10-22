@@ -68,6 +68,8 @@ ROLE_NAMES = (
     "continuum_ingress",
     "continuum_recovery",
     "continuum_operator",
+    "continuum_wake_worker",
+    "continuum_wake_worker_owner",
 )
 REPOSITORY_ID = 714_022
 STORAGE_URL = "https://fixture-project.supabase.co"
@@ -212,6 +214,8 @@ def _reset_database(engine: Engine, runtime_password: str) -> None:
             ("continuum_wake_receiver", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_recovery", "LOGIN", secrets.token_urlsafe(32)),
             ("continuum_operator", "LOGIN", secrets.token_urlsafe(32)),
+            ("continuum_wake_worker", "LOGIN", secrets.token_urlsafe(32)),
+            ("continuum_wake_worker_owner", "NOLOGIN", None),
             (RUNTIME_ROLE, "LOGIN", runtime_password),
         )
         for role_name, login_mode, password in role_definitions:

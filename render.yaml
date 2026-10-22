@@ -26,3 +26,13 @@ services:
         value: continuum-t03-private
       - key: CONTINUUM_ENABLE_HOSTED_SMOKE
         value: "0"
+      - key: CONTINUUM_ENABLE_WAKE_WORKER
+        value: "0"
+      - key: CONTINUUM_ENABLE_PUBLIC_ADMISSION
+        value: "0"
+      - key: CONTINUUM_WAKE_WORKER_DATABASE_URL
+        sync: false
+      - key: CONTINUUM_WAKE_RECEIVER_DATABASE_URL
+        sync: false
+      - key: CONTINUUM_WAKE_BACKEND_TOKEN
+        sync: false

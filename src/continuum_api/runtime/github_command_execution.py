@@ -29,6 +29,58 @@ from continuum_api.runtime.github_commands import (
 from continuum_api.runtime.persistence import Principal, RuntimeRepository
 
 _MAX_AGE = timedelta(hours=72)
+_PERMANENT_COMMAND_REJECTIONS = frozenset(
+    {
+        "github_command_kind_unsupported",
+        "github_command_target_invalid",
+        "github_command_target_not_found",
+        "github_command_approval_stale",
+        "github_command_run_deadline_elapsed",
+        "approval_digest_invalid",
+        "approval_not_found",
+        "approval_stale",
+        "approval_expired",
+        "approval_decision_conflict",
+        "approval_dispatch_not_authorized",
+        "approval_dispatch_deadline_elapsed",
+        "approval_manifest_corrupt",
+        "approval_manifest_stale_or_expired",
+        "approval_manifest_digest_invalid",
+        "approval_candidate_stale",
+        "approval_candidate_stale_or_expired",
+        "approval_candidate_lineage_mismatch",
+        "approval_candidate_result_hash_mismatch",
+        "approval_feedback_unexpected",
+        "approval_idempotency_key_invalid",
+        "admission_source_invalid",
+        "admission_task_invalid",
+        "admission_operator_stop",
+        "public_admission_disabled",
+        "repository_not_found",
+        "repository_not_eligible",
+        "repository_provider_default_required",
+        "repository_profile_default_required",
+        "repository_default_branch_invalid",
+        "credential_unavailable",
+        "setup_continuation_invalid",
+        "setup_continuation_not_found",
+        "setup_continuation_stale",
+        "setup_continuation_content_expired",
+        "setup_continuation_content_corrupt",
+    }
+)
+_RETRYABLE_ERROR_MARKERS = (
+    "unavailable",
+    "pending",
+    "timeout",
+    "storage",
+    "unverifiable",
+    "authorization",
+    "provider",
+    "rate_limit",
+    "request_limit",
+    "response_limit",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +132,14 @@ class GitHubCommandProcessor:
 
     async def execute(self, receipt: GitHubCommandReceipt) -> GitHubCommandResult:
         """Execute an accepted command once; repeated calls adopt its result."""
+        try:
+            return await self._execute(receipt)
+        except GitHubCommandError as error:
+            if not _is_permanent_rejection(error):
+                raise
+            return await self.record_rejection(receipt)
+
+    async def _execute(self, receipt: GitHubCommandReceipt) -> GitHubCommandResult:
         row = await self._load_bound_command(receipt)
         command = _command_from_row(row)
         try:
@@ -115,6 +175,26 @@ class GitHubCommandProcessor:
         else:  # pragma: no cover - Literal makes this defensive
             raise GitHubCommandError("github_command_kind_unsupported")
         await self._store_result(receipt, result)
+        return result
+
+    async def record_rejection(self, receipt: GitHubCommandReceipt) -> GitHubCommandResult:
+        """Persist one fixed permanent rejection after rechecking the bound receipt."""
+        await self._load_bound_command(receipt)
+        prior = await self._stored_result(receipt)
+        if prior is not None:
+            return _result_from_json(prior, duplicate=True)
+        result = GitHubCommandResult("rejected", status="rejected")
+        try:
+            await self._store_result(receipt, result)
+        except GitHubCommandError as error:
+            if error.code != "github_command_result_conflict":
+                raise
+            # A concurrent execution may have durably won after our prior read.
+            # Adopt that immutable result instead of inventing a second outcome.
+            prior = await self._stored_result(receipt)
+            if prior is None:
+                raise
+            return _result_from_json(prior, duplicate=True)
         return result
 
     async def _load_bound_command(self, receipt: GitHubCommandReceipt) -> Mapping[Any, Any]:
@@ -451,6 +531,15 @@ def _valid_console_url(value: str) -> bool:
         )
     except ValueError:
         return False
+
+
+def _is_permanent_rejection(error: GitHubCommandError) -> bool:
+    code = error.code
+    return (
+        error.retryable is False
+        and code in _PERMANENT_COMMAND_REJECTIONS
+        and not any(marker in code for marker in _RETRYABLE_ERROR_MARKERS)
+    )
 
 
 def _result_from_json(value: Mapping[str, Any], *, duplicate: bool) -> GitHubCommandResult:

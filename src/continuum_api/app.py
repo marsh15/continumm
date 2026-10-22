@@ -51,6 +51,7 @@ def create_app(
     csrf_guard: Callable[[Request], Any] | None = None,
     runtime_engine: Engine | None = None,
     github_auth_boundary: GitHubAuthBoundary | None = None,
+    wake_worker_scheduler: Any | None = None,
 ) -> FastAPI:
     """Build the API with an injected identity boundary and runtime database."""
     if static_dir is None:
@@ -67,13 +68,16 @@ def create_app(
         try:
             yield
         finally:
-            auth = application.state.github_auth_boundary
-            if auth is not None:
-                await auth.aclose()
-            if application.state.owns_runtime_engine:
-                application.state.runtime_engine.dispose()
-            if application.state.owns_operator_engine:
-                application.state.operator_engine.dispose()
+            try:
+                await application.state.wake_worker_scheduler.aclose()
+            finally:
+                auth = application.state.github_auth_boundary
+                if auth is not None:
+                    await auth.aclose()
+                if application.state.owns_runtime_engine:
+                    application.state.runtime_engine.dispose()
+                if application.state.owns_operator_engine:
+                    application.state.operator_engine.dispose()
 
     application = FastAPI(
         title="Continumm API",
@@ -101,7 +105,12 @@ def create_app(
             },
         )
 
-    application.include_router(create_wake_router())
+    if wake_worker_scheduler is None:
+        from continuum_api.runtime.wake_worker_host import ConfiguredWakeWorkerScheduler
+
+        wake_worker_scheduler = ConfiguredWakeWorkerScheduler()
+    application.state.wake_worker_scheduler = wake_worker_scheduler
+    application.include_router(create_wake_router(scheduler=wake_worker_scheduler))
     application.state.github_auth_boundary = github_auth_boundary
     application.state.github_auth_lock = threading.Lock()
     application.state.runtime_engine = runtime_engine
