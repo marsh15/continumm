@@ -1045,3 +1045,35 @@ the suite. A transient Docker Hub 502 required a build retry.
 - No provider, managed sandbox or GitHub call was made. All local CLI plumbing
   is implemented; actual hosted qualification and owner-deferred T34 remain open.
   See the [operator file schema and invocation](../docs/hidden-suite-files.md).
+
+## 22 October 2026 — completion guide: bounded wake execution
+
+- Implemented and pushed `6e27153`: committed wake receipts can now schedule an
+  opt-in bounded inbox/workflow drain inside the API lifespan. PostgreSQL owns
+  the global renewable lease, stale-token fences, consumption proof and final
+  completion-watermark transaction; Edge/receiver/ingress roles cannot finish work.
+- Migration 31 and its separate worker login preserve normal owner/repository,
+  admission, quota, credentials and approval controls. Accepted command retries
+  adopt stored intent; permanent rejections have durable fixed results. Expired,
+  edited and owner-null deliveries cannot silently discard unresolved intent.
+- Added real PostgreSQL/process death coverage, callback/host lifecycle tests,
+  Edge receipt-state checks, due-job recovery and deployment configuration. Both
+  worker execution and public admission remain disabled by default.
+- `make check` passed: 928 backend tests, 29 UI tests and 31 Edge tests; 219 optional
+  database tests skipped in that baseline. Ruff and mypy (116 source files),
+  package/frontend/container builds, non-root offline container smoke and a fresh
+  tracked-file bootstrap/package/import check passed. Separate worker store and
+  killed-process PG tests passed. Clean-commit evaluation retained 12 passing
+  deterministic fixtures; no live model quality result is claimed.
+- Updated the completion guide and backlog to distinguish automatic status-comment
+  draining (still incomplete) from the existing reconciled publisher. Admission
+  qualification needs an isolated restricted deployment; the public flag stays off.
+- Hosted setup, T34, four live provider/profile runs, deployed faults and launch
+  qualification remain open. See the [local completion report](../docs/evidence/completion-20261022.md)
+  and [bounded worker operations](../docs/bounded-wake-worker.md).
+- Full fault matrix on the implementation commit: 21 groups / 190 cases passed,
+  31 local rows verified and six deployed rows still unrun. The dated raw report
+  is linked from the completion evidence; no hosted fault result was inferred.
+- Additional current-head PostgreSQL cross-channel decisions (9) and operator
+  controls (1) passed. Owned disposable PostgreSQL and fresh-checkout directories
+  were removed after verification.

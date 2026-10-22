@@ -8,6 +8,7 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [Architecture decision records](adr/README.md)
 - [Implementation progress and verification](../tasks/progress.md)
 - [Ordered completion guide](../tasks/completion-guide.md)
+- [22 October local completion verification](evidence/completion-20261022.md)
 - [Frontend foundation and generated API contract](frontend.md)
 - [Hosting setup](hosting-setup.md)
 - [T03 hosted evidence (not run)](evidence/t03-hosted.md)
