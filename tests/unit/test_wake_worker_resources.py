@@ -149,8 +149,13 @@ def test_resource_callbacks_check_app_identity_and_close_run_resources(monkeypat
     captured: dict[str, object] = {}
 
     class Worker:
-        def __init__(self, store, process_inbox, run_workflow):
-            captured.update(store=store, process_inbox=process_inbox, run_workflow=run_workflow)
+        def __init__(self, store, process_inbox, run_workflow, *, publish_status):
+            captured.update(
+                store=store,
+                process_inbox=process_inbox,
+                run_workflow=run_workflow,
+                publish_status=publish_status,
+            )
 
     owner_id, run_id = uuid4(), uuid4()
     result = SimpleNamespace(run_id=run_id, jobs_started=1, stop_reason="idle")
@@ -243,6 +248,7 @@ def test_resource_callbacks_check_app_identity_and_close_run_resources(monkeypat
         encryption_key=SecretStr("key"),
         github_app_id=73,
         github_app_private_key=SecretStr("private"),
+        github_public_origin="https://console.example.test",
         supabase_url="https://storage.example",
         supabase_secret_key=SecretStr("storage-secret"),
         supabase_bucket="private",

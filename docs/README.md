@@ -18,6 +18,7 @@ The current proposed specification is [tasks/plan.md](../tasks/plan.md), prepare
 - [T05 hosted evidence (not run)](evidence/t05-hosted.md)
 - [Work-triggered wake setup](wake-setup.md)
 - [Bounded wake worker](bounded-wake-worker.md)
+- [Automatic status-comment drain](status-comment-drain.md)
 - [T06 hosted evidence (not run)](evidence/t06-hosted.md)
 - [Runtime persistence and database role](runtime-persistence.md)
 - [OpenAI adapter and local evidence](openai-adapter.md)

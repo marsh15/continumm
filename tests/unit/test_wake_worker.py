@@ -271,3 +271,99 @@ def test_scheduler_keeps_one_strongly_referenced_task_and_closes_it() -> None:
 def test_worker_rejects_unbounded_limits(kwargs: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         _worker(FakeWakeStore(), **kwargs)
+
+
+@dataclass
+class FakeStatusStore(FakeWakeStore):
+    statuses: list | None = None
+    status_completed: list | None = None
+    status_proof: bool = True
+
+    def next_status(self, lease):
+        return self.statuses.pop(0) if self.statuses else None
+
+    def complete_status(self, lease, work):
+        if not self.current or not self.status_proof:
+            return False
+        if self.status_completed is None:
+            self.status_completed = []
+        self.status_completed.append(work)
+        return True
+
+    def finish(self, lease, complete):
+        result = super().finish(lease, complete)
+        return result and (not complete or not self.statuses)
+
+
+def _status_work(number=1):
+    from continuum_api.runtime.wake_worker_store import StatusWork
+
+    return StatusWork(UUID(int=number), UUID(int=number + 20), number, bytes([number]) * 32, False)
+
+
+def test_status_failures_are_isolated_and_confirmed_only_with_database_proof():
+    first, second = _status_work(1), _status_work(2)
+    store = FakeStatusStore(statuses=[first, second], runs=[RunWork(UUID(int=1), UUID(int=2))])
+    seen = []
+
+    async def publish(work):
+        seen.append(work)
+        if work == first:
+            raise RuntimeError("synthetic_unknown_comment_effect")
+        return True
+
+    receipt = asyncio.run(_worker(store, publish_status=publish).run(_request()))
+
+    assert seen == [first, second]
+    assert receipt.completed and receipt.jobs_started == 1
+    assert receipt.status_comments_attempted == 2
+    assert receipt.status_comments_confirmed == 1
+    assert store.status_completed == [second]
+
+
+def test_status_item_bound_does_not_claim_an_undrained_queue():
+    store = FakeStatusStore(statuses=[_status_work(1), _status_work(2)])
+
+    async def publish(work):
+        return True
+
+    receipt = asyncio.run(
+        _worker(store, publish_status=publish, max_status_comments=1).run(_request())
+    )
+
+    assert receipt.status == "partial"
+    assert receipt.status_comments_attempted == receipt.status_comments_confirmed == 1
+    assert len(store.statuses) == 1
+
+
+def test_unproved_status_confirmation_cannot_report_a_successful_drain():
+    store = FakeStatusStore(statuses=[_status_work()], status_proof=False)
+
+    async def publish(work):
+        return True
+
+    receipt = asyncio.run(_worker(store, publish_status=publish).run(_request()))
+
+    assert not receipt.completed and receipt.status_comments_confirmed == 0
+    assert store.finish_calls == [False]
+
+
+def test_status_lookup_cancellation_obeys_outer_worker_deadline():
+    store = FakeStatusStore(statuses=[_status_work()])
+    cancelled = []
+
+    async def publish(work):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    receipt = asyncio.run(_worker(store, publish_status=publish, max_seconds=0.05).run(_request()))
+
+    assert receipt.status == "partial" and receipt.stop_reason == "time_limit"
+    assert cancelled == [True] and store.finish_calls == [False]
+
+
+def test_status_comment_bound_is_validated():
+    with pytest.raises(ValueError, match="status_comments"):
+        _worker(FakeWakeStore(), max_status_comments=11)

@@ -455,9 +455,11 @@ def test_status_comment_uses_ledger_identity_and_reconciles_once(
             {"run": run_id},
         ).one()
     transport = _StatusCommentTransport()
+    ledger = GitHubStatusCommentLedger(t38_database.runtime_engine, owner)
+    sequence = ledger.current_snapshot(run_id)["event_sequence"]
     publisher = GitHubStatusCommentPublisher(
         owner,
-        GitHubStatusCommentLedger(t38_database.runtime_engine, owner),
+        ledger,
         scenario.service,
         transport,
         "https://console.example.test",
@@ -474,15 +476,10 @@ def test_status_comment_uses_ledger_identity_and_reconciles_once(
             )
         )
     transport.lose_create_ack = False
-    replay_id = asyncio.run(
-        publisher.publish(
-            run_id=run_id,
-            repository_id=repository_id,
-            issue_number=1,
-            status=status,
-            revision=revision,
-        )
-    )
+    # The public snapshot advances before the lost acknowledgement is resolved.
+    # Recovery must look up the old marker, never create its replacement.
+    CancellationService(t38_database.runtime_engine, owner).cancel(run_id)
+    replay_id = asyncio.run(publisher.reconcile(run_id, sequence))
     assert replay_id == "3001"
     assert transport.creates == 1 and transport.lookups == 2
     comment_body = next(iter(transport.comments.values()))[1]
@@ -491,7 +488,6 @@ def test_status_comment_uses_ledger_identity_and_reconciles_once(
     assert "stdout" not in comment_body.casefold()
     assert str(scenario.frozen_receipt.approval_id) in comment_body
 
-    CancellationService(t38_database.runtime_engine, owner).cancel(run_id)
     with t38_database.admin_engine.connect() as connection:
         terminal_status, terminal_revision = connection.execute(
             text("SELECT status, revision FROM runtime_private.runs WHERE run_id=:run"),

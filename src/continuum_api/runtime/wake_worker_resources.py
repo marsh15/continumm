@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -21,10 +22,13 @@ from continuum_api.runtime.wake_worker import BoundedWakeWorker
 from continuum_api.runtime.wake_worker_store import (
     InboxWork,
     PostgresWakeWorkerStore,
+    StatusWork,
 )
 from continuum_api.runtime.wake_worker_store import (
     RunWork as StoreRunWork,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class WakeWorkerConfigurationError(RuntimeError):
@@ -132,6 +136,10 @@ async def build_wake_worker_resources(settings: Any) -> WakeWorkerResources:
     from continuum_api.runtime.database import create_runtime_engine
     from continuum_api.runtime.github_command_execution import GitHubCommandProcessor
     from continuum_api.runtime.github_commands import GitHubCommandError, GitHubCommandService
+    from continuum_api.runtime.github_status_comments import (
+        GitHubStatusCommentLedger,
+        GitHubStatusCommentPublisher,
+    )
     from continuum_api.runtime.persistence import Principal
     from continuum_api.runtime.provider_credentials import CredentialService
     from continuum_api.runtime.scheduler import RuntimeRecoveryService
@@ -146,6 +154,8 @@ async def build_wake_worker_resources(settings: Any) -> WakeWorkerResources:
     try:
         _require_base_settings(settings)
         _require_sandbox_configuration(WorkflowSandboxSettings())
+        if not _valid_public_origin(getattr(settings, "github_public_origin", None)):
+            raise WakeWorkerConfigurationError("github_public_origin_invalid")
     except Exception as error:
         code = getattr(error, "code", None) or str(error)
         if not _safe_code(code):
@@ -179,6 +189,60 @@ async def build_wake_worker_resources(settings: Any) -> WakeWorkerResources:
             settings.supabase_bucket,
         )
         wake_store = PostgresWakeWorkerStore(wake_engine, github_app_id=settings.github_app_id)
+
+        async def publish_status(work: StatusWork) -> bool:
+            """Publish or reconcile one status under its persisted owner identity."""
+            owner_id = _uuid(work.owner_id)
+            run_id = _uuid(work.run_id)
+            if owner_id is None or run_id is None:
+                return False
+            principal = Principal(owner_id)
+            try:
+                tokens = GitHubUserTokenStore(runtime_engine, cipher, owner_id)
+                authorization = GitHubAuthorizationClient(
+                    app_id=settings.github_app_id,
+                    app_private_key=settings.github_app_private_key,
+                    user_tokens=tokens,
+                )
+                transitions = TransitionService(runtime_engine, principal)
+                publication_facts = GitHubPublicationFactsProvider(authorization)
+                approvals = ApprovalService(
+                    runtime_engine,
+                    principal,
+                    transitions,
+                    storage,
+                    publication_facts=publication_facts,
+                )
+                ledger = GitHubStatusCommentLedger(runtime_engine, principal)
+                publisher = GitHubStatusCommentPublisher(
+                    principal,
+                    ledger,
+                    approvals,
+                    authorization,
+                    settings.github_public_origin,
+                )
+                if work.reconcile_only:
+                    await publisher.reconcile(run_id, work.event_sequence)
+                    return True
+
+                snapshot = ledger.current_snapshot(run_id)
+                if snapshot["event_sequence"] != work.event_sequence:
+                    return False
+                await publisher.publish(
+                    run_id=run_id,
+                    repository_id=snapshot["github_repository_id"],
+                    issue_number=snapshot["issue_number"],
+                    status=snapshot["status"],
+                    revision=snapshot["revision"],
+                    expected_event_sequence=work.event_sequence,
+                )
+                return True
+            except Exception as error:
+                # Status publication is best-effort and must not fail a run or
+                # inbox callback. Log the exception type only; provider errors
+                # may carry sensitive request details.
+                logger.warning("wake_status_comment_failed error_type=%s", type(error).__name__)
+                return False
 
         async def process_inbox(work: InboxWork) -> str:
             if (
@@ -256,8 +320,8 @@ async def build_wake_worker_resources(settings: Any) -> WakeWorkerResources:
                         raise GitHubCommandError("github_command_result_pending", retryable=True)
                     return "inert"
                 result = await processor.execute(receipt)
-                # Command result persistence is part of execute; status comments
-                # remain eligible for the existing effect drain when wired.
+                # Command result persistence is part of execute. Status comments
+                # run in the separate bounded phase after inbox and workflow work.
                 return "rejected" if result.kind == "rejected" else "processed"
             except GitHubCommandError as error:
                 if error.retryable or _temporarily_unverifiable(error.code):
@@ -283,7 +347,9 @@ async def build_wake_worker_resources(settings: Any) -> WakeWorkerResources:
             finally:
                 await resources.aclose()
 
-        worker = BoundedWakeWorker(wake_store, process_inbox, run_workflow)
+        worker = BoundedWakeWorker(
+            wake_store, process_inbox, run_workflow, publish_status=publish_status
+        )
         return WakeWorkerResources(worker, wake_engine, runtime_engine, storage)
     except Exception:
         if storage is not None:
@@ -314,6 +380,23 @@ def _safe_code(value: object) -> bool:
         and value[0].islower()
         and value.replace("_", "").isalnum()
     )
+
+
+def _valid_public_origin(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parts = urlsplit(value)
+        return (
+            parts.scheme == "https"
+            and bool(parts.hostname)
+            and parts.username is None
+            and parts.password is None
+            and not parts.query
+            and not parts.fragment
+        )
+    except ValueError:
+        return False
 
 
 def _temporarily_unverifiable(code: str) -> bool:

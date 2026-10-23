@@ -235,6 +235,18 @@ class GitHubStatusCommentLedger:
     ) -> StatusCommentEffect:
         return self._record(effect, None, remote_comment_id, unknown=False)
 
+    def read_effect(self, run_id: UUID, event_sequence: int) -> StatusCommentEffect:
+        """Read one owner-scoped status effect for lookup-only reconciliation."""
+        try:
+            with self._engine.begin() as connection:
+                RuntimeRepository(connection, self._principal)
+                row = self._read_locked(connection, run_id, event_sequence)
+                return _receipt(row)
+        except GitHubStatusCommentError:
+            raise
+        except SQLAlchemyError:
+            raise GitHubStatusCommentError("github_status_comment_storage_unavailable") from None
+
     def observe_created(
         self, effect: StatusCommentEffect, dispatch_token: UUID, remote_comment_id: str
     ) -> StatusCommentEffect:
@@ -421,8 +433,14 @@ class GitHubStatusCommentPublisher:
         issue_number: int,
         status: str,
         revision: int,
+        expected_event_sequence: int | None = None,
     ) -> str:
         context = self._run_binding(run_id, repository_id, issue_number, status, revision)
+        if (
+            expected_event_sequence is not None
+            and context["event_sequence"] != expected_event_sequence
+        ):
+            raise GitHubStatusCommentError("github_status_comment_run_changed")
         try:
             await self._approvals.assert_current_repository_write_access(
                 repository_id, context["github_user_id"]
@@ -477,6 +495,44 @@ class GitHubStatusCommentPublisher:
         observed = self._ledger.observe_created(dispatch, dispatch.dispatch_token, remote_id)
         assert observed.remote_comment_id is not None
         return observed.remote_comment_id
+
+    async def reconcile(self, run_id: UUID, event_sequence: int) -> str:
+        """Look up an earlier send without ever issuing a new remote create."""
+        effect = self._ledger.read_effect(run_id, event_sequence)
+        # The run must still belong to this active owner, retain its GitHub
+        # binding, and remain within retention. Its status/revision/event may
+        # have advanced since this effect was prepared, so do not require the
+        # old snapshot to remain current.
+        context = self._ledger.current_snapshot(run_id)
+        if (
+            context["github_repository_id"] != effect.repository_id
+            or context["issue_number"] != effect.issue_number
+        ):
+            raise GitHubStatusCommentError("github_status_comment_run_changed")
+
+        if effect.effect_status == "confirmed":
+            assert effect.remote_comment_id is not None
+            return effect.remote_comment_id
+        if effect.effect_status not in {"unknown", "dispatching"}:
+            raise GitHubStatusCommentError("github_status_comment_effect_unresolved")
+        try:
+            await self._approvals.assert_current_repository_write_access(
+                effect.repository_id, context["github_user_id"]
+            )
+        except ApprovalError as error:
+            raise GitHubStatusCommentError(error.code) from None
+
+        existing = await self._transport.find_status_comment(
+            effect.repository_id,
+            context["github_user_id"],
+            effect.issue_number,
+            effect.marker,
+        )
+        if existing is None:
+            raise GitHubStatusCommentError("github_status_comment_effect_unresolved")
+        adopted = self._ledger.adopt_existing(effect, existing)
+        assert adopted.remote_comment_id is not None
+        return adopted.remote_comment_id
 
     def _run_binding(
         self, run_id: UUID, repository_id: int, issue_number: int, status: str, revision: int

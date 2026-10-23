@@ -442,7 +442,7 @@ Deferred by the owner on 19 October 2026; continue T35 and later tasks first.
 - **Scope:** Medium; shared command handlers, comment adapter and tests.
 - [x] Approve/reject/changes/cancel follow the exact same transitions in browser and comments.
 - [x] Status-comment creation has stable identity/reconciliation and never exposes private run content.
-- **Composition gap:** the publisher still needs an automatic bounded effect drain; wake job completion does not prove public status delivery.
+- **Composition:** the wake worker now includes a bounded status-effect drain with persisted cooldowns and lookup-only unknown-effect reconciliation. Hosted delivery remains unproved; see [status-comment drain](../docs/status-comment-drain.md).
 - **Verify:** make test-target TARGET=tests/integration/test_cross_channel_decisions.py.
 
 ### T39 — Failed-delivery recovery

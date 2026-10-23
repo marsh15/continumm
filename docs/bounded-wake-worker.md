@@ -51,12 +51,13 @@ backoff still apply. New work after a completed wake receives a new wake ID.
 Shutdown cancels retained tasks and awaits bounded cleanup; abrupt process death
 relies on persisted leases and the next due dispatch.
 
-Automatic public status-comment delivery still needs a separate bounded effect
-drain. The existing marker-based publisher must reconcile unknown creates
-before retrying. Publication remains subject to its explicit execution controls.
-Do not use successful inbox/job draining as evidence that comments or PRs were
-published. The normal admission flag also remains closed: use an isolated,
-network-restricted qualification deployment for synthetic admission exercises.
+Migration `20261023_32` adds a [bounded status-comment phase](status-comment-drain.md)
+after workflow execution, with persisted cooldowns, three automatic attempts per
+notification target and lookup-only reconciliation of unknown creates. Held and
+future-due comments may remain after a queue-drain watermark. PR publication
+retains its explicit execution controls. The normal admission flag remains
+closed: use an isolated, network-restricted qualification deployment for
+synthetic admission exercises.
 
 Local checks include worker orchestration and host lifecycle unit tests, actual
 PostgreSQL role/fence/consumption tests, and an owned subprocess death/reclaim

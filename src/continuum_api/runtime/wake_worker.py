@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
-from continuum_api.runtime.wake_worker_store import DrainLease, InboxWork, RunWork
+from continuum_api.runtime.wake_worker_store import DrainLease, InboxWork, RunWork, StatusWork
 from continuum_api.wake import WakeInput
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 MAX_WAKE_DELIVERIES = 20
 MAX_WAKE_RUNS = 5
 MAX_WAKE_JOBS = 20
+MAX_WAKE_STATUS_COMMENTS = 10
 MAX_WAKE_SECONDS = 300.0
 DEFAULT_WAKE_DELIVERIES = 5
 DEFAULT_WAKE_RUNS = 2
@@ -47,6 +48,10 @@ class WakeWorkerStore(Protocol):
 
     def next_run(self, lease: DrainLease) -> RunWork | None: ...
 
+    def next_status(self, lease: DrainLease) -> StatusWork | None: ...
+
+    def complete_status(self, lease: DrainLease, work: StatusWork) -> bool: ...
+
     def finish(self, lease: DrainLease, complete: bool) -> bool: ...
 
 
@@ -59,6 +64,8 @@ class WakeDrainReceipt:
     runs_started: int = 0
     jobs_started: int = 0
     stop_reason: str = "waiting"
+    status_comments_attempted: int = 0
+    status_comments_confirmed: int = 0
 
     @property
     def completed(self) -> bool:
@@ -67,6 +74,7 @@ class WakeDrainReceipt:
 
 InboxProcessor = Callable[[InboxWork], Awaitable[str]]
 WorkflowRunner = Callable[[RunWork, int, float], Awaitable[object]]
+StatusPublisher = Callable[[StatusWork], Awaitable[bool]]
 
 
 class BoundedWakeWorker:
@@ -78,12 +86,19 @@ class BoundedWakeWorker:
         process_inbox: InboxProcessor,
         run_workflow: WorkflowRunner,
         *,
+        publish_status: StatusPublisher | None = None,
+        max_status_comments: int = 3,
         max_deliveries: int = DEFAULT_WAKE_DELIVERIES,
         max_runs: int = DEFAULT_WAKE_RUNS,
         max_jobs: int = DEFAULT_WAKE_JOBS,
         max_seconds: float = DEFAULT_WAKE_SECONDS,
         heartbeat_interval: float = DEFAULT_WAKE_HEARTBEAT_SECONDS,
     ) -> None:
+        _validate_bound("status_comments", max_status_comments, 1, MAX_WAKE_STATUS_COMMENTS)
+        if publish_status is not None and not _is_async_callable(publish_status):
+            raise ValueError("wake_worker_callback_must_be_async")
+        self._publish_status = publish_status
+        self._max_status_comments = max_status_comments
         _validate_bound("deliveries", max_deliveries, 1, MAX_WAKE_DELIVERIES)
         _validate_bound("runs", max_runs, 1, MAX_WAKE_RUNS)
         _validate_bound("jobs", max_jobs, 1, MAX_WAKE_JOBS)
@@ -169,6 +184,8 @@ class BoundedWakeWorker:
         jobs_started = 0
         stop_reason = "idle"
         seen_run_ids: set[str] = set()
+        status_attempted = 0
+        status_confirmed = 0
 
         try:
             for _ in range(self._max_deliveries):
@@ -212,21 +229,73 @@ class BoundedWakeWorker:
             else:
                 stop_reason = "job_limit"
 
+            if self._publish_status is not None:
+                for _ in range(self._max_status_comments):
+                    work = await asyncio.to_thread(self._store.next_status, lease)
+                    if work is None:
+                        break
+                    if not await self._is_current(lease):
+                        return WakeDrainReceipt("stale", consumed, runs_started, jobs_started)
+                    status_attempted += 1
+                    try:
+                        published = await self._publish_status(work)
+                    except Exception as error:
+                        # The store persisted a retry cooldown before external I/O.
+                        # A comment failure must not undo committed workflow progress.
+                        _log_failure("wake_status_comment", error)
+                        continue
+                    if published is not True:
+                        continue
+                    if not await asyncio.to_thread(self._store.complete_status, lease, work):
+                        await self._try_finish(lease, complete=False)
+                        return WakeDrainReceipt(
+                            "partial",
+                            consumed,
+                            runs_started,
+                            jobs_started,
+                            "waiting",
+                            status_attempted,
+                            status_confirmed,
+                        )
+                    status_confirmed += 1
+
             if not await self._is_current(lease):
                 return WakeDrainReceipt("stale", consumed, runs_started, jobs_started)
             finished = await asyncio.to_thread(self._store.finish, lease, True)
             if finished:
                 return WakeDrainReceipt(
-                    "drained", consumed, runs_started, jobs_started, stop_reason
+                    "drained",
+                    consumed,
+                    runs_started,
+                    jobs_started,
+                    stop_reason,
+                    status_attempted,
+                    status_confirmed,
                 )
-            return WakeDrainReceipt("partial", consumed, runs_started, jobs_started, "waiting")
+            return WakeDrainReceipt(
+                "partial",
+                consumed,
+                runs_started,
+                jobs_started,
+                "waiting",
+                status_attempted,
+                status_confirmed,
+            )
         except asyncio.CancelledError:
             # The caller retains control of cancellation; no successful watermark is written.
             raise
         except Exception as error:
             _log_failure("wake_callback", error)
             await self._try_finish(lease, complete=False)
-            return WakeDrainReceipt("partial", consumed, runs_started, jobs_started, "waiting")
+            return WakeDrainReceipt(
+                "partial",
+                consumed,
+                runs_started,
+                jobs_started,
+                "waiting",
+                status_attempted,
+                status_confirmed,
+            )
 
     async def _is_current(self, lease: DrainLease) -> bool:
         try:

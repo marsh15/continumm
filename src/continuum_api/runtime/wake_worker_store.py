@@ -32,6 +32,15 @@ class RunWork:
     run_id: UUID
 
 
+@dataclass(frozen=True, slots=True)
+class StatusWork:
+    owner_id: UUID
+    run_id: UUID
+    event_sequence: int
+    snapshot_key: bytes
+    reconcile_only: bool
+
+
 class PostgresWakeWorkerStore:
     """Calls SECURITY DEFINER functions using the dedicated wake-worker login."""
 
@@ -136,6 +145,51 @@ class PostgresWakeWorkerStore:
         if row is None or row["run_id"] is None:
             return None
         return RunWork(owner_id=row["owner_id"], run_id=row["run_id"])
+
+    def next_status(self, lease: DrainLease) -> StatusWork | None:
+        with self._engine.begin() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT * FROM wake_private.worker_next_status("
+                        "CAST(:wake_id AS uuid), CAST(:token AS uuid), "
+                        "CAST(:generation AS bigint))"
+                    ),
+                    _lease_values(lease),
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None or row["run_id"] is None:
+            return None
+        return StatusWork(
+            owner_id=row["owner_id"],
+            run_id=row["run_id"],
+            event_sequence=row["event_sequence"],
+            snapshot_key=bytes(row["snapshot_key"]),
+            reconcile_only=row["reconcile_only"],
+        )
+
+    def complete_status(self, lease: DrainLease, work: StatusWork) -> bool:
+        with self._engine.begin() as connection:
+            return bool(
+                connection.execute(
+                    text(
+                        "SELECT wake_private.worker_complete_status("
+                        "CAST(:wake_id AS uuid), CAST(:token AS uuid), "
+                        "CAST(:generation AS bigint), CAST(:owner_id AS uuid), "
+                        "CAST(:run_id AS uuid), CAST(:event_sequence AS bigint), "
+                        "CAST(:snapshot_key AS bytea))"
+                    ),
+                    {
+                        **_lease_values(lease),
+                        "owner_id": work.owner_id,
+                        "run_id": work.run_id,
+                        "event_sequence": work.event_sequence,
+                        "snapshot_key": work.snapshot_key,
+                    },
+                ).scalar_one()
+            )
 
     def finish(self, lease: DrainLease, complete: bool) -> bool:
         with self._engine.begin() as connection:
