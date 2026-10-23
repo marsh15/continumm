@@ -1077,3 +1077,24 @@ the suite. A transient Docker Hub 502 required a build retry.
 - Additional current-head PostgreSQL cross-channel decisions (9) and operator
   controls (1) passed. Owned disposable PostgreSQL and fresh-checkout directories
   were removed after verification.
+
+## 23 October 2026 — bounded automatic status-comment draining
+
+- Implemented and pushed `1d44280`: the wake worker now runs a separate bounded
+  status phase using the existing owner-scoped publisher. Migration 32 adds
+  fenced claims, durable 15-minute cooldowns, a three-attempt cap and SQL-backed
+  confirmation proof. Private transition versioning handles terminal and resumed
+  states without per-step or external-operation comment spam.
+- Added lookup-only reconciliation for older unknown/dispatching effects after
+  the run advances, with no second create. Fresh publication checks the exact
+  selected event sequence before authorization or remote I/O. Comment failures
+  remain separate from workflow progress; held effects require investigation.
+- `make check` passed: 942 backend tests (221 optional DB skips), 29 UI tests and
+  31 Edge tests; Ruff and mypy (116 source files) passed. Thirteen distinct focused
+  PostgreSQL cases passed across queue/migration, cross-channel decisions,
+  process death and legacy store tests. The owned database fixture was removed.
+- Package, frontend and container builds passed, including an offline non-root
+  import smoke. The container completed on a bounded retry after a registry
+  download stall. Hosted delivery remains unproved and both execution/admission
+  flags remain disabled. See the [dated verification report](../docs/evidence/status-comment-drain-20261023.md)
+  and [status-drain operator guide](../docs/status-comment-drain.md).
